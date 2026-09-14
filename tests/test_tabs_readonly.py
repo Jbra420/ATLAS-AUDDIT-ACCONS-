@@ -1,0 +1,231 @@
+"""
+tests/test_tabs_readonly.py — Pruebas de renderizado HTML de tabs con read_only.
+
+Verifica que cuando read_only=True (modo jefe auditor):
+  - Los formularios de edición son suprimidos del HTML generado.
+  - El HTML de solo lectura sigue conteniendo la información de la empresa.
+  - tab_admins y tab_accionistas aceptan read_only sin error.
+  - tab_resumen y tab_financiero muestran/ocultan formularios según el rol.
+  - tab_fuentes oculta los botones de acción en modo lectura.
+"""
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from database import (
+    add_source,
+    authenticate,
+    create_company_audit,
+    get_audit,
+    init_db,
+    load_demo_if_ruc_matches,
+    get_financial_snapshot,
+    list_sources,
+    list_source_checks,
+)
+from services.financial import compute_indicators
+
+
+def _make_db() -> Path:
+    tmp = tempfile.mkdtemp()
+    db_path = Path(tmp) / "test_tabs.db"
+    init_db(db_path)
+    return db_path
+
+
+class TestTabAdminsReadOnly(unittest.TestCase):
+    """tab_admins acepta read_only sin error y no rompe el HTML."""
+
+    def setUp(self):
+        self.db = _make_db()
+        self.auditor = authenticate("auditor", "auditor123", self.db)
+        self.admin = authenticate("admin", "admin123", self.db)
+        self.audit_id = create_company_audit(
+            "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
+            "Consultoría", "2026", self.auditor["id"], self.admin["id"], self.db,
+        )
+        self.audit = get_audit(self.audit_id, self.admin, self.db)
+
+    def test_build_with_read_only_true_no_error(self):
+        from views.auditor.radar.tab_admins import build
+        html = build(self.audit_id, self.audit, admins=[], read_only=True)
+        self.assertIsInstance(html, str)
+        self.assertIn("Administradores registrados", html)
+
+    def test_build_with_read_only_false_no_error(self):
+        from views.auditor.radar.tab_admins import build
+        html = build(self.audit_id, self.audit, admins=[], read_only=False)
+        self.assertIsInstance(html, str)
+        self.assertIn("Administradores registrados", html)
+
+    def test_empty_admins_shows_placeholder(self):
+        from views.auditor.radar.tab_admins import build
+        html = build(self.audit_id, self.audit, admins=[], read_only=True)
+        self.assertIn("Sin administradores registrados", html)
+
+
+class TestTabAccionistasReadOnly(unittest.TestCase):
+    """tab_accionistas acepta read_only sin error."""
+
+    def setUp(self):
+        self.db = _make_db()
+        self.auditor = authenticate("auditor", "auditor123", self.db)
+        self.admin = authenticate("admin", "admin123", self.db)
+        self.audit_id = create_company_audit(
+            "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
+            "Consultoría", "2026", self.auditor["id"], self.admin["id"], self.db,
+        )
+        self.audit = get_audit(self.audit_id, self.admin, self.db)
+
+    def test_build_read_only_true_no_error(self):
+        from views.auditor.radar.tab_accionistas import build
+        html = build(self.audit_id, self.audit, shareholders=[], read_only=True)
+        self.assertIsInstance(html, str)
+        self.assertIn("Nómina de socios", html)
+
+    def test_build_read_only_false_no_error(self):
+        from views.auditor.radar.tab_accionistas import build
+        html = build(self.audit_id, self.audit, shareholders=[], read_only=False)
+        self.assertIsInstance(html, str)
+
+    def test_empty_shareholders_shows_placeholder(self):
+        from views.auditor.radar.tab_accionistas import build
+        html = build(self.audit_id, self.audit, shareholders=[], read_only=True)
+        self.assertIn("Sin accionistas registrados", html)
+
+
+class TestTabFuentesReadOnly(unittest.TestCase):
+    """tab_fuentes oculta formularios de acción en modo lectura."""
+
+    def setUp(self):
+        self.db = _make_db()
+        self.auditor = authenticate("auditor", "auditor123", self.db)
+        self.admin = authenticate("admin", "admin123", self.db)
+        self.audit_id = create_company_audit(
+            "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
+            "Consultoría", "2026", self.auditor["id"], self.admin["id"], self.db,
+        )
+        load_demo_if_ruc_matches(self.audit_id, "0190377210001", self.db)
+        add_source(
+            self.audit_id,
+            "Consulta SERCOP",
+            "https://www.compraspublicas.gob.ec/",
+            "SERCOP",
+            "Hallazgo: No registra contratos publicos",
+            self.auditor["id"],
+            self.db,
+        )
+        self.src_checks = list_source_checks(self.audit_id, self.db)
+        self.sources = list_sources(self.audit_id, self.db)
+
+    def test_read_only_suppresses_forms(self):
+        """En modo lectura no debe aparecer ningún formulario POST."""
+        from views.auditor.radar.tab_fuentes import build
+        html = build(self.audit_id, self.src_checks, self.sources, read_only=True)
+        self.assertNotIn('<form', html,
+                         "read_only=True debe suprimir todos los formularios del tab fuentes")
+        self.assertIn("Bitacora de evidencia registrada", html)
+
+    def test_auditor_mode_has_forms(self):
+        """En modo auditor deben aparecer formularios de acción."""
+        from views.auditor.radar.tab_fuentes import build
+        html = build(self.audit_id, self.src_checks, self.sources, read_only=False)
+        if self.src_checks:  # Solo si hay fuentes configuradas
+            self.assertIn('<form', html,
+                          "read_only=False debe incluir formularios en tab fuentes")
+        self.assertIn("Registrar evidencia", html)
+
+    def test_html_contains_source_names(self):
+        """El HTML debe contener los nombres de las fuentes independientemente del rol."""
+        from views.auditor.radar.tab_fuentes import build
+        html_ro = build(self.audit_id, self.src_checks, self.sources, read_only=True)
+        html_aw = build(self.audit_id, self.src_checks, self.sources, read_only=False)
+        # Ambos deben tener la misma estructura base de fuentes
+        self.assertIn("source-check-grid", html_ro)
+        self.assertIn("source-check-grid", html_aw)
+        self.assertIn("Consulta SERCOP", html_ro)
+        self.assertIn("Consulta SERCOP", html_aw)
+
+
+class TestTabResumenReadOnly(unittest.TestCase):
+    """tab_resumen oculta el formulario de generación en modo lectura."""
+
+    def setUp(self):
+        self.db = _make_db()
+        self.auditor = authenticate("auditor", "auditor123", self.db)
+        self.admin = authenticate("admin", "admin123", self.db)
+        self.audit_id = create_company_audit(
+            "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
+            "Consultoría", "2026", self.auditor["id"], self.admin["id"], self.db,
+        )
+        load_demo_if_ruc_matches(self.audit_id, "0190377210001", self.db)
+        from database import get_research
+        self.research = get_research(self.audit_id, self.db)
+
+    def test_read_only_suppresses_generate_button(self):
+        """El botón 'Generar resumen' no debe aparecer para el jefe auditor."""
+        from views.auditor.radar.tab_resumen import build
+        html = build(self.audit_id, self.research, read_only=True)
+        self.assertNotIn('/auditor/radar/summary', html,
+                         "read_only=True no debe mostrar el formulario de generación de resumen")
+
+    def test_auditor_mode_has_generate_button(self):
+        """El auditor sí debe ver el botón para generar el resumen."""
+        from views.auditor.radar.tab_resumen import build
+        html = build(self.audit_id, self.research, read_only=False)
+        self.assertIn('/auditor/radar/summary', html,
+                      "read_only=False debe mostrar el formulario de generación")
+
+    def test_summary_content_visible_in_both_modes(self):
+        """El contenido del resumen (si existe) debe verse en ambos modos."""
+        from views.auditor.radar.tab_resumen import build
+        html_ro = build(self.audit_id, self.research, read_only=True)
+        html_aw = build(self.audit_id, self.research, read_only=False)
+        self.assertIsInstance(html_ro, str)
+        self.assertIsInstance(html_aw, str)
+        self.assertGreater(len(html_ro), 0)
+
+
+class TestTabFinancieroReadOnly(unittest.TestCase):
+    """tab_financiero oculta el formulario de edición en modo lectura."""
+
+    def setUp(self):
+        self.db = _make_db()
+        self.auditor = authenticate("auditor", "auditor123", self.db)
+        self.admin = authenticate("admin", "admin123", self.db)
+        self.audit_id = create_company_audit(
+            "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
+            "Consultoría", "2026", self.auditor["id"], self.admin["id"], self.db,
+        )
+        load_demo_if_ruc_matches(self.audit_id, "0190377210001", self.db)
+        snapshot = get_financial_snapshot(self.audit_id, self.db)
+        self.indicators = compute_indicators(dict(snapshot) if snapshot else None)
+
+    def test_read_only_suppresses_financial_form(self):
+        """El formulario de datos financieros no debe aparecer para el jefe auditor."""
+        from views.auditor.radar.tab_financiero import build
+        html = build(self.audit_id, self.indicators, read_only=True)
+        self.assertNotIn('/auditor/radar/financial', html,
+                         "read_only=True no debe mostrar el formulario de edición financiera")
+
+    def test_auditor_mode_has_financial_form(self):
+        """El auditor sí debe ver el formulario para ingresar datos financieros."""
+        from views.auditor.radar.tab_financiero import build
+        html = build(self.audit_id, self.indicators, read_only=False)
+        self.assertIn('/auditor/radar/financial', html,
+                      "read_only=False debe mostrar el formulario financiero")
+
+    def test_indicators_visible_in_both_modes(self):
+        """Los indicadores calculados deben aparecer para ambos roles."""
+        from views.auditor.radar.tab_financiero import build
+        html_ro = build(self.audit_id, self.indicators, read_only=True)
+        html_aw = build(self.audit_id, self.indicators, read_only=False)
+        # Ambos deben mostrar la sección de indicadores
+        for html in (html_ro, html_aw):
+            self.assertIn("financiero", html.lower())
+
+
+if __name__ == "__main__":
+    unittest.main()

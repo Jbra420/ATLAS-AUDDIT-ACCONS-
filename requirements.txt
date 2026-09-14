@@ -1,0 +1,20 @@
+# ── Auddit MVP Local — Dependencias ──────────────────────────────────────────
+#
+# Runtime: ninguna dependencia externa. El proyecto usa exclusivamente la
+# biblioteca estándar de Python (≥ 3.10):
+#   - http.server, http.client, urllib, sqlite3, hashlib, html, csv, io, argparse
+#
+# Desarrollo / tests:
+#   - pytest: runner alternativo a unittest (opcional, unittest funciona sin instalarlo)
+#
+# Instalación del entorno de desarrollo:
+#   python3 -m pip install -r requirements.txt
+#
+# Correr tests (sin pytest):
+#   python3 -m unittest discover -s tests -v
+#
+# Correr tests (con pytest):
+#   python3 -m pytest tests/ -v
+
+# ── Herramientas de desarrollo ────────────────────────────────────────────────
+pytest>=7.0
