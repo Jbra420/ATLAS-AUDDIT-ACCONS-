@@ -6,12 +6,12 @@ from __future__ import annotations
 import sqlite3
 
 from database import list_users
-from ui.helpers import esc, form_value
+from ui.helpers import esc, form_value, csrf_input
 from ui.icons import SVG_ALERT, SVG_TRASH
 from ui.layout import layout
 
 
-def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
+def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "") -> str:
     """Genera el HTML de la página de administración de usuarios."""
     users = list_users()
     err = form_value(query, "err")
@@ -39,6 +39,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
         <div class="modal-title">Eliminar usuario</div>
         <div class="modal-desc">¿Estás seguro de que deseas eliminar a <strong id="deleteUserName"></strong>? Esta acción es permanente y no se puede deshacer.</div>
         <form method="post" action="/admin/users/delete" style="margin:0;">
+          {csrf_input(csrf_token)}
           <input type="hidden" name="user_id" id="deleteUserId">
           <div class="modal-actions">
             <button type="button" class="btn btn-outline" onclick="closeDeleteModal()">Cancelar</button>
@@ -70,6 +71,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
       <div class="panel col-4">
         <h2>Nuevo usuario</h2>
         <form method="post" action="/admin/users">
+          {csrf_input(csrf_token)}
           <label for="full_name">Nombre completo</label>
           <input id="full_name" name="full_name" required placeholder="Ej. María García">
           <label for="username_new">Usuario</label>

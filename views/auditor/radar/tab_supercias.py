@@ -1,6 +1,6 @@
 """views/auditor/radar/tab_supercias.py — Tab de estado societario (Supercias)."""
 from __future__ import annotations
-from ui.helpers import esc
+from ui.helpers import esc, csrf_input
 from ui.icons import SVG_EXTERNAL, SVG_SAVE
 from providers.supercias import SuperciasProvider
 
@@ -16,7 +16,7 @@ def _ic(label, value, css_extra=""):
     val_text = esc(v) if v else "Pendiente de confirmar"
     return f'<div class="info-card {css_extra}"><div class="info-card-label">{esc(label)}</div><div class="{val_cls}">{val_text}</div></div>'
 
-def build(audit_id, audit, profile, research, read_only: bool = False):
+def build(audit_id, audit, profile, research, read_only: bool = False, csrf_token: str = ""):
     ruc = audit["ruc"] or ""
     company_name = audit["company_name"]
     pv = lambda k: _pval(profile, k)
@@ -31,6 +31,7 @@ def build(audit_id, audit, profile, research, read_only: bool = False):
     <details style="margin-top:0">
       <summary style="font-size:13px;font-weight:600;color:var(--accent-base);cursor:pointer;margin-bottom:14px;">✎ Editar datos Supercias</summary>
       <form method="post" action="/auditor/radar/profile">
+        {csrf_input(csrf_token)}
         <input type="hidden" name="audit_id" value="{audit_id}">
         <input type="hidden" name="return_tab" value="supercias">
         <div class="grid">

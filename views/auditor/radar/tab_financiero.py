@@ -1,6 +1,6 @@
 """views/auditor/radar/tab_financiero.py — Tab de indicadores financieros."""
 from __future__ import annotations
-from ui.helpers import esc
+from ui.helpers import esc, csrf_input
 from ui.icons import SVG_ALERT, SVG_DOLLAR, SVG_SAVE
 
 
@@ -31,7 +31,7 @@ def _ind_card(label: str, value: str, threshold: float | None = None,
     )
 
 
-def build(audit_id: int, indicators: dict, read_only: bool = False) -> str:
+def build(audit_id: int, indicators: dict, read_only: bool = False, csrf_token: str = "") -> str:
     fin_alerts_html = ""
     for alerta in indicators.get("alertas", []):
         css = "alert-high" if alerta["tipo"] == "alto" else (
@@ -46,6 +46,7 @@ def build(audit_id: int, indicators: dict, read_only: bool = False) -> str:
         ✎ Ingresar / actualizar datos financieros
       </summary>
       <form method="post" action="/auditor/radar/financial">
+        {csrf_input(csrf_token)}
         <input type="hidden" name="audit_id" value="{audit_id}">
         <div class="grid">
           <div class="col-4"><label>Activo total (Balance)</label>

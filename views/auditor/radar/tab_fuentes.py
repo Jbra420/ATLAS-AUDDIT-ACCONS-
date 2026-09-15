@@ -1,7 +1,7 @@
 """views/auditor/radar/tab_fuentes.py — Tab de fuentes guiadas de consulta."""
 from __future__ import annotations
 from database import SOURCE_TYPES
-from ui.helpers import esc
+from ui.helpers import esc, csrf_input
 from ui.icons import SVG_EXTERNAL, SVG_SAVE, SOURCE_ICONS
 
 
@@ -18,7 +18,7 @@ def _source_option_html() -> str:
     return "".join(f'<option value="{esc(option)}">{esc(option)}</option>' for option in SOURCE_TYPES)
 
 
-def _evidence_form(audit_id: int) -> str:
+def _evidence_form(audit_id: int, csrf_token: str = "") -> str:
     return f"""
     <div class="evidence-capture-panel">
       <div class="evidence-capture-head">
@@ -28,6 +28,7 @@ def _evidence_form(audit_id: int) -> str:
         </div>
       </div>
       <form method="post" action="/auditor/source" class="evidence-form">
+        {csrf_input(csrf_token)}
         <input type="hidden" name="audit_id" value="{audit_id}">
         <div class="grid">
           <div class="col-4">
@@ -105,7 +106,7 @@ def _evidence_log(sources: list) -> str:
     """
 
 
-def build(audit_id: int, src_checks: list, sources: list | None = None, read_only: bool = False) -> str:
+def build(audit_id: int, src_checks: list, sources: list | None = None, read_only: bool = False, csrf_token: str = "") -> str:
     sources = sources or []
     src_cards = ""
     for sc in src_checks:
@@ -118,6 +119,7 @@ def build(audit_id: int, src_checks: list, sources: list | None = None, read_onl
         obs_input  = '' if consulted else '<input name="observacion" class="source-form-obs" placeholder="Observación (opcional)">'
         form_html = "" if read_only else f"""
             <form method="post" action="/auditor/radar/source-check" class="source-check-actions">
+              {csrf_input(csrf_token)}
               <input type="hidden" name="audit_id" value="{audit_id}">
               <input type="hidden" name="check_id" value="{sc['id']}">
               <input type="hidden" name="accion" value="{accion_val}">
@@ -143,6 +145,6 @@ def build(audit_id: int, src_checks: list, sources: list | None = None, read_onl
       <span>{'Modo solo lectura' if read_only else 'Trabajo del auditor'}</span>
     </div>
     <div class="source-check-grid">{src_cards if src_cards else '<p style="color:var(--muted-2);">No hay fuentes configuradas.</p>'}</div>
-    {'' if read_only else _evidence_form(audit_id)}
+    {'' if read_only else _evidence_form(audit_id, csrf_token)}
     {_evidence_log(sources)}
     """

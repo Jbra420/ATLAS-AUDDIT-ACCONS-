@@ -38,7 +38,9 @@ GET_ROUTES: dict[str, tuple[bool, bool, object]] = {
 POST_ROUTE_PATHS = [
     "/login",
     "/admin/users",
+    "/admin/users/delete",       # eliminar usuario (modal de confirmación)
     "/admin/companies",
+    "/admin/companies/reassign",
     "/auditor/radar",
     "/auditor/source",
     "/auditor/radar/search",

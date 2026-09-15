@@ -1,10 +1,10 @@
 """views/auditor/radar/tab_documentos.py — Tab de documentos económicos."""
 from __future__ import annotations
-from ui.helpers import esc
+from ui.helpers import esc, csrf_input
 from ui.icons import SVG_FILE
 
 
-def build(audit_id: int, audit: object, docs: list, read_only: bool = False) -> str:
+def build(audit_id: int, audit: object, docs: list, read_only: bool = False, csrf_token: str = "") -> str:
     docs_reviewed = sum(1 for d in docs if d["estado"] == "revisado")
     doc_items = ""
     for d in docs:
@@ -18,6 +18,7 @@ def build(audit_id: int, audit: object, docs: list, read_only: bool = False) -> 
             if read_only else
             f"""
             <form method="post" action="/auditor/radar/document" style="display:inline;">
+              {csrf_input(csrf_token)}
               <input type="hidden" name="audit_id" value="{audit_id}">
               <input type="hidden" name="doc_id" value="{d['id']}">
               <input type="hidden" name="accion" value="{accion}">

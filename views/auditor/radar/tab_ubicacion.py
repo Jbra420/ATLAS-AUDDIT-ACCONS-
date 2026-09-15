@@ -1,6 +1,6 @@
 """views/auditor/radar/tab_ubicacion.py — Tab de ubicación y domicilio."""
 from __future__ import annotations
-from ui.helpers import esc
+from ui.helpers import esc, csrf_input
 from ui.icons import SVG_MAP_PIN, SVG_SAVE
 
 def _lval(location, key):
@@ -9,7 +9,7 @@ def _lval(location, key):
         return (v or "").strip()
     return ""
 
-def build(audit_id, audit, location, read_only: bool = False):
+def build(audit_id, audit, location, read_only: bool = False, csrf_token: str = ""):
     lv = lambda k: _lval(location, k)
     addr_parts = [lv("calle"), lv("numero"), lv("interseccion"), lv("barrio"), lv("ciudad"), lv("provincia")]
     full_addr = ", ".join(p for p in addr_parts if p) or "Dirección pendiente de confirmar"
@@ -22,6 +22,7 @@ def build(audit_id, audit, location, read_only: bool = False):
     <details style="margin-top:0">
       <summary style="font-size:13px;font-weight:600;color:var(--accent-base);cursor:pointer;margin-bottom:14px;">✎ Editar ubicación</summary>
       <form method="post" action="/auditor/radar/profile">
+        {csrf_input(csrf_token)}
         <input type="hidden" name="audit_id" value="{audit_id}">
         <input type="hidden" name="return_tab" value="ubicacion">
         <div class="grid">

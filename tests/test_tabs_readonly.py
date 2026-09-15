@@ -28,6 +28,40 @@ from database import (
 from services.financial import compute_indicators
 
 
+def _sample_dossier() -> dict:
+    return {
+        "title": "Ficha final de resultados",
+        "status": "En construccion",
+        "closing": "El expediente debe completar los campos pendientes.",
+        "metrics": {
+            "source_percent": 45,
+            "completed_sources": 1,
+            "partial_sources": 2,
+            "pending_sources": 2,
+            "evidence_count": 1,
+            "reviewed_docs": 3,
+            "total_docs": 8,
+            "risk_count": 1,
+            "pending_count": 2,
+        },
+        "identity": [
+            {"label": "Razon social", "value": "GRUCANQUI CIA. LTDA"},
+            {"label": "RUC", "value": "0190377210001"},
+        ],
+        "source_status": [
+            {"title": "SRI", "status": "En avance", "completed": "4/6", "missing": "Obligaciones"},
+        ],
+        "evidence": [
+            {"title": "Consulta SERCOP", "type": "SERCOP", "notes": "Sin contratos registrados"},
+        ],
+        "financial": [
+            {"label": "Activo total", "value": "$100.00"},
+        ],
+        "risks": ["Revisar soporte financiero."],
+        "pending": ["Completar fuente SRI."],
+    }
+
+
 def _make_db() -> Path:
     tmp = tempfile.mkdtemp()
     db_path = Path(tmp) / "test_tabs.db"
@@ -186,6 +220,16 @@ class TestTabResumenReadOnly(unittest.TestCase):
         self.assertIsInstance(html_ro, str)
         self.assertIsInstance(html_aw, str)
         self.assertGreater(len(html_ro), 0)
+
+    def test_dossier_visible_without_admin_generate_action(self):
+        """El jefe puede ver y exportar la ficha final sin generar resumen."""
+        from views.auditor.radar.tab_resumen import build
+        html = build(self.audit_id, self.research, _sample_dossier(), read_only=True)
+
+        self.assertIn("Ficha final de resultados", html)
+        self.assertIn("/export/dossier", html)
+        self.assertIn("Consulta SERCOP", html)
+        self.assertNotIn("/auditor/radar/summary", html)
 
 
 class TestTabFinancieroReadOnly(unittest.TestCase):

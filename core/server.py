@@ -8,6 +8,8 @@ import csv
 import html
 import io
 import sqlite3
+import threading
+import time
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +27,7 @@ from database import (
     compute_progress,
     connect,
     create_company_audit,
+    reassign_audit,
     create_session,
     create_user,
     destroy_session,
@@ -32,6 +35,7 @@ from database import (
     get_company_location,
     get_company_profile,
     get_financial_snapshot,
+    get_csrf_token,
     get_research,
     init_db,
     list_admin_audits,
@@ -53,16 +57,20 @@ from database import (
     refresh_summary,
     seed_demo_radar,
     update_research,
+    patch_research,
     upsert_company_profile,
     upsert_company_location,
     upsert_financial_snapshot,
     user_from_session,
+    validate_csrf_token,
 )
 from services.ruc_validator import validate_ruc
 from services.summary import extract_signals, generate_summary
 from services.financial import compute_indicators
+from services.company_search import build_source_map
+from services.dossier import build_dossier_model, build_dossier_text
 from ui.layout import layout, set_css
-from ui.helpers import esc, form_value, _now
+from ui.helpers import esc, form_value, _now, csrf_input
 from core.router import GET_ROUTES
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -79,6 +87,48 @@ def load_css() -> None:
     except FileNotFoundError:
         _CSS_CONTENT = "/* atlas.css no encontrado */"
     set_css(_CSS_CONTENT)
+
+
+class _LoginRateLimiter:
+    """Rate limiter simple para el endpoint /login.
+
+    Permite hasta MAX_ATTEMPTS intentos fallidos por IP.
+    Bloquea la IP durante LOCKOUT_SECONDS segundos al superar el límite.
+    Thread-safe mediante threading.Lock.
+    """
+    MAX_ATTEMPTS = 5
+    LOCKOUT_SECONDS = 15 * 60  # 15 minutos
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        # ip -> {"count": int, "locked_until": float}
+        self._state: dict[str, dict] = {}
+
+    def is_blocked(self, ip: str) -> bool:
+        with self._lock:
+            state = self._state.get(ip)
+            if not state:
+                return False
+            if state["locked_until"] and time.monotonic() < state["locked_until"]:
+                return True
+            # Lock expirado: limpiar
+            if state.get("locked_until") and time.monotonic() >= state["locked_until"]:
+                del self._state[ip]
+            return False
+
+    def record_failure(self, ip: str) -> None:
+        with self._lock:
+            state = self._state.setdefault(ip, {"count": 0, "locked_until": 0.0})
+            state["count"] += 1
+            if state["count"] >= self.MAX_ATTEMPTS:
+                state["locked_until"] = time.monotonic() + self.LOCKOUT_SECONDS
+
+    def record_success(self, ip: str) -> None:
+        with self._lock:
+            self._state.pop(ip, None)
+
+
+_LOGIN_LIMITER = _LoginRateLimiter()
 
 class AtlasHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -163,6 +213,23 @@ class AtlasHandler(BaseHTTPRequestHandler):
             return None
         return user
 
+    def get_csrf_for_session(self) -> str:
+        """Retorna el CSRF token de la sesión activa, o cadena vacía si no hay sesión."""
+        return get_csrf_token(self.get_cookie_token())
+
+    def _reject_csrf(self) -> bool:
+        """Valida el CSRF token en un POST. Retorna True si debe rechazarse la petición."""
+        submitted = form_value(self._cached_form, "_csrf")
+        if not validate_csrf_token(self.get_cookie_token(), submitted):
+            user = self.current_user()
+            self.send_html(
+                layout("Solicitud inválida", user,
+                       '<div class="error-msg">Solicitud rechazada: token de seguridad inválido o expirado. Recarga la página e inténtalo de nuevo.</div>'),
+                403,
+            )
+            return True
+        return False
+
     # ── GET routing ─────────────────────────────────────────────────────
 
     def do_GET(self) -> None:
@@ -194,6 +261,12 @@ class AtlasHandler(BaseHTTPRequestHandler):
             if current:
                 self.export_summary_csv(current, query)
             return
+
+        if path == "/export/dossier":
+            current = self.require_user()
+            if current:
+                self.export_dossier_txt(current, query)
+            return
             
         if path == "/":
             user = self.current_user()
@@ -217,8 +290,21 @@ class AtlasHandler(BaseHTTPRequestHandler):
                 if not user: return
             else:
                 user = self.current_user()
-                
-            html_content = handler_fn(user, query, path)
+
+            # Pasar csrf_token a todas las rutas que tienen formularios POST
+            csrf_tok = get_csrf_token(self.get_cookie_token())
+            if path in ("/auditor/radar", "/admin/audit"):
+                from views.auditor.radar import page as radar_page
+                html_content = radar_page.render(user, query, path, csrf_token=csrf_tok)
+            elif path in ("/admin/companies",):
+                from views.admin import companies as admin_companies_view
+                html_content = admin_companies_view.render(user, query, path, csrf_token=csrf_tok)
+            elif path in ("/admin/users",):
+                from views.admin import users as admin_users_view
+                html_content = admin_users_view.render(user, query, path, csrf_token=csrf_tok)
+            else:
+                html_content = handler_fn(user, query, path)
+
             if html_content:
                 self.send_html(html_content)
             return
@@ -230,19 +316,31 @@ class AtlasHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
-        form = self.parse_post()
+        self._cached_form = self.parse_post()  # guardar para _reject_csrf
+        form = self._cached_form
 
         if path == "/login":
+            # /login no tiene sesión todavía → excluido de CSRF
+            client_ip = self.client_address[0]
+            if _LOGIN_LIMITER.is_blocked(client_ip):
+                self.redirect("/login?err=Demasiados+intentos.+Espere+15+minutos+e+int%C3%A9ntelo+de+nuevo.")
+                return
             username = form_value(form, "username")
             password = form_value(form, "password")
             user = authenticate(username, password)
             if not user:
-                # Login err is handled by redirect now or sending html
+                _LOGIN_LIMITER.record_failure(client_ip)
                 self.redirect("/login?err=Usuario+o+clave+incorrecta.")
                 return
+            _LOGIN_LIMITER.record_success(client_ip)
             token = create_session(user["id"])
-            cookie = f"{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={8 * 3600}"
+
+            cookie = f"{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={8 * 3600}"
             self.redirect("/admin" if user["role"] == "admin" else "/auditor", cookie=cookie)
+            return
+
+        # Toda ruta POST que no sea /login requiere CSRF válido
+        if self._reject_csrf():
             return
 
         if path == "/admin/users":
@@ -296,6 +394,19 @@ class AtlasHandler(BaseHTTPRequestHandler):
                 self.redirect(f"/admin/companies?err={quote_plus(str(exc))}")
             return
 
+        if path == "/admin/companies/reassign":
+            admin = self.require_admin()
+            if not admin:
+                return
+            try:
+                audit_id = int(form_value(form, "audit_id", "0"))
+                new_auditor_id = int(form_value(form, "new_auditor_id", "0"))
+                reassign_audit(audit_id, new_auditor_id)
+                self.redirect("/admin/companies?msg=Auditor+reasignado+correctamente")
+            except Exception as exc:
+                self.redirect(f"/admin/companies?err={quote_plus(str(exc))}")
+            return
+
         if path == "/auditor/radar":
             current = self.require_auditor()
             if not current:
@@ -309,22 +420,25 @@ class AtlasHandler(BaseHTTPRequestHandler):
                     403,
                 )
                 return
-            data = {
-                "commercial_name": form_value(form, "commercial_name"),
-                "economic_activity": form_value(form, "economic_activity"),
-                "legal_status": form_value(form, "legal_status"),
-                "representative": form_value(form, "representative"),
-                "address": form_value(form, "address"),
-                "tax_obligations": form_value(form, "tax_obligations"),
-                "public_contracting": form_value(form, "public_contracting"),
-                "supercias_info": form_value(form, "supercias_info"),
-                "sri_info": form_value(form, "sri_info"),
-                "sercop_info": form_value(form, "sercop_info"),
-                "observations": form_value(form, "observations"),
-                "risk_flags": form_value(form, "risk_flags"),
-                "pasted_text": form_value(form, "pasted_text"),
-            }
-            update_research(audit_id, current["id"], data, mark_ready=False)
+            # Solo actualizar los campos presentes (observaciones y banderas de riesgo)
+            # patch_research hace UPDATE selectivo sin tocar el resto de la investigación
+            fields = {}
+            for key in ("observations", "risk_flags", "pasted_text"):
+                val = form_value(form, key)
+                if val:  # solo incluir si el campo fue enviado y tiene contenido
+                    fields[key] = val
+            # Si vienen campos de investigación completa (multi-campo), usamlos todos
+            research_keys = (
+                "commercial_name", "economic_activity", "legal_status",
+                "representative", "address", "tax_obligations",
+                "public_contracting", "supercias_info", "sri_info",
+                "sercop_info", "pasted_text",
+            )
+            for key in research_keys:
+                val = form_value(form, key)
+                if val:
+                    fields[key] = val
+            patch_research(audit_id, current["id"], fields)
             msg = "Avance guardado correctamente"
             self.redirect(f"/auditor/radar?audit_id={audit_id}&msg={quote_plus(msg)}&tab=resumen")
             return
@@ -616,6 +730,36 @@ class AtlasHandler(BaseHTTPRequestHandler):
         filename = f"atlas_ficha_{safe_name}_{audit['period']}.csv"
         self.send_download(out.getvalue(), filename, content_type="text/csv; charset=utf-8")
 
+    def export_dossier_txt(self, user: sqlite3.Row, query: dict) -> None:
+        audit_id = int(form_value(query, "audit_id", "0"))
+        audit = get_audit(audit_id, user)
+        if not audit:
+            self.send_html(layout("Acceso denegado", user, '<div class="error-msg">No disponible.</div>'), 403)
+            return
+        research = get_research(audit_id)
+        profile = get_company_profile(audit_id)
+        location = get_company_location(audit_id)
+        admins = list_administrators(audit_id)
+        shareholders = list_shareholders(audit_id)
+        docs = list_economic_documents(audit_id)
+        snapshot = get_financial_snapshot(audit_id)
+        source_checks = list_source_checks(audit_id)
+        sources = list_sources(audit_id)
+        indicators = compute_indicators(dict(snapshot) if snapshot else None)
+        source_map = build_source_map(
+            audit, research, profile, location, admins, shareholders,
+            docs, snapshot, source_checks, sources,
+        )
+        dossier = build_dossier_model(
+            audit, research, profile, location, admins, shareholders,
+            docs, snapshot, indicators, source_map, sources,
+        )
+        safe_name = "".join(
+            ch for ch in audit["company_name"].lower().replace(" ", "_") if ch.isalnum() or ch == "_"
+        )[:40]
+        filename = f"atlas_ficha_final_{safe_name}_{audit['period']}.txt"
+        self.send_download(build_dossier_text(dossier), filename)
+
 
 def run() -> None:
     global _QUIET_MODE
@@ -627,6 +771,13 @@ def run() -> None:
         action="store_true",
         help="Suprimir el log de peticiones HTTP en la terminal",
     )
+    parser.add_argument(
+        "--tls",
+        action="store_true",
+        help="Habilitar HTTPS con certificado TLS autofirmado (recomendado en red local)",
+    )
+    parser.add_argument("--cert", default="cert.pem", help="Ruta al certificado TLS (PEM)")
+    parser.add_argument("--key",  default="key.pem",  help="Ruta a la clave privada TLS (PEM)")
     args = parser.parse_args()
     _QUIET_MODE = args.quiet
 
@@ -634,8 +785,40 @@ def run() -> None:
     init_db(DB_PATH)
 
     server = ThreadingHTTPServer((args.host, args.port), AtlasHandler)
+
+    if args.tls:
+        import ssl
+        cert_path = Path(args.cert)
+        key_path  = Path(args.key)
+        if not cert_path.exists() or not key_path.exists():
+            # Generar certificado autofirmado con subprocess si openssl está disponible
+            import subprocess
+            print("  ⚠ TLS: generando certificado autofirmado (solo para desarrollo)...")
+            try:
+                subprocess.run(
+                    [
+                        "openssl", "req", "-x509", "-newkey", "rsa:2048",
+                        "-keyout", str(key_path), "-out", str(cert_path),
+                        "-days", "365", "-nodes", "-subj",
+                        "/C=EC/ST=Pichincha/L=Quito/O=Atlas-Auddit/CN=localhost",
+                    ],
+                    check=True, capture_output=True,
+                )
+            except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+                print(f"  ✗ No se pudo generar el certificado: {exc}")
+                print("  Instale openssl o provea --cert y --key manualmente.")
+                raise SystemExit(1)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
+        server.socket = ctx.wrap_socket(server.socket, server_side=True)
+        scheme = "https"
+    else:
+        scheme = "http"
+        print("  ⚠  ADVERTENCIA: servidor HTTP sin TLS.")
+        print("     En producción use --tls o coloque Atlas detrás de Nginx/Caddy con HTTPS.")
+
     print("")
-    print(f"  ▲ Atlas · Auddit v2.0 (Redesign) — http://{args.host}:{args.port}")
+    print(f"  ▲ Atlas · Auddit v2.0 — {scheme}://{args.host}:{args.port}")
     print(f"  Base de datos     : {DB_PATH}")
     print("  Credenciales demo : admin/admin123  ·  auditor/auditor123")
     if _QUIET_MODE:
@@ -643,3 +826,4 @@ def run() -> None:
     print("  Ctrl+C para salir.")
     print("")
     server.serve_forever()
+

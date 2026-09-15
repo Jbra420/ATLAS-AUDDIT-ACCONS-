@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import re
 import secrets
 import sqlite3
@@ -149,7 +150,8 @@ def init_db(db_path: Path | str = DB_PATH) -> None:
                 token_hash TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 created_at TEXT NOT NULL,
-                expires_at TEXT NOT NULL
+                expires_at TEXT NOT NULL,
+                csrf_token TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS companies (
@@ -312,26 +314,28 @@ def init_db(db_path: Path | str = DB_PATH) -> None:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Agrega columnas nuevas a tablas existentes (migración idempotente)."""
-    existing = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(research_notes)")
-    }
-    new_cols = [
+    # research_notes
+    rn_existing = {row[1] for row in conn.execute("PRAGMA table_info(research_notes)")}
+    for col, col_type in [
         ("commercial_name", "TEXT"),
         ("supercias_info", "TEXT"),
         ("sri_info", "TEXT"),
         ("sercop_info", "TEXT"),
-    ]
-    for col, col_type in new_cols:
-        if col not in existing:
+    ]:
+        if col not in rn_existing:
             conn.execute(f"ALTER TABLE research_notes ADD COLUMN {col} {col_type}")
+
+    # sessions: agregar csrf_token si la BD fue creada antes de esta versión
+    sess_existing = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    if "csrf_token" not in sess_existing:
+        conn.execute("ALTER TABLE sessions ADD COLUMN csrf_token TEXT NOT NULL DEFAULT ''")
 
 
 # ---------------------------------------------------------------------------
 # Seed de datos demo
 # ---------------------------------------------------------------------------
 
-DEMO_RUC = "0190377210001"
+DEMO_RUC = os.environ.get("DEMO_RUC", "0190377210001")
 DEMO_COMPANY = "GRUCANQUI CIA. LTDA"
 
 
@@ -576,14 +580,44 @@ def delete_user(user_id: int, db_path: Path | str = DB_PATH) -> str:
 
 def create_session(user_id: int, db_path: Path | str = DB_PATH) -> str:
     token = secrets.token_urlsafe(32)
+    csrf = secrets.token_hex(24)  # 48-char hex CSRF token vinculado a la sesión
     created_at = now_iso()
     expires_at = (datetime.now() + timedelta(hours=8)).replace(microsecond=0).isoformat(sep=" ")
     with connect(db_path) as conn:
         conn.execute(
-            "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-            (session_hash(token), user_id, created_at, expires_at),
+            "INSERT INTO sessions (token_hash, user_id, created_at, expires_at, csrf_token) VALUES (?, ?, ?, ?, ?)",
+            (session_hash(token), user_id, created_at, expires_at, csrf),
         )
     return token
+
+
+def get_csrf_token(session_token: str | None, db_path: Path | str = DB_PATH) -> str:
+    """Retorna el CSRF token asociado a la sesión activa. Cadena vacía si no hay sesión."""
+    if not session_token:
+        return ""
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT csrf_token FROM sessions WHERE token_hash = ? AND expires_at >= ?",
+            (session_hash(session_token), now_iso()),
+        ).fetchone()
+    return row["csrf_token"] if row else ""
+
+
+def validate_csrf_token(
+    session_token: str | None,
+    submitted_csrf: str,
+    db_path: Path | str = DB_PATH,
+) -> bool:
+    """Valida el CSRF token enviado en un formulario contra el almacenado en la sesión.
+
+    Usa hmac.compare_digest para evitar timing attacks.
+    """
+    if not session_token or not submitted_csrf:
+        return False
+    expected = get_csrf_token(session_token, db_path)
+    if not expected:
+        return False
+    return hmac.compare_digest(expected, submitted_csrf)
 
 
 def user_from_session(token: str | None, db_path: Path | str = DB_PATH) -> sqlite3.Row | None:
@@ -732,13 +766,28 @@ def list_admin_audits(db_path: Path | str = DB_PATH) -> list[sqlite3.Row]:
             conn.execute(
                 """
                 SELECT a.*, c.name AS company_name, c.ruc, c.city, c.activity_hint,
-                       u.full_name AS auditor_name, u.username AS auditor_username
+                       u.full_name AS auditor_name, u.username AS auditor_username,
+                       u.active AS auditor_active
                 FROM audits a
                 JOIN companies c ON c.id = a.company_id
                 JOIN users u ON u.id = a.assigned_auditor_id
                 ORDER BY a.updated_at DESC, a.id DESC
                 """
             )
+        )
+
+
+def reassign_audit(audit_id: int, new_auditor_id: int, db_path: Path | str = DB_PATH) -> None:
+    ts = now_iso()
+    with connect(db_path) as conn:
+        # Check if the new auditor exists and is active
+        auditor = conn.execute("SELECT id FROM users WHERE id = ? AND role = 'auditor' AND active = 1", (new_auditor_id,)).fetchone()
+        if not auditor:
+            raise ValueError("El nuevo auditor no es válido o no está activo.")
+        
+        conn.execute(
+            "UPDATE audits SET assigned_auditor_id = ?, updated_at = ? WHERE id = ?",
+            (new_auditor_id, ts, audit_id)
         )
 
 
@@ -904,6 +953,42 @@ def update_research(
         return summary
 
 
+def patch_research(
+    audit_id: int,
+    user_id: int,
+    fields: dict[str, str],
+    db_path: Path | str = DB_PATH,
+) -> None:
+    """Actualiza solo los campos presentes en 'fields' en research_notes (PATCH semántico).
+
+    A diferencia de update_research, NO toca columnas no incluidas en 'fields'.
+    Garantiza que la fila exista antes de intentar el UPDATE.
+    Columnas permitidas para evitar inyección SQL:
+    """
+    ALLOWED = {
+        "commercial_name", "economic_activity", "legal_status", "representative",
+        "address", "tax_obligations", "public_contracting", "supercias_info",
+        "sri_info", "sercop_info", "observations", "risk_flags", "pasted_text",
+    }
+    safe = {k: v.strip() for k, v in fields.items() if k in ALLOWED}
+    if not safe:
+        return
+    ts = now_iso()
+    with connect(db_path) as conn:
+        # Garantizar que la fila exista
+        conn.execute(
+            "INSERT OR IGNORE INTO research_notes (audit_id, updated_by, updated_at) VALUES (?, ?, ?)",
+            (audit_id, user_id, ts),
+        )
+        # UPDATE solo las columnas enviadas
+        set_clause = ", ".join(f"{col} = ?" for col in safe)
+        values = list(safe.values()) + [ts, user_id, audit_id]
+        conn.execute(
+            f"UPDATE research_notes SET {set_clause}, updated_at = ?, updated_by = ? WHERE audit_id = ?",  # noqa: S608
+            values,
+        )
+
+
 def refresh_summary(audit_id: int, db_path: Path | str = DB_PATH) -> str:
     with connect(db_path) as conn:
         audit = conn.execute(
@@ -977,11 +1062,11 @@ def refresh_summary(audit_id: int, db_path: Path | str = DB_PATH) -> str:
 # Fuentes
 # ---------------------------------------------------------------------------
 
-def list_sources(audit_id: int, db_path: Path | str = DB_PATH) -> list[sqlite3.Row]:
+def list_sources(audit_id: int, db_path: Path | str = DB_PATH, *, limit: int = 50, offset: int = 0) -> list[sqlite3.Row]:
     with connect(db_path) as conn:
         return list(conn.execute(
-            "SELECT * FROM sources WHERE audit_id = ? ORDER BY created_at DESC, id DESC",
-            (audit_id,),
+            "SELECT * FROM sources WHERE audit_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+            (audit_id, limit, offset),
         ))
 
 
@@ -1244,11 +1329,11 @@ def list_shareholders(audit_id: int, db_path: Path | str = DB_PATH) -> list[sqli
 # Radar Empresarial — Documentos económicos
 # ---------------------------------------------------------------------------
 
-def list_economic_documents(audit_id: int, db_path: Path | str = DB_PATH) -> list[sqlite3.Row]:
+def list_economic_documents(audit_id: int, db_path: Path | str = DB_PATH, *, limit: int = 50, offset: int = 0) -> list[sqlite3.Row]:
     with connect(db_path) as conn:
         return list(conn.execute(
-            "SELECT * FROM economic_documents WHERE audit_id = ? ORDER BY id",
-            (audit_id,),
+            "SELECT * FROM economic_documents WHERE audit_id = ? ORDER BY id LIMIT ? OFFSET ?",
+            (audit_id, limit, offset),
         ))
 
 

@@ -7,12 +7,12 @@ import sqlite3
 
 from database import list_admin_audits, list_auditors
 from ui.components import badge
-from ui.helpers import esc, form_value
+from ui.helpers import esc, form_value, csrf_input
 from ui.icons import SVG_ALERT, SVG_ARROW_RIGHT, SVG_INFO
 from ui.layout import layout
 
 
-def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
+def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "") -> str:
     """Genera el HTML de la página de gestión de empresas."""
     auditors = list_auditors()
     audits = list_admin_audits()
@@ -25,21 +25,45 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
     if not options:
         options = '<option disabled>No hay auditores registrados</option>'
 
-    rows_html = "".join(
-        f"""<tr>
+    rows_html = []
+    for a in audits:
+        is_active = a['auditor_active']
+        auditor_label = esc(a['auditor_name']) if is_active else f'<span style="color:var(--danger)">Libre (antes: {esc(a["auditor_name"])})</span>'
+        
+        # Build options for reassignment dropdown, excluding the current assigned auditor
+        reassign_options = "".join(
+            f'<option value="{aud["id"]}">{esc(aud["full_name"])}</option>'
+            for aud in auditors if aud["id"] != a['assigned_auditor_id']
+        )
+        
+        if reassign_options:
+            reassign_form = f"""
+            <form method="post" action="/admin/companies/reassign" style="display:inline; margin:0;" title="Reasignar">
+              {csrf_input(csrf_token)}
+              <input type="hidden" name="audit_id" value="{a['id']}">
+              <select name="new_auditor_id" onchange="this.form.submit()" class="form-control form-control-sm" style="width:auto; display:inline-block; padding: 2px 4px; font-size: 12px;">
+                <option value="" disabled selected>Reasignar...</option>
+                {reassign_options}
+              </select>
+            </form>
+            """
+        else:
+            reassign_form = ""
+
+        rows_html.append(f"""<tr>
           <td class="td-company">
             <strong>{esc(a['company_name'])}</strong>
             <span>RUC: {esc(a['ruc'] or '—')}</span>
           </td>
           <td>{esc(a['period'])}</td>
-          <td>{esc(a['auditor_name'])}</td>
+          <td>{auditor_label}<br>{reassign_form}</td>
           <td>{badge(a['status'])}</td>
           <td>
             <a class="btn btn-sm" href="/admin/audit?audit_id={a['id']}">{SVG_ARROW_RIGHT} Seguimiento</a>
           </td>
-        </tr>"""
-        for a in audits
-    )
+        </tr>""")
+    
+    rows_html = "".join(rows_html)
 
     content = f"""
     <div class="mb-16">
@@ -52,6 +76,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
       <div class="panel col-4">
         <h2>Registrar empresa</h2>
         <form method="post" action="/admin/companies">
+          {csrf_input(csrf_token)}
           <label for="comp_name">Razón social *</label>
           <input id="comp_name" name="name" required placeholder="Ej. ACME Cía. Ltda.">
 

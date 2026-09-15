@@ -23,8 +23,9 @@ from database import (
 )
 from services.financial import compute_indicators
 from services.company_search import build_source_map
+from services.dossier import build_dossier_model
 from ui.components import render_progress_track, ruc_banner_html
-from ui.helpers import esc, form_value
+from ui.helpers import esc, form_value, csrf_input
 from ui.icons import (
     SVG_ALERT,
     SVG_ARROW_RIGHT,
@@ -105,7 +106,7 @@ def _render_source_map(source_map: dict, read_only: bool) -> str:
     """
 
 
-def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
+def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "") -> str:
     """Genera el HTML completo del Radar Empresarial."""
     audit_id = int(form_value(query, "audit_id", "0"))
     audit = get_audit(audit_id, user)
@@ -136,11 +137,17 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
 
     # ── Indicadores financieros ───────────────────────────────────────────
     indicators = compute_indicators(dict(snapshot) if snapshot else None)
+    dossier = build_dossier_model(
+        audit, research, profile, location, admins, shareholders,
+        docs, snapshot, indicators, source_map, sources,
+    )
 
     # ── Progress ──────────────────────────────────────────────────────────
     company_name = audit["company_name"]
     ruc = audit["ruc"]
     active_tab = form_value(query, "tab", "sri")
+
+    csrf_tok = csrf_token  # recibido desde el server con el token de la sesión activa
 
     # ── Importar tabs desde sus propios módulos ───────────────────────────
     from .tab_sri import build as build_sri
@@ -153,15 +160,15 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
     from .tab_fuentes import build as build_fuentes
     from .tab_resumen import build as build_resumen
 
-    tab_sri = build_sri(audit_id, audit, profile, research, read_only=is_read_only)
-    tab_supercias = build_supercias(audit_id, audit, profile, research, read_only=is_read_only)
-    tab_ubicacion = build_ubicacion(audit_id, audit, location, read_only=is_read_only)
+    tab_sri = build_sri(audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok)
+    tab_supercias = build_supercias(audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok)
+    tab_ubicacion = build_ubicacion(audit_id, audit, location, read_only=is_read_only, csrf_token=csrf_tok)
     tab_admins = build_admins(audit_id, audit, admins, read_only=is_read_only)
     tab_accionistas = build_accionistas(audit_id, audit, shareholders, read_only=is_read_only)
-    tab_documentos = build_documentos(audit_id, audit, docs, read_only=is_read_only)
-    tab_financiero = build_financiero(audit_id, indicators, read_only=is_read_only)
-    tab_fuentes = build_fuentes(audit_id, src_checks, sources, read_only=is_read_only)
-    tab_resumen = build_resumen(audit_id, research, read_only=is_read_only)
+    tab_documentos = build_documentos(audit_id, audit, docs, read_only=is_read_only, csrf_token=csrf_tok)
+    tab_financiero = build_financiero(audit_id, indicators, read_only=is_read_only, csrf_token=csrf_tok)
+    tab_fuentes = build_fuentes(audit_id, src_checks, sources, read_only=is_read_only, csrf_token=csrf_tok)
+    tab_resumen = build_resumen(audit_id, research, dossier, read_only=is_read_only, csrf_token=csrf_tok)
 
     # Panel lateral de señales eliminado a petición del usuario para mejor uso del espacio horizontal.
 
@@ -198,6 +205,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
       </p>
       {ruc_banner}
       <form method="post" action="/auditor/radar/search" class="radar-search-form">
+        {csrf_input(csrf_tok)}
         <input type="hidden" name="audit_id" value="{audit_id}">
         <div class="radar-search-fields">
           <div>
@@ -256,6 +264,9 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
           <a class="btn btn-sm" href="/export/csv?audit_id={audit_id}" title="Descargar ficha en .csv">
             {SVG_DOWNLOAD} Exportar .csv
           </a>
+          <a class="btn btn-sm" href="/export/dossier?audit_id={audit_id}" title="Descargar ficha final en .txt">
+            {SVG_DOWNLOAD} Ficha final
+          </a>
         """
     else:
         action_bar_right = f"""
@@ -267,6 +278,9 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
           </a>
           <a class="btn btn-sm" href="/export/csv?audit_id={audit_id}" title="Descargar ficha en .csv">
             {SVG_DOWNLOAD} Exportar .csv
+          </a>
+          <a class="btn btn-sm" href="/export/dossier?audit_id={audit_id}" title="Descargar ficha final en .txt">
+            {SVG_DOWNLOAD} Ficha final
           </a>
         """
     action_bar = f"""
@@ -286,14 +300,25 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
     # ── JS para tabs ──────────────────────────────────────────────────────
     tab_js = """
     <script>
-    function switchTab(id) {
+    function switchTab(id, updateUrl = true) {
       document.querySelectorAll('.radar-tab-pane').forEach(p => p.classList.remove('active'));
       document.querySelectorAll('.radar-tab-btn').forEach(b => b.classList.remove('active'));
       const pane = document.getElementById('tab-' + id);
       const btn  = document.getElementById('tab-btn-' + id);
       if (pane) pane.classList.add('active');
       if (btn)  btn.classList.add('active');
+      if (updateUrl) {
+        const url = new URL(window.location);
+        url.searchParams.set('tab', id);
+        window.history.replaceState({tab: id}, '', url);
+      }
     }
+    window.addEventListener('popstate', (e) => {
+       const urlParams = new URLSearchParams(window.location.search);
+       const tab = urlParams.get('tab') || 'sri';
+       switchTab(tab, false);
+    });
+
     const rucInput = document.getElementById('rs_ruc');
     const rucHint  = document.getElementById('ruc-hint-text');
     if (rucInput && rucHint) {

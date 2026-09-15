@@ -1,6 +1,6 @@
 """views/auditor/radar/tab_sri.py — Tab de identidad tributaria (SRI)."""
 from __future__ import annotations
-from ui.helpers import esc
+from ui.helpers import esc, csrf_input
 from ui.icons import SVG_EXTERNAL, SVG_SAVE
 from providers.sri import SriProvider
 
@@ -24,7 +24,7 @@ def _pval(profile, key: str) -> str:
     return ""
 
 
-def build(audit_id: int, audit: object, profile: object, research: object, read_only: bool = False) -> str:
+def build(audit_id: int, audit: object, profile: object, research: object, read_only: bool = False, csrf_token: str = "") -> str:
     ruc = audit["ruc"] or ""
     company_name = audit["company_name"]
     pv = lambda k: _pval(profile, k)
@@ -45,6 +45,7 @@ def build(audit_id: int, audit: object, profile: object, research: object, read_
         ✎ Editar datos SRI manualmente
       </summary>
       <form method="post" action="/auditor/radar/profile">
+        {csrf_input(csrf_token)}
         <input type="hidden" name="audit_id" value="{audit_id}">
         <input type="hidden" name="return_tab" value="sri">
         <div class="grid">
