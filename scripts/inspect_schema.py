@@ -1,4 +1,3 @@
-import sqlite3
 from database import DB_PATH, connect
 
 def check_schema():

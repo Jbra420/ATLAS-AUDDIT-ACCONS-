@@ -7,7 +7,7 @@ La abstracción permite añadir conectores reales en el futuro sin cambiar la ap
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass

@@ -3,10 +3,7 @@ tests/test_summary.py — Pruebas del generador de resumen estructurado de Atlas
 """
 from __future__ import annotations
 
-import sqlite3
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import MagicMock
 
 from services.summary import generate_summary, extract_signals, risk_suggestions

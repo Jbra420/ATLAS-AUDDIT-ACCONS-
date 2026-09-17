@@ -9,7 +9,6 @@ from pathlib import Path
 
 from database import (
     authenticate,
-    connect,
     create_company_audit,
     get_audit,
     get_company_location,

@@ -4,8 +4,6 @@ Depende de ui/icons y ui/helpers únicamente. Nunca importa de views/.
 """
 from __future__ import annotations
 
-import sqlite3
-
 from database import AUDIT_STATUSES, STAGE_FIELDS
 from services.ruc_validator import validate_ruc
 from ui.helpers import esc
