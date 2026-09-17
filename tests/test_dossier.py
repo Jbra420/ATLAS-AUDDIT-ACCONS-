@@ -105,6 +105,13 @@ class TestDossier(unittest.TestCase):
         self.assertIn("En construccion", text)
         self.assertGreater(dossier["metrics"]["pending_count"], 0)
 
+    def test_document_rows_use_real_document_names(self):
+        dossier = self._build()
+        names = [row["name"] for row in dossier["documents"]]
+
+        self.assertIn("Balance / Estado de Situación Financiera", names)
+        self.assertNotIn("Documento sin nombre", names)
+
     def test_demo_loaded_dossier_uses_company_profile(self):
         load_demo_if_ruc_matches(self.audit_id, "0190377210001", self.db)
         dossier = self._build()

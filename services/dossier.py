@@ -85,9 +85,8 @@ def _document_rows(docs: list[RowLike]) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for doc in docs or []:
         rows.append({
-            "name": _clean(_get(doc, "name"), "Documento sin nombre"),
+            "name": _clean(_get(doc, "nombre"), "Documento sin nombre"),
             "status": _clean(_get(doc, "estado"), "pendiente"),
-            "notes": _clean(_get(doc, "notes"), "Sin observaciones"),
         })
     return rows
 
@@ -222,7 +221,7 @@ def build_dossier_text(dossier: dict[str, Any]) -> str:
     lines += ["", "4. DOCUMENTOS ECONOMICOS", "-" * 72]
     lines.append(f"Revisados: {metrics.get('reviewed_docs', 0)}/{metrics.get('total_docs', 0)}")
     for row in dossier.get("documents", []):
-        lines.append(f"- {row['name']}: {row['status']} | {row['notes']}")
+        lines.append(f"- {row['name']}: {row['status']}")
 
     lines += ["", "5. INDICADORES FINANCIEROS", "-" * 72]
     for item in dossier.get("financial", []):
