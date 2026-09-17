@@ -13,7 +13,6 @@ from views import auth_views
 from views.admin import dashboard as admin_dashboard
 from views.admin import users as admin_users
 from views.admin import companies as admin_companies
-from views.admin import audit_detail as admin_audit_detail
 from views.auditor import dashboard as auditor_dashboard
 from views.auditor.radar import page as radar_page
 
