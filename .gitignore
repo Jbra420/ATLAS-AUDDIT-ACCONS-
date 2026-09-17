@@ -8,3 +8,7 @@ venv/
 .env
 cookies.txt
 .DS_Store
+
+# Insumos crudos de catastro (SRI) usados por scripts/update_catastro.py:
+# pueden pesar cientos de MB y no deben entrar al historial de git.
+SRI_RUC_*.csv
