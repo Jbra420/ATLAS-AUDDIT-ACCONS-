@@ -71,28 +71,35 @@ def _mod11_check_private(digits: list[int]) -> bool:
     return expected == digits[9]
 
 
-def validate_ruc(ruc: str) -> tuple[bool, str]:
+def validate_ruc(ruc: str) -> tuple[bool, bool, str]:
     """
     Valida un RUC ecuatoriano.
 
     Returns:
-        (True, mensaje_ok) si el RUC pasa las validaciones.
-        (False, mensaje_error) si hay algún problema.
+        (valid, warn, message)
+          valid   -- True si el formato es aceptable. No se bloquea solo
+                     porque el dígito verificador no coincida (ver 'warn');
+                     las bases oficiales son la fuente de verdad final.
+          warn    -- True si valid es True pero el dígito verificador no
+                     coincide (posible RUC de prueba/ficticio). El llamador
+                     decide cómo mostrar esa advertencia; el mensaje ya no
+                     lleva marcadores de emoji para señalarla.
+          message -- texto explicativo, sin emojis.
     """
     if not ruc:
-        return False, "El RUC no puede estar vacío."
+        return False, False, "El RUC no puede estar vacío."
 
     ruc = ruc.strip()
 
     if not re.fullmatch(r"\d{13}", ruc):
-        return False, f"El RUC debe tener exactamente 13 dígitos numéricos. Se recibió: '{ruc}'."
+        return False, False, f"El RUC debe tener exactamente 13 dígitos numéricos. Se recibió: '{ruc}'."
 
     digits = [int(c) for c in ruc]
     province = digits[0] * 10 + digits[1]
 
     if province not in _VALID_PROVINCES:
         return (
-            False,
+            False, False,
             f"Código de provincia inválido ({province:02d}). "
             "Los códigos válidos son 01-24 y 30.",
         )
@@ -113,24 +120,24 @@ def validate_ruc(ruc: str) -> tuple[bool, str]:
         check_ok = _mod11_check_private(digits)
     else:
         return (
-            False,
+            False, False,
             f"Tercer dígito inválido ({third}). Valores permitidos: 0-6 y 9.",
         )
 
     establishment = int(ruc[10:13])
     if establishment < 1:
-        return False, "Los últimos 3 dígitos (código de establecimiento) deben ser 001 o mayor."
+        return False, False, "Los últimos 3 dígitos (código de establecimiento) deben ser 001 o mayor."
 
     if not check_ok:
         # No bloqueamos: el dígito verificador puede fallar en RUC ficticios de prueba.
         # Advertimos pero dejamos continuar para no obstaculizar el trabajo del auditor.
         return (
-            True,
-            f"RUC {ruc} — {tipo}. ⚠ El dígito verificador no coincide; "
+            True, True,
+            f"RUC {ruc} — {tipo}. El dígito verificador no coincide; "
             "confirmar con fuente oficial (SRI).",
         )
 
-    return True, f"RUC {ruc} válido — {tipo}."
+    return True, False, f"RUC {ruc} válido — {tipo}."
 
 
 def format_ruc(ruc: str) -> str:

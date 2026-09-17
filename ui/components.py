@@ -69,22 +69,16 @@ def info_card(label: str, value: str, css_extra: str = "") -> str:
 
 
 def ruc_banner_html(ruc: str | None) -> str:
-    """Genera el banner de estado del RUC (válido / inválido / no registrado)."""
+    """Genera el banner de estado del RUC (válido / advertencia / inválido / no registrado)."""
     if not ruc:
         return f'<div class="ruc-banner neutral">{SVG_INFO} <span>El RUC no ha sido registrado. El jefe debe añadirlo antes de iniciar la investigación.</span></div>'  # noqa: E501
 
-    valid, msg = validate_ruc(ruc)
-    if "⚠" in msg:
-        css = "warning"
-        icon = SVG_ALERT
-        msg = msg.replace("⚠ ", "")
+    valid, warn, msg = validate_ruc(ruc)
+    if warn:
+        css, icon = "warning", SVG_ALERT
     elif valid:
-        css = "valid"
-        icon = SVG_CHECK
-        msg = msg.replace("✓ ", "")
+        css, icon = "valid", SVG_CHECK
     else:
-        css = "invalid"
-        icon = SVG_CROSS
-        msg = msg.replace("✗ ", "")
+        css, icon = "invalid", SVG_CROSS
 
     return f'<div class="ruc-banner {css}">{icon} <div><span class="ruc-val">{esc(ruc)}</span> <span style="margin-left:8px">{esc(msg)}</span></div></div>'  # noqa: E501
