@@ -9,6 +9,8 @@ from __future__ import annotations
 import sqlite3
 from typing import Any, Union
 
+from services.rowutil import row_get as _get
+
 
 RowLike = Union[sqlite3.Row, dict[str, Any], None]
 
@@ -21,17 +23,6 @@ RowLike = Union[sqlite3.Row, dict[str, Any], None]
 # que el resumen cuente con suficiente respaldo de información antes de ser emitido.
 SUMMARY_MIN_PERCENT: int = 60
 SUMMARY_MAX_PENDING: int = 1
-
-
-def _get(row: RowLike, key: str, default: Any = "") -> Any:
-    if row is None:
-        return default
-    try:
-        return row[key]  # type: ignore[index]
-    except (KeyError, IndexError, TypeError):
-        if isinstance(row, dict):
-            return row.get(key, default)
-        return default
 
 
 def _present(value: Any) -> bool:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from ui.helpers import esc, csrf_input
 from ui.icons import SVG_EXTERNAL, SVG_SAVE
 from providers.sri import SriProvider
+from services.rowutil import row_get
 
 
 def _ic(label: str, value: str, css_extra: str = "") -> str:
@@ -18,10 +19,7 @@ def _ic(label: str, value: str, css_extra: str = "") -> str:
 
 
 def _pval(profile, key: str) -> str:
-    if profile:
-        v = profile[key]
-        return (v or "").strip()
-    return ""
+    return str(row_get(profile, key, "")).strip()
 
 
 def build(audit_id: int, audit: object, profile: object, research: object, read_only: bool = False, csrf_token: str = "") -> str:

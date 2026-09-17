@@ -2,12 +2,10 @@
 from __future__ import annotations
 from ui.helpers import esc, csrf_input
 from ui.icons import SVG_MAP_PIN, SVG_SAVE
+from services.rowutil import row_get
 
 def _lval(location, key):
-    if location:
-        v = location[key]
-        return (v or "").strip()
-    return ""
+    return str(row_get(location, key, "")).strip()
 
 def build(audit_id, audit, location, read_only: bool = False, csrf_token: str = ""):
     lv = lambda k: _lval(location, k)

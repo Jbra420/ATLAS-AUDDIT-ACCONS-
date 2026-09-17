@@ -3,12 +3,10 @@ from __future__ import annotations
 from ui.helpers import esc, csrf_input
 from ui.icons import SVG_EXTERNAL, SVG_SAVE
 from providers.supercias import SuperciasProvider
+from services.rowutil import row_get
 
 def _pval(profile, key):
-    if profile:
-        v = profile[key]
-        return (v or "").strip()
-    return ""
+    return str(row_get(profile, key, "")).strip()
 
 def _ic(label, value, css_extra=""):
     v = value.strip() if value else ""
