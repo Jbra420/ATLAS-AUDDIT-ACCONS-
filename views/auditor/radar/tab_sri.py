@@ -21,9 +21,6 @@ def build(audit_id: int, audit: object, profile: object, research: object, read_
         for lnk in SriProvider().get_links(ruc, company_name)[:2]:
             sri_links_html += f'<a class="btn-ext-link" href="{esc(lnk.url)}" target="_blank" rel="noopener">{SVG_EXTERNAL} {esc(lnk.name)}</a>'
 
-    loc_keys = ["provincia", "canton", "ciudad", "calle", "numero", "interseccion", "barrio", "referencia"]
-    loc_passthrough = ""  # location data managed via profile tab form
-
     edit_block = "" if read_only else f"""
     <div class="external-links-row">{sri_links_html}</div>
     <hr class="section-divider">

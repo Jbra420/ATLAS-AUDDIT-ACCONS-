@@ -4,7 +4,7 @@ Depende de ui/icons y ui/helpers únicamente. Nunca importa de views/.
 """
 from __future__ import annotations
 
-from database import AUDIT_STATUSES, STAGE_FIELDS
+from database import AUDIT_STATUSES
 from services.ruc_validator import validate_ruc
 from ui.helpers import esc
 from ui.icons import (
@@ -66,50 +66,6 @@ def info_card(label: str, value: str, css_extra: str = "") -> str:
         f'<div class="{val_cls}">{val_text}</div>'
         f'</div>'
     )
-
-
-def render_progress_track(progress: dict) -> str:
-    """Renderiza la barra de progreso de la investigación."""
-    stages = progress["stages"]
-    labels = dict(STAGE_FIELDS)
-    keys = list(labels.keys())
-
-    current_idx = -1
-    for i, k in enumerate(keys):
-        if not stages[k]:
-            current_idx = i
-            break
-
-    items = []
-    for i, key in enumerate(keys):
-        done = stages[key]
-        is_current = i == current_idx
-        css = "done" if done else ("current" if is_current else "")
-
-        if done:
-            icon = SVG_CHECK
-        elif is_current:
-            icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="4"></circle></svg>'  # noqa: E501
-        else:
-            icon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle></svg>'  # noqa: E501
-
-        items.append(f"""
-        <div class="progress-step {css}">
-          <div class="step-dot">{icon}</div>
-          <div class="step-label">{labels[key]}</div>
-        </div>
-        """)
-
-    pct = progress["percent"]
-    return f"""
-    <div class="progress-container">
-      <div class="progress-header">
-        <span>Progreso de la investigación</span>
-        <span class="pct">{pct}%</span>
-      </div>
-      <div class="progress-track">{''.join(items)}</div>
-    </div>
-    """
 
 
 def ruc_banner_html(ruc: str | None) -> str:
