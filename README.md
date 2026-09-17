@@ -13,6 +13,7 @@ generar una ficha inicial de la empresa auditada.
 - Registro de empresas y asignacion a auditores.
 - Vista del auditor con sus empresas asignadas.
 - Vista de supervisión del jefe sobre todos los expedientes en modo lectura.
+- Línea de tiempo de actividad por expediente para seguimiento y supervisión.
 - Herramienta de busqueda asistida:
   - enlaces a fuentes sugeridas;
   - registro de fuentes consultadas;

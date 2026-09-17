@@ -8,7 +8,7 @@ import sqlite3
 from database import list_admin_audits, list_auditors
 from ui.components import badge
 from ui.helpers import esc, form_value, csrf_input
-from ui.icons import SVG_ALERT, SVG_ARROW_RIGHT, SVG_INFO
+from ui.icons import SVG_ALERT, SVG_ARROW_RIGHT
 from ui.layout import layout
 
 
@@ -75,33 +75,89 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     <div class="grid">
       <div class="panel col-4">
         <h2>Registrar empresa</h2>
-        <form method="post" action="/admin/companies">
+        <form method="post" action="/admin/companies" id="create-company-form">
           {csrf_input(csrf_token)}
-          <label for="comp_name">Razón social *</label>
-          <input id="comp_name" name="name" required placeholder="Ej. ACME Cía. Ltda.">
+          
+          <div id="ruc-search-group">
+            <label for="comp_ruc">RUC de la empresa *</label>
+            <div style="display:flex; gap:8px;">
+                <input id="comp_ruc" name="ruc" placeholder="13 dígitos numéricos" maxlength="13" pattern="\\d{{13}}" title="El RUC debe tener exactamente 13 dígitos numéricos" required style="flex:1;">
+                <button type="button" id="btn-search-ruc" class="btn btn-secondary">Buscar</button>
+            </div>
+            <div class="field-hint" id="ruc-hint">Ingrese el RUC para autocompletar los datos.</div>
+          </div>
 
-          <label for="comp_ruc">RUC</label>
-          <input id="comp_ruc" name="ruc" placeholder="13 dígitos numéricos"
-                 maxlength="13" pattern="\\d{{13}}"
-                 title="El RUC debe tener exactamente 13 dígitos numéricos">
-          <div class="field-hint">{SVG_INFO} Puede añadir el RUC más adelante.</div>
+          <div id="company-details" style="display:none; margin-top: 24px; border-top: 1px solid var(--color-border); padding-top: 16px;">
+              <label for="comp_name">Razón social *</label>
+              <input id="comp_name" name="name" required placeholder="Ej. ACME Cía. Ltda.">
 
-          <label for="comp_city">Ciudad</label>
-          <input id="comp_city" name="city" placeholder="Ej. Quito">
+              <label for="comp_city">Ciudad</label>
+              <input id="comp_city" name="city" placeholder="Ej. Quito">
 
-          <label for="comp_activity">Actividad esperada</label>
-          <input id="comp_activity" name="activity_hint" placeholder="Ej. Servicios de consultoría">
+              <label for="comp_activity">Actividad esperada</label>
+              <input id="comp_activity" name="activity_hint" placeholder="Ej. Servicios de consultoría">
 
-          <label for="comp_period">Período auditado *</label>
-          <input id="comp_period" name="period" value="2026" required>
+              <label for="comp_period">Período auditado *</label>
+              <input id="comp_period" name="period" value="2026" required>
 
-          <label for="auditor_sel">Auditor asignado *</label>
-          <select id="auditor_sel" name="assigned_auditor_id" required>{options}</select>
+              <label for="auditor_sel">Auditor asignado *</label>
+              <select id="auditor_sel" name="assigned_auditor_id" required>{options}</select>
 
-          <div class="actions" style="margin-top:24px;">
-            <button class="btn btn-primary" type="submit" style="width:100%">Asignar empresa</button>
+              <div class="actions" style="margin-top:24px;">
+                <button class="btn btn-primary" type="submit" style="width:100%">Asignar empresa</button>
+              </div>
           </div>
         </form>
+
+        <script>
+        document.addEventListener("DOMContentLoaded", () => {{
+            const btnSearch = document.getElementById("btn-search-ruc");
+            const inputRuc = document.getElementById("comp_ruc");
+            const detailsDiv = document.getElementById("company-details");
+            const hint = document.getElementById("ruc-hint");
+            
+            const inputName = document.getElementById("comp_name");
+            const inputCity = document.getElementById("comp_city");
+            const inputActivity = document.getElementById("comp_activity");
+
+            btnSearch.addEventListener("click", async () => {{
+                const ruc = inputRuc.value.trim();
+                if (ruc.length !== 13) {{
+                    hint.innerHTML = "<span style='color:var(--danger)'>El RUC debe tener 13 dígitos.</span>";
+                    return;
+                }}
+                
+                btnSearch.disabled = true;
+                btnSearch.textContent = "Buscando...";
+                hint.textContent = "Consultando datos...";
+                
+                try {{
+                    const res = await fetch(`/api/lookup-ruc?ruc=${{ruc}}`);
+                    const data = await res.json();
+                    
+                    if (!res.ok) {{
+                        hint.innerHTML = `<span style='color:var(--danger)'>${{data.error || 'Error al buscar RUC'}}</span>`;
+                        detailsDiv.style.display = "none";
+                    }} else {{
+                        hint.innerHTML = `<span style='color:var(--success)'>Datos encontrados. Verifique y asigne.</span>`;
+                        inputName.value = data.name || "";
+                        inputCity.value = data.city || "";
+                        inputActivity.value = data.activity_hint || "";
+                        detailsDiv.style.display = "block";
+                        inputName.focus();
+                    }}
+                }} catch (e) {{
+                    hint.innerHTML = "<span style='color:var(--danger)'>Error de conexión al buscar RUC.</span>";
+                }} finally {{
+                    btnSearch.disabled = false;
+                    btnSearch.textContent = "Buscar";
+                }}
+            }});
+            
+            // La búsqueda automática se deshabilitó a petición del usuario.
+            // El usuario debe hacer clic explícitamente en "Buscar".
+        }});
+        </script>
       </div>
       <div class="panel col-8">
         <h2>Empresas registradas ({len(audits)})</h2>

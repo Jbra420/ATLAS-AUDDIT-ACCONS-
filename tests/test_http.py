@@ -17,6 +17,7 @@ Los tests verifican:
 """
 from __future__ import annotations
 
+import json
 import socket
 import unittest
 from urllib.request import urlopen, Request
@@ -230,6 +231,23 @@ class TestHTTPAdminFlow(unittest.TestCase):
         status, _ = _get("/auditor", self.cookie)
         self.assertEqual(status, 200,
                          "GET /auditor debe ser accesible para admin con sesión activa")
+
+    def test_lookup_ruc_returns_framed_json(self):
+        """La búsqueda RUC debe cerrar correctamente el JSON para que fetch().json() no quede pendiente."""
+        import http.client
+        conn = http.client.HTTPConnection(SERVER_HOST, SERVER_PORT, timeout=5)
+        conn.request("GET", "/api/lookup-ruc?ruc=0190314014001", headers={"Cookie": self.cookie})
+        resp = conn.getresponse()
+        body = resp.read().decode("utf-8", errors="replace")
+        content_length = resp.getheader("Content-Length")
+        content_type = resp.getheader("Content-Type", "")
+        conn.close()
+
+        self.assertEqual(resp.status, 200)
+        self.assertIsNotNone(content_length)
+        self.assertIn("application/json", content_type)
+        data = json.loads(body)
+        self.assertEqual(data["name"], "IMPORTADORA AUTOMOTRIZ SALINAS S.A.")
 
 
 if __name__ == "__main__":

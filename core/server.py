@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import argparse
 import csv
-import html
 import io
+import json
 import sqlite3
 import threading
 import time
@@ -18,13 +18,10 @@ from typing import Any
 from urllib.parse import parse_qs, quote_plus, urlparse
 
 from database import (
-    AUDIT_STATUSES,
     DB_PATH,
-    DEMO_RUC,
     add_source,
     append_research_source_note,
     authenticate,
-    compute_progress,
     connect,
     create_company_audit,
     reassign_audit,
@@ -32,21 +29,11 @@ from database import (
     create_user,
     destroy_session,
     get_audit,
-    get_company_location,
-    get_company_profile,
-    get_financial_snapshot,
+    get_audit_context,
     get_csrf_token,
     get_research,
     init_db,
-    list_admin_audits,
-    list_administrators,
-    list_auditor_audits,
-    list_auditors,
     delete_user,
-    list_economic_documents,
-    list_shareholders,
-    list_source_checks,
-    list_sources,
     load_demo_if_ruc_matches,
     mark_document_reviewed,
     mark_document_pending,
@@ -55,8 +42,6 @@ from database import (
     mark_source_pending,
     register_audit_ruc,
     refresh_summary,
-    seed_demo_radar,
-    update_research,
     patch_research,
     upsert_company_profile,
     upsert_company_location,
@@ -64,13 +49,12 @@ from database import (
     user_from_session,
     validate_csrf_token,
 )
-from services.ruc_validator import validate_ruc
-from services.summary import extract_signals, generate_summary
+from services.summary import generate_summary
 from services.financial import compute_indicators
 from services.company_search import build_source_map
 from services.dossier import build_dossier_model, build_dossier_text
 from ui.layout import layout, set_css
-from ui.helpers import esc, form_value, _now, csrf_input
+from ui.helpers import form_value, _now
 from core.router import GET_ROUTES
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -152,6 +136,15 @@ class AtlasHandler(BaseHTTPRequestHandler):
         self.send_header("Content-type", content_type)
         self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def send_json(self, data: dict[str, Any], status_code: int = HTTPStatus.OK) -> None:
+        encoded = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(status_code)
+        self.send_header("Content-type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(encoded)
 
@@ -250,6 +243,36 @@ class AtlasHandler(BaseHTTPRequestHandler):
             self.wfile.write(_CSS_CONTENT.encode("utf-8"))
             return
 
+        if path == "/api/lookup-ruc":
+            user = self.require_admin()
+            if not user:
+                return
+            ruc = query.get("ruc", [""])[0].strip()
+            
+            from services.ruc_validator import validate_ruc
+            is_valid, _warn, msg = validate_ruc(ruc)
+            if not is_valid:
+                self.send_json({"error": msg}, HTTPStatus.BAD_REQUEST)
+                return
+            from database import lookup_catastro
+            data = lookup_catastro(ruc)
+            
+            if not data:
+                # Nivel 2: Fallback al Scraper
+                from services.sri_scraper import scrape_ruc_data
+                data = scrape_ruc_data(ruc)
+                
+            if not data:
+                self.send_json(
+                    {"error": "No se encontraron datos para el RUC ingresado ni en catastro ni vía web."},
+                    HTTPStatus.NOT_FOUND,
+                )
+                return
+                
+            self.send_json(data)
+            return
+
+
         if path == "/export/summary":
             current = self.require_user()
             if current:
@@ -291,19 +314,8 @@ class AtlasHandler(BaseHTTPRequestHandler):
             else:
                 user = self.current_user()
 
-            # Pasar csrf_token a todas las rutas que tienen formularios POST
             csrf_tok = get_csrf_token(self.get_cookie_token())
-            if path in ("/auditor/radar", "/admin/audit"):
-                from views.auditor.radar import page as radar_page
-                html_content = radar_page.render(user, query, path, csrf_token=csrf_tok)
-            elif path in ("/admin/companies",):
-                from views.admin import companies as admin_companies_view
-                html_content = admin_companies_view.render(user, query, path, csrf_token=csrf_tok)
-            elif path in ("/admin/users",):
-                from views.admin import users as admin_users_view
-                html_content = admin_users_view.render(user, query, path, csrf_token=csrf_tok)
-            else:
-                html_content = handler_fn(user, query, path)
+            html_content = handler_fn(user, query, path, csrf_tok)
 
             if html_content:
                 self.send_html(html_content)
@@ -628,14 +640,12 @@ class AtlasHandler(BaseHTTPRequestHandler):
                            '<div class="error-msg">Auditoría no disponible.</div>'), 403,
                 )
                 return
-            research = get_research(audit_id)
-            profile = get_company_profile(audit_id)
-            location = get_company_location(audit_id)
-            admins = list_administrators(audit_id)
-            shareholders = list_shareholders(audit_id)
-            snapshot = get_financial_snapshot(audit_id)
-            source_checks = list_source_checks(audit_id)
-            sources = list_sources(audit_id)
+            ctx = get_audit_context(audit_id)
+            research = ctx["research"]
+            profile, location = ctx["profile"], ctx["location"]
+            admins, shareholders = ctx["admins"], ctx["shareholders"]
+            snapshot = ctx["snapshot"]
+            source_checks, sources = ctx["source_checks"], ctx["sources"]
             source_count = len(sources)
             indicators = compute_indicators(snapshot)
             data = {
@@ -736,15 +746,12 @@ class AtlasHandler(BaseHTTPRequestHandler):
         if not audit:
             self.send_html(layout("Acceso denegado", user, '<div class="error-msg">No disponible.</div>'), 403)
             return
-        research = get_research(audit_id)
-        profile = get_company_profile(audit_id)
-        location = get_company_location(audit_id)
-        admins = list_administrators(audit_id)
-        shareholders = list_shareholders(audit_id)
-        docs = list_economic_documents(audit_id)
-        snapshot = get_financial_snapshot(audit_id)
-        source_checks = list_source_checks(audit_id)
-        sources = list_sources(audit_id)
+        ctx = get_audit_context(audit_id)
+        research = ctx["research"]
+        profile, location = ctx["profile"], ctx["location"]
+        admins, shareholders = ctx["admins"], ctx["shareholders"]
+        docs, snapshot = ctx["docs"], ctx["snapshot"]
+        source_checks, sources = ctx["source_checks"], ctx["sources"]
         indicators = compute_indicators(dict(snapshot) if snapshot else None)
         source_map = build_source_map(
             audit, research, profile, location, admins, shareholders,
@@ -826,4 +833,3 @@ def run() -> None:
     print("  Ctrl+C para salir.")
     print("")
     server.serve_forever()
-

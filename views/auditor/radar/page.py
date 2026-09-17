@@ -9,28 +9,21 @@ from __future__ import annotations
 import sqlite3
 
 from database import (
-    compute_progress,
     get_audit,
-    get_company_location,
-    get_company_profile,
-    get_financial_snapshot,
-    get_research,
-    list_administrators,
-    list_economic_documents,
-    list_shareholders,
-    list_source_checks,
-    list_sources,
+    get_audit_context,
 )
 from services.financial import compute_indicators
 from services.company_search import build_source_map
 from services.dossier import build_dossier_model
-from ui.components import render_progress_track, ruc_banner_html
+from services.activity_timeline import build_activity_timeline
+from ui.components import ruc_banner_html
 from ui.helpers import esc, form_value, csrf_input
 from ui.icons import (
     SVG_ALERT,
     SVG_ARROW_RIGHT,
     SVG_BUILDING,
     SVG_CHECK,
+    SVG_CLOCK,
     SVG_DOLLAR,
     SVG_DOWNLOAD,
     SVG_EXTERNAL,
@@ -117,16 +110,13 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
             active_path="/auditor",
         )
 
-    # ── Cargar datos ──────────────────────────────────────────────────────
-    research = get_research(audit_id)
-    profile = get_company_profile(audit_id)
-    location = get_company_location(audit_id)
-    admins = list_administrators(audit_id)
-    shareholders = list_shareholders(audit_id)
-    docs = list_economic_documents(audit_id)
-    snapshot = get_financial_snapshot(audit_id)
-    src_checks = list_source_checks(audit_id)
-    sources = list_sources(audit_id)
+    # ── Cargar datos (una sola conexión para todo el expediente) ───────────
+    ctx = get_audit_context(audit_id)
+    research = ctx["research"]
+    profile, location = ctx["profile"], ctx["location"]
+    admins, shareholders = ctx["admins"], ctx["shareholders"]
+    docs, snapshot = ctx["docs"], ctx["snapshot"]
+    src_checks, sources = ctx["source_checks"], ctx["sources"]
     is_read_only = user["role"] == "admin"
     readonly_class = "readonly-mode" if is_read_only else ""
     source_map = build_source_map(
@@ -140,6 +130,9 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     dossier = build_dossier_model(
         audit, research, profile, location, admins, shareholders,
         docs, snapshot, indicators, source_map, sources,
+    )
+    timeline = build_activity_timeline(
+        audit, research, profile, location, docs, snapshot, src_checks, sources,
     )
 
     # ── Progress ──────────────────────────────────────────────────────────
@@ -155,9 +148,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     from .tab_ubicacion import build as build_ubicacion
     from .tab_admins import build as build_admins
     from .tab_accionistas import build as build_accionistas
-    from .tab_documentos import build as build_documentos
     from .tab_financiero import build as build_financiero
-    from .tab_fuentes import build as build_fuentes
     from .tab_resumen import build as build_resumen
 
     tab_sri = build_sri(audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok)
@@ -165,9 +156,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     tab_ubicacion = build_ubicacion(audit_id, audit, location, read_only=is_read_only, csrf_token=csrf_tok)
     tab_admins = build_admins(audit_id, audit, admins, read_only=is_read_only)
     tab_accionistas = build_accionistas(audit_id, audit, shareholders, read_only=is_read_only)
-    tab_documentos = build_documentos(audit_id, audit, docs, read_only=is_read_only, csrf_token=csrf_tok)
     tab_financiero = build_financiero(audit_id, indicators, read_only=is_read_only, csrf_token=csrf_tok)
-    tab_fuentes = build_fuentes(audit_id, src_checks, sources, read_only=is_read_only, csrf_token=csrf_tok)
     tab_resumen = build_resumen(audit_id, research, dossier, read_only=is_read_only, csrf_token=csrf_tok)
 
     # Panel lateral de señales eliminado a petición del usuario para mejor uso del espacio horizontal.
@@ -234,9 +223,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
         ("ubicacion",    "Ubicación",      SVG_MAP_PIN,  tab_ubicacion),
         ("admins",       "Administradores",SVG_USERS,    tab_admins),
         ("accionistas",  "Accionistas",    SVG_USERS,    tab_accionistas),
-        ("documentos",   "Documentos",     SVG_FILE,     tab_documentos),
         ("indicadores",  "Financiero",     SVG_DOLLAR,   tab_financiero),
-        ("fuentes",      "Fuentes",        SVG_EXTERNAL, tab_fuentes),
         ("resumen",      "Resumen",        SVG_RADAR,    tab_resumen),
     ]
 

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import os
 import re
 import secrets
 import sqlite3
@@ -21,8 +20,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from seed_data import DEMO_RUC, seed_defaults, seed_demo_radar
 from services.ruc_validator import format_ruc, validate_ruc
-from services.summary import generate_summary, extract_signals
+from services.summary import generate_summary
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -31,14 +31,6 @@ DB_PATH = BASE_DIR / "auddit.db"
 AUDIT_STATUSES = {
     "pendiente": "Pendiente",
     "en_investigacion": "En investigación",
-    "listo_revision": "Resumen generado",
-    "devuelto": "Devuelto",
-    "revisado": "Revisado",
-}
-
-REVIEW_STATUSES = {
-    "devuelto": "Devuelto con observaciones",
-    "revisado": "Revisado por jefe",
 }
 
 USERNAME_RE = re.compile(r"^[a-z0-9_.-]{3,32}$")
@@ -131,183 +123,12 @@ def session_hash(token: str) -> str:
 # Inicialización de la base de datos
 # ---------------------------------------------------------------------------
 
+SCHEMA_PATH = BASE_DIR / "schema.sql"
+
+
 def init_db(db_path: Path | str = DB_PATH) -> None:
     with connect(db_path) as conn:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                full_name TEXT NOT NULL,
-                role TEXT NOT NULL CHECK(role IN ('admin', 'auditor')),
-                password_salt TEXT NOT NULL,
-                password_hash TEXT NOT NULL,
-                active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS sessions (
-                token_hash TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                created_at TEXT NOT NULL,
-                expires_at TEXT NOT NULL,
-                csrf_token TEXT NOT NULL DEFAULT ''
-            );
-
-            CREATE TABLE IF NOT EXISTS companies (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                ruc TEXT,
-                city TEXT,
-                activity_hint TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS audits (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-                period TEXT NOT NULL,
-                assigned_auditor_id INTEGER NOT NULL REFERENCES users(id),
-                status TEXT NOT NULL DEFAULT 'pendiente',
-                created_by INTEGER NOT NULL REFERENCES users(id),
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS research_notes (
-                audit_id INTEGER PRIMARY KEY REFERENCES audits(id) ON DELETE CASCADE,
-                commercial_name TEXT,
-                economic_activity TEXT,
-                legal_status TEXT,
-                representative TEXT,
-                address TEXT,
-                tax_obligations TEXT,
-                public_contracting TEXT,
-                supercias_info TEXT,
-                sri_info TEXT,
-                sercop_info TEXT,
-                observations TEXT,
-                risk_flags TEXT,
-                pasted_text TEXT,
-                generated_summary TEXT,
-                updated_by INTEGER REFERENCES users(id),
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS sources (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
-                title TEXT NOT NULL,
-                url TEXT,
-                source_type TEXT,
-                notes TEXT,
-                created_by INTEGER NOT NULL REFERENCES users(id),
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS reviews (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
-                status TEXT NOT NULL,
-                comments TEXT,
-                reviewed_by INTEGER NOT NULL REFERENCES users(id),
-                created_at TEXT NOT NULL
-            );
-
-            -- ── Radar Empresarial v3.0 ────────────────────────────────────
-
-            CREATE TABLE IF NOT EXISTS company_profiles (
-                audit_id INTEGER PRIMARY KEY REFERENCES audits(id) ON DELETE CASCADE,
-                ruc TEXT,
-                razon_social TEXT,
-                estado_contribuyente TEXT,
-                tipo_contribuyente TEXT,
-                regimen TEXT,
-                categoria TEXT,
-                obligado_contabilidad TEXT,
-                agente_retencion TEXT,
-                contribuyente_especial TEXT,
-                fecha_inicio_actividades TEXT,
-                fecha_actualizacion TEXT,
-                actividad_economica TEXT,
-                representante_legal TEXT,
-                expediente_supercias TEXT,
-                nacionalidad TEXT,
-                tipo_compania TEXT,
-                situacion_legal TEXT,
-                fecha_constitucion TEXT,
-                plazo_social TEXT,
-                oficina_control TEXT,
-                objeto_social TEXT,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS company_locations (
-                audit_id INTEGER PRIMARY KEY REFERENCES audits(id) ON DELETE CASCADE,
-                provincia TEXT,
-                canton TEXT,
-                ciudad TEXT,
-                calle TEXT,
-                numero TEXT,
-                interseccion TEXT,
-                barrio TEXT,
-                referencia TEXT,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS company_administrators (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
-                identificacion TEXT,
-                nombre TEXT,
-                nacionalidad TEXT,
-                cargo TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS company_shareholders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
-                numero INTEGER,
-                identificacion TEXT,
-                nombre TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS economic_documents (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
-                nombre TEXT NOT NULL,
-                fecha TEXT,
-                estado TEXT NOT NULL DEFAULT 'pendiente',
-                revisado_por INTEGER REFERENCES users(id),
-                revisado_at TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS financial_snapshots (
-                audit_id INTEGER PRIMARY KEY REFERENCES audits(id) ON DELETE CASCADE,
-                activo_total REAL,
-                pasivo_total REAL,
-                patrimonio_neto REAL,
-                ingresos_401 REAL,
-                otros_ingresos_403 REAL,
-                costo_ventas_501 REAL,
-                gastos_502 REAL,
-                utilidad_neta_707 REAL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS source_checks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
-                fuente TEXT NOT NULL,
-                uso TEXT,
-                estado TEXT NOT NULL DEFAULT 'pendiente',
-                observacion TEXT,
-                consultada_por INTEGER REFERENCES users(id),
-                consultada_at TEXT
-            );
-            """
-        )
+        conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         _migrate(conn)
         seed_defaults(conn)
 
@@ -329,175 +150,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
     sess_existing = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
     if "csrf_token" not in sess_existing:
         conn.execute("ALTER TABLE sessions ADD COLUMN csrf_token TEXT NOT NULL DEFAULT ''")
-
-
-# ---------------------------------------------------------------------------
-# Seed de datos demo
-# ---------------------------------------------------------------------------
-
-DEMO_RUC = os.environ.get("DEMO_RUC", "0190377210001")
-DEMO_COMPANY = "GRUCANQUI CIA. LTDA"
-
-
-def seed_defaults(conn: sqlite3.Connection) -> None:
-    user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    if user_count:
-        return
-
-    admin_id = create_user(conn, "admin", "Jefe Auditor", "admin", "admin123")
-    auditor_id = create_user(conn, "auditor", "Auditor Demo", "auditor", "auditor123")
-
-    ts = now_iso()
-    cur = conn.execute(
-        """
-        INSERT INTO companies (name, ruc, city, activity_hint, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (DEMO_COMPANY, DEMO_RUC, "Cuenca", "Servicios de alojamiento prestados por hoteles", ts, ts),
-    )
-    company_id = cur.lastrowid
-    cur = conn.execute(
-        """
-        INSERT INTO audits (company_id, period, assigned_auditor_id, status, created_by, created_at, updated_at)
-        VALUES (?, ?, ?, 'pendiente', ?, ?, ?)
-        """,
-        (company_id, "2024", auditor_id, admin_id, ts, ts),
-    )
-    audit_id = int(cur.lastrowid)
-
-    # Seed demo completo de GRUCANQUI
-    seed_demo_radar(conn, audit_id)
-
-
-def seed_demo_radar(conn: sqlite3.Connection, audit_id: int) -> None:
-    """Carga todos los datos demo de GRUCANQUI CIA. LTDA en las tablas del Radar."""
-    ts = now_iso()
-
-    # Perfil SRI + Supercias
-    conn.execute(
-        """
-        INSERT OR REPLACE INTO company_profiles (
-            audit_id, ruc, razon_social, estado_contribuyente, tipo_contribuyente,
-            regimen, categoria, obligado_contabilidad, agente_retencion,
-            contribuyente_especial, fecha_inicio_actividades, fecha_actualizacion,
-            actividad_economica, representante_legal, expediente_supercias,
-            nacionalidad, tipo_compania, situacion_legal, fecha_constitucion,
-            plazo_social, oficina_control, objeto_social, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            audit_id,
-            DEMO_RUC,
-            DEMO_COMPANY,
-            "ACTIVO",
-            "SOCIEDAD",
-            "GENERAL",
-            "—",
-            "SI",
-            "SI",
-            "NO",
-            "2011-08-24",
-            "2025-09-08",
-            "Servicios de alojamiento prestados por hoteles",
-            "Cando Suárez María Daniela",
-            "141528",
-            "Ecuador",
-            "Responsabilidad limitada",
-            "Activa",
-            "2011-08-24",
-            "Pendiente de confirmar",
-            "Cuenca",
-            "Servicios de alojamiento prestados por hoteles (pendiente de ampliar)",
-            ts,
-        ),
-    )
-
-    # Ubicación
-    conn.execute(
-        """
-        INSERT OR REPLACE INTO company_locations (
-            audit_id, provincia, canton, ciudad, calle,
-            numero, interseccion, barrio, referencia, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            audit_id, "Azuay", "Cuenca", "Cuenca",
-            "Av. del Estadio", "S/N", "Florencia Astudillo",
-            "Estadio", "Junto a Óptica Sánchez", ts,
-        ),
-    )
-
-    # Administradores
-    conn.execute("DELETE FROM company_administrators WHERE audit_id = ?", (audit_id,))
-    admins = [
-        ("—", "Cando Suárez María Daniela", "Ecuatoriana", "Gerente General"),
-        ("—", "Quito Arias Juan Carlos", "Ecuatoriano", "Presidente"),
-    ]
-    for i, (ident, nombre, nac, cargo) in enumerate(admins):
-        conn.execute(
-            "INSERT INTO company_administrators (audit_id, identificacion, nombre, nacionalidad, cargo) VALUES (?, ?, ?, ?, ?)",
-            (audit_id, ident, nombre, nac, cargo),
-        )
-
-    # Accionistas
-    conn.execute("DELETE FROM company_shareholders WHERE audit_id = ?", (audit_id,))
-    shareholders = [
-        (1, "—", "Cando Suárez María Daniela"),
-        (2, "—", "Quito Arias Juan Carlos"),
-    ]
-    for numero, ident, nombre in shareholders:
-        conn.execute(
-            "INSERT INTO company_shareholders (audit_id, numero, identificacion, nombre) VALUES (?, ?, ?, ?)",
-            (audit_id, numero, ident, nombre),
-        )
-
-    # Documentos económicos
-    existing_docs = conn.execute(
-        "SELECT COUNT(*) FROM economic_documents WHERE audit_id = ?", (audit_id,)
-    ).fetchone()[0]
-    if not existing_docs:
-        for nombre in DEFAULT_ECONOMIC_DOCUMENTS:
-            conn.execute(
-                "INSERT INTO economic_documents (audit_id, nombre, fecha, estado) VALUES (?, ?, ?, 'pendiente')",
-                (audit_id, nombre, "2024"),
-            )
-
-    # Snapshot financiero
-    conn.execute(
-        """
-        INSERT OR REPLACE INTO financial_snapshots (
-            audit_id, activo_total, pasivo_total, patrimonio_neto,
-            ingresos_401, otros_ingresos_403, costo_ventas_501, gastos_502,
-            utilidad_neta_707, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            audit_id,
-            3108776.58, 2107881.79, 1000894.79,
-            1862784.91, 11761.20,
-            895805.67, 953625.41,
-            7279.63,
-            ts,
-        ),
-    )
-
-    # Source checks (fuentes guiadas)
-    existing_checks = conn.execute(
-        "SELECT COUNT(*) FROM source_checks WHERE audit_id = ?", (audit_id,)
-    ).fetchone()[0]
-    if not existing_checks:
-        fuentes = [
-            ("SRI — Consulta de RUC", "Verificar estado tributario, tipo y actividad económica"),
-            ("Supercias — Portal societario", "Confirmar estado societario, administradores y capital"),
-            ("Supercias — Documentos económicos", "Obtener estados financieros y nómina de accionistas"),
-            ("SERCOP", "Verificar historial de contratos públicos e inhabilitaciones"),
-            ("Búsqueda web general", "Noticias, referencias, sanciones o información complementaria"),
-        ]
-        for fuente, uso in fuentes:
-            conn.execute(
-                "INSERT INTO source_checks (audit_id, fuente, uso, estado) VALUES (?, ?, ?, 'pendiente')",
-                (audit_id, fuente, uso),
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -572,6 +224,43 @@ def delete_user(user_id: int, db_path: Path | str = DB_PATH) -> str:
         with connect(db_path) as conn:
             conn.execute("UPDATE users SET active = 0 WHERE id = ?", (user_id,))
         return "El usuario tiene expedientes o revisiones asociadas, por lo que fue desactivado permanentemente en lugar de borrado."
+
+
+# ---------------------------------------------------------------------------
+# Catastro Local (RUC)
+# ---------------------------------------------------------------------------
+
+def lookup_catastro(ruc: str, db_path: Path | str = DB_PATH) -> dict | None:
+    """
+    Nivel 1: Busca el RUC en el Catastro Local (Opción 3).
+    Si se encuentra, retorna los datos {name, city, activity_hint}.
+    Si no existe, retorna None.
+
+    Nota: db_path se acepta por consistencia con el resto de database.py
+    pero no se usa: esta función siempre conecta a sri_catastro.db junto al
+    módulo, no a la base de datos de la aplicación. No es intercambiable
+    con una base de prueba mediante ese parámetro.
+    """
+    # Definimos la ruta de la base de catastro asumiendo que está en la raíz junto a la base principal
+    catastro_db_path = Path(__file__).parent / "sri_catastro.db"
+    if not catastro_db_path.exists():
+        return None
+        
+    try:
+        with sqlite3.connect(catastro_db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM sri_catastro WHERE ruc = ?", (ruc,)).fetchone()
+            if row:
+                return {
+                    "name": row["name"],
+                    "city": row["city"],
+                    "activity_hint": row["activity_hint"]
+                }
+    except Exception as e:
+        import logging
+        logging.error(f"Error querying local catastro: {e}")
+        
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -667,7 +356,7 @@ def create_company_audit(
     if not name or not period:
         raise ValueError("Razón social y período auditado son obligatorios")
     if raw_ruc:
-        valid, msg = validate_ruc(ruc)
+        valid, _warn, msg = validate_ruc(ruc)
         if not valid:
             raise ValueError(msg)
 
@@ -729,7 +418,7 @@ def register_audit_ruc(
     """Registra el RUC usado por el auditor si la empresa aun no lo tiene."""
     raw_ruc = ruc.strip()
     clean_ruc = format_ruc(raw_ruc)
-    valid, msg = validate_ruc(clean_ruc)
+    valid, _warn, msg = validate_ruc(clean_ruc)
     if not valid:
         raise ValueError(msg)
 
@@ -825,6 +514,73 @@ def get_audit(audit_id: int, user: sqlite3.Row, db_path: Path | str = DB_PATH) -
 
 
 # ---------------------------------------------------------------------------
+# Contexto completo del expediente (una sola conexión)
+# ---------------------------------------------------------------------------
+
+def _load_radar_context(conn: sqlite3.Connection, audit_id: int) -> dict[str, Any]:
+    """Lee profile/location/admins/shareholders/docs/snapshot/source_checks/sources
+    de un expediente usando una conexión ya abierta. No abre conexión propia:
+    la comparten get_audit_context(), update_research() y refresh_summary()
+    para no repetir las mismas 8 consultas ni abrir una conexión por cada una.
+    """
+    return {
+        "profile": conn.execute(
+            "SELECT * FROM company_profiles WHERE audit_id = ?", (audit_id,)
+        ).fetchone(),
+        "location": conn.execute(
+            "SELECT * FROM company_locations WHERE audit_id = ?", (audit_id,)
+        ).fetchone(),
+        "admins": list(conn.execute(
+            "SELECT * FROM company_administrators WHERE audit_id = ? ORDER BY id", (audit_id,)
+        )),
+        "shareholders": list(conn.execute(
+            "SELECT * FROM company_shareholders WHERE audit_id = ? ORDER BY numero, id", (audit_id,)
+        )),
+        "docs": list(conn.execute(
+            "SELECT * FROM economic_documents WHERE audit_id = ? ORDER BY id", (audit_id,)
+        )),
+        "snapshot": conn.execute(
+            "SELECT * FROM financial_snapshots WHERE audit_id = ?", (audit_id,)
+        ).fetchone(),
+        "source_checks": list(conn.execute(
+            "SELECT * FROM source_checks WHERE audit_id = ? ORDER BY id", (audit_id,)
+        )),
+        "sources": list(conn.execute(
+            "SELECT * FROM sources WHERE audit_id = ? ORDER BY created_at DESC, id DESC", (audit_id,)
+        )),
+    }
+
+
+def get_audit_context(audit_id: int, db_path: Path | str = DB_PATH) -> dict[str, Any]:
+    """Carga en una sola conexión todo lo que necesitan el Radar Empresarial,
+    la generación de resumen y la ficha final: research, profile, location,
+    admins, shareholders, docs, snapshot, source_checks y sources.
+
+    Asume que el llamador ya validó que audit_id existe y es accesible
+    (p. ej. vía get_audit(audit_id, user)); no repite esa validación.
+    Reemplaza llamar por separado a get_research/get_company_profile/
+    get_company_location/list_administrators/list_shareholders/
+    list_economic_documents/get_financial_snapshot/list_source_checks/
+    list_sources, que abrían una conexión SQLite distinta cada una.
+    """
+    with connect(db_path) as conn:
+        research = conn.execute(
+            "SELECT * FROM research_notes WHERE audit_id = ?", (audit_id,)
+        ).fetchone()
+        if research is None:
+            conn.execute(
+                "INSERT INTO research_notes (audit_id, updated_at) VALUES (?, ?)",
+                (audit_id, now_iso()),
+            )
+            research = conn.execute(
+                "SELECT * FROM research_notes WHERE audit_id = ?", (audit_id,)
+            ).fetchone()
+        context = _load_radar_context(conn, audit_id)
+    context["research"] = research
+    return context
+
+
+# ---------------------------------------------------------------------------
 # Notas de investigación
 # ---------------------------------------------------------------------------
 
@@ -864,21 +620,12 @@ def update_research(
         if audit is None:
             raise ValueError("Auditoría no encontrada")
 
-        source_count = conn.execute(
-            "SELECT COUNT(*) FROM sources WHERE audit_id = ?", (audit_id,)
-        ).fetchone()[0]
+        ctx = _load_radar_context(conn, audit_id)
+        profile, location, snapshot = ctx["profile"], ctx["location"], ctx["snapshot"]
+        admins, shareholders = ctx["admins"], ctx["shareholders"]
+        source_checks, sources = ctx["source_checks"], ctx["sources"]
+        source_count = len(sources)
 
-        profile = conn.execute("SELECT * FROM company_profiles WHERE audit_id = ?", (audit_id,)).fetchone()
-        location = conn.execute("SELECT * FROM company_locations WHERE audit_id = ?", (audit_id,)).fetchone()
-        snapshot = conn.execute("SELECT * FROM financial_snapshots WHERE audit_id = ?", (audit_id,)).fetchone()
-        admins = list(conn.execute("SELECT * FROM company_administrators WHERE audit_id = ? ORDER BY id", (audit_id,)))
-        shareholders = list(conn.execute("SELECT * FROM company_shareholders WHERE audit_id = ? ORDER BY numero, id", (audit_id,)))
-        source_checks = list(conn.execute("SELECT * FROM source_checks WHERE audit_id = ? ORDER BY id", (audit_id,)))
-        sources = list(conn.execute(
-            "SELECT * FROM sources WHERE audit_id = ? ORDER BY created_at DESC, id DESC",
-            (audit_id,),
-        ))
-        
         from services.financial import compute_indicators
         indicators = compute_indicators(dict(snapshot)) if snapshot else {}
 
@@ -942,10 +689,7 @@ def update_research(
             ),
         )
 
-        if audit["status"] in {"pendiente", "devuelto", "listo_revision"}:
-            status = "en_investigacion"
-        else:
-            status = audit["status"]
+        status = "en_investigacion" if audit["status"] == "pendiente" else audit["status"]
         conn.execute(
             "UPDATE audits SET status = ?, updated_at = ? WHERE id = ?",
             (status, ts, audit_id),
@@ -1007,9 +751,6 @@ def refresh_summary(audit_id: int, db_path: Path | str = DB_PATH) -> str:
         ).fetchone()
         if research is None:
             return "No existe resumen generado."
-        source_count = conn.execute(
-            "SELECT COUNT(*) FROM sources WHERE audit_id = ?", (audit_id,)
-        ).fetchone()[0]
         data = {
             "commercial_name": research["commercial_name"] or "",
             "economic_activity": research["economic_activity"] or "",
@@ -1025,18 +766,13 @@ def refresh_summary(audit_id: int, db_path: Path | str = DB_PATH) -> str:
             "risk_flags": research["risk_flags"] or "",
             "pasted_text": research["pasted_text"] or "",
         }
-        
-        profile = conn.execute("SELECT * FROM company_profiles WHERE audit_id = ?", (audit_id,)).fetchone()
-        location = conn.execute("SELECT * FROM company_locations WHERE audit_id = ?", (audit_id,)).fetchone()
-        snapshot = conn.execute("SELECT * FROM financial_snapshots WHERE audit_id = ?", (audit_id,)).fetchone()
-        admins = list(conn.execute("SELECT * FROM company_administrators WHERE audit_id = ? ORDER BY id", (audit_id,)))
-        shareholders = list(conn.execute("SELECT * FROM company_shareholders WHERE audit_id = ? ORDER BY numero, id", (audit_id,)))
-        source_checks = list(conn.execute("SELECT * FROM source_checks WHERE audit_id = ? ORDER BY id", (audit_id,)))
-        sources = list(conn.execute(
-            "SELECT * FROM sources WHERE audit_id = ? ORDER BY created_at DESC, id DESC",
-            (audit_id,),
-        ))
-        
+
+        ctx = _load_radar_context(conn, audit_id)
+        profile, location, snapshot = ctx["profile"], ctx["location"], ctx["snapshot"]
+        admins, shareholders = ctx["admins"], ctx["shareholders"]
+        source_checks, sources = ctx["source_checks"], ctx["sources"]
+        source_count = len(sources)
+
         from services.financial import compute_indicators
         indicators = compute_indicators(dict(snapshot)) if snapshot else {}
 
@@ -1161,47 +897,6 @@ def append_research_source_note(
             data["observations"] = _append_evidence(data["observations"], finding_line, evidence_line)
 
     update_research(audit_id, user_id, data, mark_ready=False, db_path=db_path)
-
-
-# ---------------------------------------------------------------------------
-# Revisiones del jefe
-# ---------------------------------------------------------------------------
-
-def review_audit(
-    audit_id: int,
-    status: str,
-    comments: str,
-    reviewed_by: int,
-    db_path: Path | str = DB_PATH,
-) -> None:
-    if status not in REVIEW_STATUSES:
-        raise ValueError("Estado de revisión no permitido")
-    with connect(db_path) as conn:
-        ts = now_iso()
-        conn.execute(
-            "INSERT INTO reviews (audit_id, status, comments, reviewed_by, created_at) VALUES (?, ?, ?, ?, ?)",
-            (audit_id, status, comments.strip(), reviewed_by, ts),
-        )
-        conn.execute(
-            "UPDATE audits SET status = ?, updated_at = ? WHERE id = ?",
-            (status, ts, audit_id),
-        )
-
-
-def list_reviews(audit_id: int, db_path: Path | str = DB_PATH) -> list[sqlite3.Row]:
-    with connect(db_path) as conn:
-        return list(
-            conn.execute(
-                """
-                SELECT r.*, u.full_name AS reviewer_name
-                FROM reviews r
-                JOIN users u ON u.id = r.reviewed_by
-                WHERE r.audit_id = ?
-                ORDER BY r.created_at DESC, r.id DESC
-                """,
-                (audit_id,),
-            )
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1513,7 +1208,14 @@ def compute_progress(
     source_count: int,
     db_path: Path | str = DB_PATH,
 ) -> dict:
-    """Calcula el progreso de la investigación Radar Empresarial."""
+    """Calcula el progreso de la investigación Radar Empresarial.
+
+    Nota: source_count no se usa en este cuerpo. La etapa "has_sources" se
+    calcula con su propia consulta a source_checks (fuentes guiadas), no con
+    el conteo de la tabla sources (evidencia libre) que reciben los
+    llamadores. Si se decide que ambas deben contar para el progreso, hay
+    que revisar esta función junto con la Fase 5 (unificación pendiente).
+    """
     audit_id = audit["id"]
     ruc = audit["ruc"] or ""
 
