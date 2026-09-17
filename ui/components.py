@@ -9,13 +9,11 @@ from services.ruc_validator import validate_ruc
 from ui.helpers import esc
 from ui.icons import (
     SVG_ALERT,
-    SVG_ARROW_RIGHT,
     SVG_CHECK,
     SVG_CIRCLE,
     SVG_CLOCK,
     SVG_CROSS,
     SVG_INFO,
-    SVG_RETURN,
 )
 
 
@@ -24,16 +22,10 @@ def badge(status: str) -> str:
     css_map = {
         "pendiente": "badge-gray",
         "en_investigacion": "badge-amber",
-        "listo_revision": "badge-blue",
-        "devuelto": "badge-red",
-        "revisado": "badge-green",
     }
     icon_map = {
         "pendiente": SVG_CIRCLE,
         "en_investigacion": SVG_CLOCK,
-        "listo_revision": SVG_ARROW_RIGHT,
-        "devuelto": SVG_RETURN,
-        "revisado": SVG_CHECK,
     }
     css = css_map.get(status, "badge-gray")
     icon = icon_map.get(status, SVG_CIRCLE)
