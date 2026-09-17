@@ -4,18 +4,7 @@ from ui.helpers import esc, csrf_input
 from ui.icons import SVG_EXTERNAL, SVG_SAVE
 from providers.sri import SriProvider
 from services.rowutil import row_get
-
-
-def _ic(label: str, value: str, css_extra: str = "") -> str:
-    v = value.strip() if value else ""
-    val_cls = "info-card-value" if v else "info-card-value pending"
-    val_text = esc(v) if v else "Pendiente de confirmar"
-    return (
-        f'<div class="info-card {css_extra}">'
-        f'<div class="info-card-label">{esc(label)}</div>'
-        f'<div class="{val_cls}">{val_text}</div>'
-        f'</div>'
-    )
+from ui.components import info_card as _ic
 
 
 def _pval(profile, key: str) -> str:

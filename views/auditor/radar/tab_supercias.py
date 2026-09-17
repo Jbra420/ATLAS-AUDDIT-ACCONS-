@@ -4,15 +4,10 @@ from ui.helpers import esc, csrf_input
 from ui.icons import SVG_EXTERNAL, SVG_SAVE
 from providers.supercias import SuperciasProvider
 from services.rowutil import row_get
+from ui.components import info_card as _ic
 
 def _pval(profile, key):
     return str(row_get(profile, key, "")).strip()
-
-def _ic(label, value, css_extra=""):
-    v = value.strip() if value else ""
-    val_cls = "info-card-value" if v else "info-card-value pending"
-    val_text = esc(v) if v else "Pendiente de confirmar"
-    return f'<div class="info-card {css_extra}"><div class="info-card-label">{esc(label)}</div><div class="{val_cls}">{val_text}</div></div>'
 
 def build(audit_id, audit, profile, research, read_only: bool = False, csrf_token: str = ""):
     ruc = audit["ruc"] or ""

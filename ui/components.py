@@ -51,6 +51,25 @@ def avatar_initials(name: str) -> str:
     return name[:2].upper() if name else "?"
 
 
+def people_avatar(name: str) -> str:
+    """Avatar circular con iniciales para filas de tablas de personas (admins, accionistas)."""
+    initials = "".join(p[0] for p in (name or "").strip().split()[:2]).upper()
+    return f'<span class="people-avatar">{esc(initials)}</span>'
+
+
+def info_card(label: str, value: str, css_extra: str = "") -> str:
+    """Tarjeta de dato de solo lectura usada en los tabs del Radar Empresarial (SRI, Supercias, etc.)."""
+    v = value.strip() if value else ""
+    val_cls = "info-card-value" if v else "info-card-value pending"
+    val_text = esc(v) if v else "Pendiente de confirmar"
+    return (
+        f'<div class="info-card {css_extra}">'
+        f'<div class="info-card-label">{esc(label)}</div>'
+        f'<div class="{val_cls}">{val_text}</div>'
+        f'</div>'
+    )
+
+
 def render_progress_track(progress: dict) -> str:
     """Renderiza la barra de progreso de la investigación."""
     stages = progress["stages"]

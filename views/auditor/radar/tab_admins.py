@@ -5,11 +5,7 @@ el parámetro read_only se acepta por consistencia con el resto de tabs.
 """
 from __future__ import annotations
 from ui.helpers import esc
-
-
-def _avatar(name: str) -> str:
-    initials = "".join(p[0] for p in name.strip().split()[:2]).upper()
-    return f'<span class="people-avatar">{esc(initials)}</span>'
+from ui.components import people_avatar as _avatar
 
 
 def build(audit_id: int, audit, admins: list, *, read_only: bool = False) -> str:  # noqa: ARG001
