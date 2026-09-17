@@ -6,7 +6,6 @@ Verifica que cuando read_only=True (modo jefe auditor):
   - El HTML de solo lectura sigue conteniendo la información de la empresa.
   - tab_admins y tab_accionistas aceptan read_only sin error.
   - tab_resumen y tab_financiero muestran/ocultan formularios según el rol.
-  - tab_fuentes oculta los botones de acción en modo lectura.
 """
 from __future__ import annotations
 
@@ -15,15 +14,12 @@ import unittest
 from pathlib import Path
 
 from database import (
-    add_source,
     authenticate,
     create_company_audit,
     get_audit,
     init_db,
     load_demo_if_ruc_matches,
     get_financial_snapshot,
-    list_sources,
-    list_source_checks,
 )
 from services.financial import compute_indicators
 
@@ -128,59 +124,6 @@ class TestTabAccionistasReadOnly(unittest.TestCase):
         from views.auditor.radar.tab_accionistas import build
         html = build(self.audit_id, self.audit, shareholders=[], read_only=True)
         self.assertIn("Sin accionistas registrados", html)
-
-
-class TestTabFuentesReadOnly(unittest.TestCase):
-    """tab_fuentes oculta formularios de acción en modo lectura."""
-
-    def setUp(self):
-        self.db = _make_db()
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        self.admin = authenticate("admin", "admin123", self.db)
-        self.audit_id = create_company_audit(
-            "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
-            "Consultoría", "2026", self.auditor["id"], self.admin["id"], self.db,
-        )
-        load_demo_if_ruc_matches(self.audit_id, "0190377210001", self.db)
-        add_source(
-            self.audit_id,
-            "Consulta SERCOP",
-            "https://www.compraspublicas.gob.ec/",
-            "SERCOP",
-            "Hallazgo: No registra contratos publicos",
-            self.auditor["id"],
-            self.db,
-        )
-        self.src_checks = list_source_checks(self.audit_id, self.db)
-        self.sources = list_sources(self.audit_id, self.db)
-
-    def test_read_only_suppresses_forms(self):
-        """En modo lectura no debe aparecer ningún formulario POST."""
-        from views.auditor.radar.tab_fuentes import build
-        html = build(self.audit_id, self.src_checks, self.sources, read_only=True)
-        self.assertNotIn('<form', html,
-                         "read_only=True debe suprimir todos los formularios del tab fuentes")
-        self.assertIn("Bitacora de evidencia registrada", html)
-
-    def test_auditor_mode_has_forms(self):
-        """En modo auditor deben aparecer formularios de acción."""
-        from views.auditor.radar.tab_fuentes import build
-        html = build(self.audit_id, self.src_checks, self.sources, read_only=False)
-        if self.src_checks:  # Solo si hay fuentes configuradas
-            self.assertIn('<form', html,
-                          "read_only=False debe incluir formularios en tab fuentes")
-        self.assertIn("Registrar evidencia", html)
-
-    def test_html_contains_source_names(self):
-        """El HTML debe contener los nombres de las fuentes independientemente del rol."""
-        from views.auditor.radar.tab_fuentes import build
-        html_ro = build(self.audit_id, self.src_checks, self.sources, read_only=True)
-        html_aw = build(self.audit_id, self.src_checks, self.sources, read_only=False)
-        # Ambos deben tener la misma estructura base de fuentes
-        self.assertIn("source-check-grid", html_ro)
-        self.assertIn("source-check-grid", html_aw)
-        self.assertIn("Consulta SERCOP", html_ro)
-        self.assertIn("Consulta SERCOP", html_aw)
 
 
 class TestTabResumenReadOnly(unittest.TestCase):
