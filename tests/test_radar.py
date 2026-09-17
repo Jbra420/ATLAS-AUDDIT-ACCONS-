@@ -18,7 +18,6 @@ from database import (
     get_financial_snapshot,
     mark_document_reviewed,
     list_economic_documents,
-    update_research,
 )
 from services.financial import compute_indicators
 from services.summary import generate_summary
@@ -40,10 +39,6 @@ def _admin_row(db_path: Path) -> sqlite3.Row:
 def _auditor_row(db_path: Path) -> sqlite3.Row:
     return authenticate("auditor", "auditor123", db_path)
 
-def _is_valid_ruc(ruc: str) -> bool:
-    """Mock validation function for RUC (as UI handles this mostly in reality)."""
-    return len(ruc) == 13 and ruc.isdigit() and ruc.endswith("001")
-
 
 class TestRadarEmpresarial(unittest.TestCase):
 
@@ -57,18 +52,11 @@ class TestRadarEmpresarial(unittest.TestCase):
             "Servicios de consultoría", "2026", self.auditor["id"], self.admin["id"], self.db
         )
 
-    # 1. test_ruc_validation_format — RUC con 12/14 dígitos falla
-    def test_ruc_validation_format(self):
-        self.assertFalse(_is_valid_ruc("123456789012"))  # 12 digits
-        self.assertFalse(_is_valid_ruc("12345678901234")) # 14 digits
-        self.assertFalse(_is_valid_ruc("ABCDEFGHIJKLM")) # non digits
-        self.assertFalse(_is_valid_ruc("1234567890123")) # not ending in 001
+    # Nota: la validación real de RUC (formato, dígito verificador, etc.) se
+    # prueba a fondo en tests/test_ruc_validator.py contra services.ruc_validator.
+    # No se reimplementa aquí un validador de mentira.
 
-    # 2. test_ruc_grucanqui_valid — RUC 0190377210001 pasa validación
-    def test_ruc_grucanqui_valid(self):
-        self.assertTrue(_is_valid_ruc("0190377210001"))
-
-    # 3. test_demo_data_loaded — Ficha demo carga correctamente
+    # 1. test_demo_data_loaded — Ficha demo carga correctamente
     def test_demo_data_loaded(self):
         loaded = load_demo_if_ruc_matches(self.audit_id, "0190377210001", self.db)
         self.assertTrue(loaded)
@@ -80,7 +68,7 @@ class TestRadarEmpresarial(unittest.TestCase):
         self.assertIsNotNone(financial)
         self.assertEqual(financial["activo_total"], 3108776.58)
 
-    # 4. test_financial_indicators — Cálculos de endeudamiento y margen neto
+    # 2. test_financial_indicators — Cálculos de endeudamiento y margen neto
     def test_financial_indicators(self):
         snapshot = {
             "activo_total": 100000.0,
@@ -100,7 +88,7 @@ class TestRadarEmpresarial(unittest.TestCase):
         self.assertAlmostEqual(inds["patrimonio_sobre_activo"], 0.4) # 40k / 100k
         self.assertTrue(any("supera el umbral" in a["mensaje"] for a in inds["alertas"]))
 
-    # 5. test_summary_generation — Resumen incluye indicadores financieros
+    # 3. test_summary_generation — Resumen incluye indicadores financieros
     def test_summary_generation(self):
         load_demo_if_ruc_matches(self.audit_id, "0190377210001", self.db)
         audit = get_audit(self.audit_id, self.admin, self.db)
@@ -115,23 +103,21 @@ class TestRadarEmpresarial(unittest.TestCase):
         self.assertIn("Razón endeudamiento", summary)
         self.assertIn("Margen neto", summary)
 
-    # 6. test_auditor_isolation — Auditor no puede ver auditoría ajena
+    # 4. test_auditor_isolation — Auditor no puede ver auditoría ajena
     def test_auditor_isolation(self):
         with connect(self.db) as conn:
-            auditor2_id = create_user(conn, "auditor2", "Auditor Dos", "auditor", "clave2")
+            create_user(conn, "auditor2", "Auditor Dos", "auditor", "clave2")
         auditor2 = authenticate("auditor2", "clave2", self.db)
         
         # Auditor2 intenta ver audit_id asignado a auditor1
         audit = get_audit(self.audit_id, auditor2, self.db)
         self.assertIsNone(audit)
 
-    # 7. test_mark_ready_does_not_send_to_review — Estado queda en investigación
-    def test_mark_ready_does_not_send_to_review(self):
-        update_research(self.audit_id, self.auditor["id"], {}, mark_ready=True, db_path=self.db)
-        audit = get_audit(self.audit_id, self.admin, self.db)
-        self.assertEqual(audit["status"], "en_investigacion")
+    # Nota: el comportamiento de mark_ready se prueba una sola vez, en
+    # tests/test_database.py::test_mark_ready_no_longer_sends_to_review,
+    # para no duplicar la misma aserción en dos archivos.
 
-    # 8. test_document_mark_reviewed — Documento pasa a estado revisado
+    # 5. test_document_mark_reviewed — Documento pasa a estado revisado
     def test_document_mark_reviewed(self):
         load_demo_if_ruc_matches(self.audit_id, "0190377210001", self.db)
         docs = list_economic_documents(self.audit_id, self.db)

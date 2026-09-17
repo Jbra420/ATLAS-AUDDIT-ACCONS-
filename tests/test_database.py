@@ -244,6 +244,10 @@ class TestResearchFlow(unittest.TestCase):
         self.assertEqual(audit["status"], "en_investigacion")
 
     def test_mark_ready_no_longer_sends_to_review(self):
+        """mark_ready es un parámetro heredado que update_research() ya no lee
+        en su cuerpo: se conserva en la firma por compatibilidad con llamadores
+        existentes, pero no cambia el resultado. Este test documenta ese hecho
+        (True y False deben dar el mismo status) en vez de asumir que hace algo."""
         update_research(self.audit_id, self.auditor["id"], _full_data(), mark_ready=True, db_path=self.db)
         audit = get_audit(self.audit_id, self.admin, self.db)
         self.assertEqual(audit["status"], "en_investigacion")
