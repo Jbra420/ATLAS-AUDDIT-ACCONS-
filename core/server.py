@@ -19,6 +19,8 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 
 from database import (
     DB_PATH,
+    add_administrator,
+    add_shareholder,
     add_source,
     append_research_source_note,
     authenticate,
@@ -27,6 +29,8 @@ from database import (
     reassign_audit,
     create_session,
     create_user,
+    delete_administrator,
+    delete_shareholder,
     destroy_session,
     get_audit,
     get_audit_context,
@@ -628,6 +632,69 @@ class AtlasHandler(BaseHTTPRequestHandler):
             self.redirect(f"/auditor/radar?audit_id={audit_id}&msg=Datos+guardados&tab={tab}")
             return
 
+        if path == "/auditor/radar/administrator":
+            current = self.require_auditor()
+            if not current:
+                return
+            audit_id = int(form_value(form, "audit_id", "0"))
+            if not get_audit(audit_id, current):
+                self.send_html(
+                    layout("Acceso denegado", current,
+                           '<div class="error-msg">Auditoría no disponible.</div>'), 403,
+                )
+                return
+            try:
+                if form_value(form, "action", "add") == "delete":
+                    delete_administrator(
+                        audit_id,
+                        int(form_value(form, "administrator_id", "0")),
+                    )
+                    msg = "Administrador eliminado"
+                else:
+                    add_administrator(
+                        audit_id,
+                        form_value(form, "identificacion"),
+                        form_value(form, "nombre"),
+                        form_value(form, "nacionalidad"),
+                        form_value(form, "cargo"),
+                    )
+                    msg = "Administrador registrado"
+                self.redirect(f"/auditor/radar?audit_id={audit_id}&msg={quote_plus(msg)}&tab=admins")
+            except Exception as exc:
+                self.redirect(f"/auditor/radar?audit_id={audit_id}&err={quote_plus(str(exc))}&tab=admins")
+            return
+
+        if path == "/auditor/radar/shareholder":
+            current = self.require_auditor()
+            if not current:
+                return
+            audit_id = int(form_value(form, "audit_id", "0"))
+            if not get_audit(audit_id, current):
+                self.send_html(
+                    layout("Acceso denegado", current,
+                           '<div class="error-msg">Auditoría no disponible.</div>'), 403,
+                )
+                return
+            try:
+                if form_value(form, "action", "add") == "delete":
+                    delete_shareholder(
+                        audit_id,
+                        int(form_value(form, "shareholder_id", "0")),
+                    )
+                    msg = "Accionista eliminado"
+                else:
+                    add_shareholder(
+                        audit_id,
+                        form_value(form, "numero"),
+                        form_value(form, "identificacion"),
+                        form_value(form, "nombre"),
+                    )
+                    msg = "Accionista registrado"
+                self.redirect(f"/auditor/radar?audit_id={audit_id}&msg={quote_plus(msg)}&tab=accionistas")
+            except Exception as exc:
+                self.redirect(f"/auditor/radar?audit_id={audit_id}&err={quote_plus(str(exc))}&tab=accionistas")
+            return
+
         if path == "/auditor/radar/summary":
             current = self.require_auditor()
             if not current:
@@ -644,8 +711,33 @@ class AtlasHandler(BaseHTTPRequestHandler):
             research = ctx["research"]
             profile, location = ctx["profile"], ctx["location"]
             admins, shareholders = ctx["admins"], ctx["shareholders"]
+            docs = ctx["docs"]
             snapshot = ctx["snapshot"]
             source_checks, sources = ctx["source_checks"], ctx["sources"]
+            source_map = build_source_map(
+                audit,
+                research,
+                profile,
+                location,
+                admins,
+                shareholders,
+                docs,
+                snapshot,
+                source_checks,
+                sources,
+            )
+            readiness = source_map["readiness"]
+            if not readiness["ready"]:
+                labels = [item["label"] for item in readiness["blockers"]]
+                preview = ", ".join(labels[:3])
+                remaining = len(labels) - 3
+                if remaining > 0:
+                    preview += f" y {remaining} requisito(s) más"
+                message = f"No se puede generar el resumen. Complete: {preview}."
+                self.redirect(
+                    f"/auditor/radar?audit_id={audit_id}&err={quote_plus(message)}&tab=resumen"
+                )
+                return
             source_count = len(sources)
             indicators = compute_indicators(snapshot)
             data = {
@@ -673,9 +765,10 @@ class AtlasHandler(BaseHTTPRequestHandler):
             )
             with connect() as conn:
                 conn.execute(
-                    "INSERT INTO research_notes (audit_id, updated_at) VALUES (?, ?) ON CONFLICT(audit_id) "
+                    "INSERT INTO research_notes (audit_id, generated_summary, updated_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(audit_id) "
                     "DO UPDATE SET generated_summary=?, updated_at=?",
-                    (audit_id, _now(), summary, _now()),
+                    (audit_id, summary, _now(), summary, _now()),
                 )
             self.redirect(f"/auditor/radar?audit_id={audit_id}&msg=Resumen+generado&tab=resumen")
             return

@@ -15,7 +15,6 @@ from database import (
 from services.financial import compute_indicators
 from services.company_search import build_source_map
 from services.dossier import build_dossier_model
-from services.activity_timeline import build_activity_timeline
 from ui.components import ruc_banner_html
 from ui.helpers import esc, form_value, csrf_input
 from ui.icons import (
@@ -26,75 +25,185 @@ from ui.icons import (
     SVG_CLOCK,
     SVG_DOLLAR,
     SVG_DOWNLOAD,
-    SVG_EXTERNAL,
-    SVG_FILE,
     SVG_INFO,
     SVG_MAP_PIN,
     SVG_RADAR,
     SVG_SEARCH,
-    SOURCE_ICONS,
     SVG_USERS,
 )
 from ui.layout import layout
 
 
 
-def _render_source_map(source_map: dict, read_only: bool) -> str:
-    totals = source_map["totals"]
-    cards_html = ""
-    for card in source_map["cards"]:
-        found = "".join(
-            f'<li><span>{esc(item["label"])}</span><strong>{esc(item["value"])}</strong></li>'
-            for item in card["found"]
-        )
-        missing_txt = ", ".join(card["missing"]) if card["missing"] else "Sin pendientes criticos"
-        cards_html += f"""
-        <article class="source-map-card source-map-{esc(card['status'])}">
-          <div class="source-map-card-head">
-            <div class="source-map-icon">{SOURCE_ICONS.get(card["key"], SVG_INFO)}</div>
-            <div>
-              <h3>{esc(card["title"])}</h3>
-              <span class="source-map-count">{card["completed"]}/{card["total"]} datos clave</span>
-            </div>
-            <span class="source-map-status status-{esc(card['status'])}">{esc(card["status_label"])}</span>
-          </div>
-          <ul class="source-map-found">
-            {found if found else '<li class="source-map-empty">Sin datos confirmados todavia</li>'}
-          </ul>
-          <div class="source-map-missing">
-            <span>Pendiente</span>
-            <p>{esc(missing_txt)}</p>
-          </div>
-          <button type="button" class="source-map-link" onclick="switchTab('{esc(card['tab'])}')">
-            {SVG_ARROW_RIGHT} {esc('Ver fuente' if read_only else 'Abrir fuente')}
-          </button>
-        </article>
+def _render_readiness_panel(readiness: dict, read_only: bool) -> str:
+    blockers = readiness.get("blockers", [])
+    warnings = readiness.get("warnings", [])
+    ready = bool(readiness.get("ready"))
+
+    def item_html(item: dict, item_class: str) -> str:
+        return f"""
+          <li class="readiness-item {item_class}">
+            <span><strong>{esc(item["label"])}</strong><small>{esc(item["source"])}</small></span>
+            <button type="button" onclick="switchTab('{item['tab']}')">
+              Revisar {SVG_ARROW_RIGHT}
+            </button>
+          </li>
         """
 
-    ready_label = "Base suficiente para resumen" if totals["ready_for_summary"] else "Resumen aun requiere soporte"
-    ready_icon = SVG_CHECK if totals["ready_for_summary"] else SVG_ALERT
+    blocker_items = "".join(item_html(item, "is-blocker") for item in blockers)
+    warning_items = "".join(item_html(item, "is-warning") for item in warnings)
+    if ready:
+        title = "Validación mínima completa"
+        description = (
+            "El auditor puede generar el resumen preliminar."
+            if not read_only else
+            "El expediente cumple los requisitos para que el auditor genere el resumen."
+        )
+        icon = SVG_CHECK
+        status_class = "is-ready"
+    else:
+        title = f"{len(blockers)} requisito(s) pendiente(s)"
+        description = (
+            "Complete los datos obligatorios antes de generar el resumen."
+            if not read_only else
+            "El auditor debe completar estos datos antes de generar el resumen."
+        )
+        icon = SVG_ALERT
+        status_class = "is-blocked"
+
+    blockers_column = ""
+    if blockers:
+        blockers_column = f"""
+        <div class="readiness-group">
+          <span class="readiness-group-title">Obligatorios</span>
+          <ul>{blocker_items}</ul>
+        </div>
+        """
+    warnings_column = ""
+    if warnings:
+        warnings_column = f"""
+        <div class="readiness-group">
+          <span class="readiness-group-title">Recomendados</span>
+          <ul>{warning_items}</ul>
+        </div>
+        """
+
     return f"""
-    <section class="source-map-panel">
-      <div class="source-map-header">
+    <div class="readiness-panel {status_class}">
+      <div class="readiness-head">
+        <span class="readiness-icon">{icon}</span>
         <div>
-          <span class="source-map-eyebrow">Mapa de busqueda empresarial</span>
-          <h2>Estado de fuentes para interpretar la empresa</h2>
+          <h3>{esc(title)}</h3>
+          <p>{esc(description)}</p>
         </div>
-        <div class="source-map-readiness">
+        <div class="readiness-count">
+          <strong>{readiness.get('required_completed', 0)}/{readiness.get('required_total', 0)}</strong>
+          <span>requisitos</span>
+        </div>
+      </div>
+      <div class="readiness-groups">
+        {blockers_column}
+        {warnings_column}
+      </div>
+    </div>
+    """
+
+
+def _render_source_map(source_map: dict, read_only: bool) -> str:
+    totals = source_map["totals"]
+    readiness = source_map["readiness"]
+
+    # Identify individual card statuses (assuming only 2 cards: SRI and Supercias)
+    sri_card = next((c for c in source_map["cards"] if c["key"] == "sri"), None)
+    sup_card = next((c for c in source_map["cards"] if c["key"] == "supercias"), None)
+
+    def step_html(num: int, card: dict | None, tab_id: str, title: str, btn_txt: str) -> str:
+        if not card:
+            return ""
+        st = card["status"]  # 'complete', 'partial', 'pending'
+        icon = SVG_CHECK if st == 'complete' else (SVG_CLOCK if st == 'partial' else SVG_ALERT)
+        color_cls = f"step-{st}"
+
+        found = card["completed"]
+        tot = card["total"]
+
+        return f"""
+        <div class="step-item {color_cls}">
+          <div class="step-indicator">
+            <span class="step-num">{num}</span>
+            <span class="step-icon">{icon}</span>
+          </div>
+          <div class="step-content">
+            <div class="step-header">
+              <h4>{esc(title)}</h4>
+              <span class="step-badge {color_cls}">{esc(card["status_label"])}</span>
+            </div>
+            <p class="step-meta">{found} de {tot} datos validados</p>
+            <button type="button" class="btn-step-action" onclick="switchTab('{tab_id}')">
+              {esc(btn_txt)} {SVG_ARROW_RIGHT}
+            </button>
+          </div>
+        </div>
+        """
+
+    # Generamos los 3 pasos: SRI, Supercias, Resumen
+    step1 = step_html(1, sri_card, "sri", "Validación SRI", "Ir a SRI")
+    step2 = step_html(2, sup_card, "supercias", "Societario (Supercias)", "Ir a Supercias")
+
+    # Paso 3 (Resumen) depende de que los otros 2 estén completos
+    is_ready = readiness["ready"]
+    s3_st = "complete" if is_ready else "pending"
+    s3_icon = SVG_CHECK if is_ready else SVG_RADAR
+    s3_label = "Listo para generar" if is_ready else "Faltan datos obligatorios"
+    s3_btn = "Abrir resumen" if is_ready else "Revisar pendientes"
+
+    step3 = f"""
+        <div class="step-item step-{s3_st}">
+          <div class="step-indicator">
+            <span class="step-num">3</span>
+            <span class="step-icon">{s3_icon}</span>
+          </div>
+          <div class="step-content">
+            <div class="step-header">
+              <h4>Resumen Final</h4>
+              <span class="step-badge step-{s3_st}">{s3_label}</span>
+            </div>
+            <p class="step-meta">Generación del dossier automático</p>
+            <button type="button" class="btn-step-action" onclick="switchTab('resumen')">
+              {s3_btn} {SVG_ARROW_RIGHT}
+            </button>
+          </div>
+        </div>
+    """
+
+    ready_icon = SVG_CHECK if is_ready else SVG_ALERT
+    ready_color = "status-ready" if is_ready else "status-warning"
+    ready_text = "Expediente listo" if is_ready else "Requiere atención"
+
+    return f"""
+    <section class="radar-workflow-stepper">
+      <div class="workflow-header">
+        <div class="workflow-titles">
+          <span class="workflow-eyebrow">Progreso de la Auditoría</span>
+          <h2>Flujo de validación del expediente</h2>
+        </div>
+        <div class="workflow-global-status {ready_color}">
           {ready_icon}
-          <span>{esc(ready_label)}</span>
+          <span>{ready_text}</span>
+          <div class="workflow-meter">
+            <span style="width: {readiness['required_percent']}%;"></span>
+          </div>
         </div>
       </div>
-      <div class="source-map-meter" aria-label="Avance de fuentes">
-        <span style="width: {totals['percent']}%;"></span>
+
+      <div class="stepper-container">
+        {step1}
+        <div class="step-connector"></div>
+        {step2}
+        <div class="step-connector"></div>
+        {step3}
       </div>
-      <div class="source-map-meta">
-        <span>{totals["completed_fields"]}/{totals["total_fields"]} datos clave</span>
-        <span>{totals["complete_cards"]} completas</span>
-        <span>{totals["partial_cards"]} en avance</span>
-        <span>{totals["pending_cards"]} pendientes</span>
-      </div>
-      <div class="source-map-grid">{cards_html}</div>
+      {_render_readiness_panel(readiness, read_only)}
     </section>
     """
 
@@ -131,10 +240,6 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
         audit, research, profile, location, admins, shareholders,
         docs, snapshot, indicators, source_map, sources,
     )
-    timeline = build_activity_timeline(
-        audit, research, profile, location, docs, snapshot, src_checks, sources,
-    )
-
     # ── Progress ──────────────────────────────────────────────────────────
     company_name = audit["company_name"]
     ruc = audit["ruc"]
@@ -154,10 +259,21 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     tab_sri = build_sri(audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok)
     tab_supercias = build_supercias(audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok)
     tab_ubicacion = build_ubicacion(audit_id, audit, location, read_only=is_read_only, csrf_token=csrf_tok)
-    tab_admins = build_admins(audit_id, audit, admins, read_only=is_read_only)
-    tab_accionistas = build_accionistas(audit_id, audit, shareholders, read_only=is_read_only)
+    tab_admins = build_admins(
+        audit_id, audit, admins, read_only=is_read_only, csrf_token=csrf_tok,
+    )
+    tab_accionistas = build_accionistas(
+        audit_id, audit, shareholders, read_only=is_read_only, csrf_token=csrf_tok,
+    )
     tab_financiero = build_financiero(audit_id, indicators, read_only=is_read_only, csrf_token=csrf_tok)
-    tab_resumen = build_resumen(audit_id, research, dossier, read_only=is_read_only, csrf_token=csrf_tok)
+    tab_resumen = build_resumen(
+        audit_id,
+        research,
+        dossier,
+        readiness=source_map["readiness"],
+        read_only=is_read_only,
+        csrf_token=csrf_tok,
+    )
 
     # Panel lateral de señales eliminado a petición del usuario para mejor uso del espacio horizontal.
 

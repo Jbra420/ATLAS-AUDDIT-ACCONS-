@@ -18,6 +18,7 @@ Los tests verifican:
 from __future__ import annotations
 
 import json
+import re
 import socket
 import unittest
 from urllib.request import urlopen, Request
@@ -96,6 +97,14 @@ def _login(username: str, password: str) -> str:
     return ""
 
 
+def _csrf_token(path: str, cookie: str) -> str:
+    status, body = _get(path, cookie)
+    if status != 200:
+        return ""
+    match = re.search(r'name="_csrf" value="([^"]+)"', body)
+    return match.group(1) if match else ""
+
+
 # ── Casos de prueba ───────────────────────────────────────────────────────────
 
 @unittest.skipUnless(_server_available(), "Servidor Atlas no disponible en localhost:8765 — inicia con: python3 app.py")
@@ -163,6 +172,21 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         status = resp.status
         resp.close(); conn.close()
         self.assertIn(status, (301, 302, 303))
+
+    def test_incomplete_audit_cannot_generate_summary_by_direct_post(self):
+        """El servidor debe rechazar la generación aunque se omita el botón de la interfaz."""
+        csrf_token = _csrf_token("/auditor/radar?audit_id=1&tab=resumen", self.cookie)
+        self.assertTrue(csrf_token, "La página del expediente debe incluir un token CSRF")
+
+        status, location, _ = _post_raw(
+            "/auditor/radar/summary",
+            {"audit_id": "1", "_csrf": csrf_token},
+            self.cookie,
+        )
+
+        self.assertEqual(status, 303)
+        self.assertIn("err=No+se+puede+generar+el+resumen", location)
+        self.assertIn("tab=resumen", location)
 
 
 @unittest.skipUnless(_server_available(), "Servidor Atlas no disponible en localhost:8765 — inicia con: python3 app.py")

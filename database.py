@@ -1020,6 +1020,132 @@ def list_shareholders(audit_id: int, db_path: Path | str = DB_PATH) -> list[sqli
         ))
 
 
+def add_administrator(
+    audit_id: int,
+    identificacion: str,
+    nombre: str,
+    nacionalidad: str,
+    cargo: str,
+    db_path: Path | str = DB_PATH,
+) -> int:
+    identificacion = identificacion.strip()
+    nombre = nombre.strip()
+    nacionalidad = nacionalidad.strip()
+    cargo = cargo.strip()
+    if not nombre or not cargo:
+        raise ValueError("Nombre y cargo del administrador son obligatorios")
+    if len(nombre) > 160 or len(cargo) > 120:
+        raise ValueError("Nombre o cargo excede la longitud permitida")
+    if len(identificacion) > 32 or len(nacionalidad) > 80:
+        raise ValueError("Identificacion o nacionalidad excede la longitud permitida")
+
+    with connect(db_path) as conn:
+        duplicate = conn.execute(
+            """
+            SELECT id FROM company_administrators
+            WHERE audit_id = ? AND nombre = ? COLLATE NOCASE AND cargo = ? COLLATE NOCASE
+            """,
+            (audit_id, nombre, cargo),
+        ).fetchone()
+        if duplicate:
+            raise ValueError("El administrador con ese cargo ya esta registrado")
+        cur = conn.execute(
+            """
+            INSERT INTO company_administrators
+                (audit_id, identificacion, nombre, nacionalidad, cargo)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (audit_id, identificacion, nombre, nacionalidad, cargo),
+        )
+        conn.execute("UPDATE audits SET updated_at = ? WHERE id = ?", (now_iso(), audit_id))
+        return int(cur.lastrowid)
+
+
+def delete_administrator(
+    audit_id: int,
+    administrator_id: int,
+    db_path: Path | str = DB_PATH,
+) -> None:
+    with connect(db_path) as conn:
+        cur = conn.execute(
+            "DELETE FROM company_administrators WHERE id = ? AND audit_id = ?",
+            (administrator_id, audit_id),
+        )
+        if cur.rowcount != 1:
+            raise ValueError("Administrador no encontrado en este expediente")
+        conn.execute("UPDATE audits SET updated_at = ? WHERE id = ?", (now_iso(), audit_id))
+
+
+def add_shareholder(
+    audit_id: int,
+    numero: str | int | None,
+    identificacion: str,
+    nombre: str,
+    db_path: Path | str = DB_PATH,
+) -> int:
+    identificacion = identificacion.strip()
+    nombre = nombre.strip()
+    if not nombre:
+        raise ValueError("El nombre del accionista es obligatorio")
+    if len(nombre) > 160 or len(identificacion) > 32:
+        raise ValueError("Nombre o identificacion excede la longitud permitida")
+
+    raw_number = str(numero or "").strip()
+    if raw_number:
+        try:
+            position = int(raw_number)
+        except ValueError as exc:
+            raise ValueError("El numero del accionista debe ser un entero positivo") from exc
+        if position < 1:
+            raise ValueError("El numero del accionista debe ser un entero positivo")
+    else:
+        position = 0
+
+    with connect(db_path) as conn:
+        existing = list(conn.execute(
+            "SELECT id, numero, identificacion, nombre FROM company_shareholders WHERE audit_id = ?",
+            (audit_id,),
+        ))
+        normalized_name = nombre.casefold()
+        normalized_id = identificacion.casefold()
+        for row in existing:
+            same_id = bool(normalized_id and normalized_id not in {"-", "--", "—"}) and (
+                (row["identificacion"] or "").strip().casefold() == normalized_id
+            )
+            same_name = (row["nombre"] or "").strip().casefold() == normalized_name
+            if same_id or same_name:
+                raise ValueError("El accionista ya esta registrado")
+            if position and row["numero"] == position:
+                raise ValueError("El numero de accionista ya esta en uso")
+        if not position:
+            position = max((int(row["numero"] or 0) for row in existing), default=0) + 1
+
+        cur = conn.execute(
+            """
+            INSERT INTO company_shareholders (audit_id, numero, identificacion, nombre)
+            VALUES (?, ?, ?, ?)
+            """,
+            (audit_id, position, identificacion, nombre),
+        )
+        conn.execute("UPDATE audits SET updated_at = ? WHERE id = ?", (now_iso(), audit_id))
+        return int(cur.lastrowid)
+
+
+def delete_shareholder(
+    audit_id: int,
+    shareholder_id: int,
+    db_path: Path | str = DB_PATH,
+) -> None:
+    with connect(db_path) as conn:
+        cur = conn.execute(
+            "DELETE FROM company_shareholders WHERE id = ? AND audit_id = ?",
+            (shareholder_id, audit_id),
+        )
+        if cur.rowcount != 1:
+            raise ValueError("Accionista no encontrado en este expediente")
+        conn.execute("UPDATE audits SET updated_at = ? WHERE id = ?", (now_iso(), audit_id))
+
+
 # ---------------------------------------------------------------------------
 # Radar Empresarial — Documentos económicos
 # ---------------------------------------------------------------------------

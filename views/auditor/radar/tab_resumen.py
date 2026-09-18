@@ -19,6 +19,67 @@ def _list_items(items: list[str]) -> str:
     return "".join(f"<li>{esc(item)}</li>" for item in items)
 
 
+def _render_generation_status(readiness: dict, read_only: bool) -> str:
+    blockers = readiness.get("blockers", [])
+    warnings = readiness.get("warnings", [])
+    ready = bool(readiness.get("ready"))
+
+    def rows(items: list[dict], item_class: str) -> str:
+        action_label = "Ver" if read_only else "Completar"
+        return "".join(
+            f"""
+            <li class="summary-check-item {item_class}">
+              <span><strong>{esc(item['label'])}</strong><small>{esc(item['source'])}</small></span>
+              <button type="button" onclick="switchTab('{item['tab']}')">{action_label}</button>
+            </li>
+            """
+            for item in items
+        )
+
+    blocker_list = rows(blockers, "is-blocker")
+    warning_list = rows(warnings, "is-warning")
+    status_class = "is-ready" if ready else "is-blocked"
+    title = "Resumen habilitado" if ready else "Resumen bloqueado"
+    description = (
+        "Los requisitos obligatorios están completos. Las recomendaciones no bloquean la generación."
+        if ready else
+        "Complete los requisitos obligatorios. Las recomendaciones pueden resolverse después."
+    )
+    blocker_section = ""
+    if blockers:
+        blocker_section = f"""
+        <div>
+          <span class="summary-check-title">Obligatorios pendientes</span>
+          <ul>{blocker_list}</ul>
+        </div>
+        """
+    warning_section = ""
+    if warnings:
+        warning_section = f"""
+        <div>
+          <span class="summary-check-title">Recomendaciones</span>
+          <ul>{warning_list}</ul>
+        </div>
+        """
+
+    return f"""
+    <section class="summary-readiness {status_class}">
+      <div class="summary-readiness-head">
+        <div>
+          <span class="dossier-eyebrow">Control previo</span>
+          <h3>{esc(title)}</h3>
+          <p>{esc(description)}</p>
+        </div>
+        <strong>{readiness.get('required_completed', 0)}/{readiness.get('required_total', 0)}</strong>
+      </div>
+      <div class="summary-check-grid">
+        {blocker_section}
+        {warning_section}
+      </div>
+    </section>
+    """
+
+
 def _render_dossier(audit_id: int, dossier: dict | None) -> str:
     if not dossier:
         return ""
@@ -112,13 +173,42 @@ def _render_dossier(audit_id: int, dossier: dict | None) -> str:
     """
 
 
-def build(audit_id: int, research: object, dossier: dict | None = None, read_only: bool = False, csrf_token: str = "") -> str:
+def build(
+    audit_id: int,
+    research: object,
+    dossier: dict | None = None,
+    readiness: dict | None = None,
+    read_only: bool = False,
+    csrf_token: str = "",
+) -> str:
+    readiness = readiness or {
+        "ready": True,
+        "blockers": [],
+        "warnings": [],
+        "required_completed": 0,
+        "required_total": 0,
+    }
+    is_ready = bool(readiness.get("ready"))
     summary_text = research["generated_summary"] or (
         "El auditor aún no ha generado el resumen estructurado."
         if read_only else
-        "Presione 'Generar resumen' para crear el resumen estructurado."
+        (
+            "Presione 'Generar resumen' para crear el resumen estructurado."
+            if is_ready else
+            "El resumen se habilitará al completar los requisitos obligatorios."
+        )
     )
-    actions_html = "" if read_only else f"""
+    historical_notice = ""
+    if research["generated_summary"] and not is_ready:
+        historical_notice = """
+        <div class="summary-historical-note">
+          <strong>Resumen anterior no vigente</strong>
+          <span>Se conserva como referencia, pero no debe utilizarse hasta completar los requisitos y generar una nueva versión.</span>
+        </div>
+        """
+    actions_html = ""
+    if not read_only and is_ready:
+        actions_html = f"""
       <div class="actions mt-0">
         <form method="post" action="/auditor/radar/summary" style="display:inline;">
           {csrf_input(csrf_token)}
@@ -128,7 +218,13 @@ def build(audit_id: int, research: object, dossier: dict | None = None, read_onl
         <a class="btn btn-sm" href="/export/summary?audit_id={audit_id}">{SVG_DOWNLOAD} TXT</a>
         <a class="btn btn-sm" href="/export/csv?audit_id={audit_id}">{SVG_DOWNLOAD} CSV</a>
       </div>
-    """
+        """
+    elif not read_only:
+        actions_html = f"""
+      <div class="actions mt-0">
+        <button type="button" class="btn btn-sm" disabled>{SVG_RADAR} Generación bloqueada</button>
+      </div>
+        """
     observations_html = (
         f"""
     <hr class="section-divider">
@@ -177,11 +273,13 @@ def build(audit_id: int, research: object, dossier: dict | None = None, read_onl
     )
 
     return f"""
+    {_render_generation_status(readiness, read_only)}
     {_render_dossier(audit_id, dossier)}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <h3 style="margin:0;font-size:15px;">Resumen preliminar de investigación</h3>
       {actions_html}
     </div>
+    {historical_notice}
     <div class="summary-box-v3">{esc(summary_text)}</div>
     {observations_html}
     """

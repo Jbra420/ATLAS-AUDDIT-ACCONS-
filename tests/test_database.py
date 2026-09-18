@@ -9,15 +9,21 @@ import unittest
 from pathlib import Path
 
 from database import (
+    add_administrator,
+    add_shareholder,
     authenticate,
     compute_progress,
     connect,
     create_company_audit,
     create_user,
+    delete_administrator,
+    delete_shareholder,
     get_audit,
     get_research,
     init_db,
+    list_administrators,
     list_auditor_audits,
+    list_shareholders,
     list_users,
     register_audit_ruc,
     update_research,
@@ -286,6 +292,62 @@ class TestResearchFlow(unittest.TestCase):
         self.assertEqual(audit["company_name"], "Compania Nueva S.A.")
         audits = list_auditor_audits(new_auditor["id"], self.db)
         self.assertEqual(len(audits), 1)
+
+
+class TestCompanyPeople(unittest.TestCase):
+    def setUp(self):
+        self.db = _make_db()
+        self.auditor = _auditor_row(self.db)
+        self.admin = _admin_row(self.db)
+        self.audit_id = create_company_audit(
+            "Empresa Estructura S.A.", "", "Cuenca", "Servicios", "2026",
+            self.auditor["id"], self.admin["id"], self.db,
+        )
+
+    def test_add_and_delete_administrator(self):
+        administrator_id = add_administrator(
+            self.audit_id, "0102030405", "Ana Torres", "Ecuatoriana",
+            "Gerente General", self.db,
+        )
+        admins = list_administrators(self.audit_id, self.db)
+        self.assertEqual(len(admins), 1)
+        self.assertEqual(admins[0]["nombre"], "Ana Torres")
+
+        delete_administrator(self.audit_id, administrator_id, self.db)
+        self.assertEqual(list_administrators(self.audit_id, self.db), [])
+
+    def test_duplicate_administrator_is_rejected(self):
+        add_administrator(
+            self.audit_id, "0102030405", "Ana Torres", "Ecuatoriana",
+            "Gerente General", self.db,
+        )
+        with self.assertRaisesRegex(ValueError, "ya esta registrado"):
+            add_administrator(
+                self.audit_id, "", "Ana Torres", "", "Gerente General", self.db,
+            )
+
+    def test_add_shareholders_assigns_next_number(self):
+        add_shareholder(self.audit_id, "", "0102030405", "Ana Torres", self.db)
+        add_shareholder(self.audit_id, "", "0102030406", "Luis Perez", self.db)
+        shareholders = list_shareholders(self.audit_id, self.db)
+        self.assertEqual([row["numero"] for row in shareholders], [1, 2])
+
+    def test_duplicate_shareholder_is_rejected(self):
+        add_shareholder(self.audit_id, "1", "0102030405", "Ana Torres", self.db)
+        with self.assertRaisesRegex(ValueError, "ya esta registrado"):
+            add_shareholder(self.audit_id, "2", "0102030405", "Otra Persona", self.db)
+
+    def test_delete_is_scoped_to_audit(self):
+        other_audit_id = create_company_audit(
+            "Empresa Distinta S.A.", "", "Quito", "Comercio", "2026",
+            self.auditor["id"], self.admin["id"], self.db,
+        )
+        shareholder_id = add_shareholder(
+            other_audit_id, "1", "0102030405", "Ana Torres", self.db,
+        )
+        with self.assertRaisesRegex(ValueError, "no encontrado"):
+            delete_shareholder(self.audit_id, shareholder_id, self.db)
+        self.assertEqual(len(list_shareholders(other_audit_id, self.db)), 1)
 
 
 # ---------------------------------------------------------------------------

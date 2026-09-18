@@ -58,6 +58,21 @@ def _sample_dossier() -> dict:
     }
 
 
+def _blocked_readiness() -> dict:
+    return {
+        "ready": False,
+        "blockers": [
+            {"label": "Estado contribuyente", "source": "SRI", "tab": "sri"},
+            {"label": "Accionistas registrados", "source": "Supercias", "tab": "accionistas"},
+        ],
+        "warnings": [
+            {"label": "Informacion financiera", "source": "Complementario", "tab": "indicadores"},
+        ],
+        "required_completed": 7,
+        "required_total": 9,
+    }
+
+
 def _make_db() -> Path:
     tmp = tempfile.mkdtemp()
     db_path = Path(tmp) / "test_tabs.db"
@@ -83,12 +98,16 @@ class TestTabAdminsReadOnly(unittest.TestCase):
         html = build(self.audit_id, self.audit, admins=[], read_only=True)
         self.assertIsInstance(html, str)
         self.assertIn("Administradores registrados", html)
+        self.assertNotIn("/auditor/radar/administrator", html)
+        self.assertNotIn("<form", html)
 
     def test_build_with_read_only_false_no_error(self):
         from views.auditor.radar.tab_admins import build
-        html = build(self.audit_id, self.audit, admins=[], read_only=False)
+        html = build(self.audit_id, self.audit, admins=[], read_only=False, csrf_token="token")
         self.assertIsInstance(html, str)
         self.assertIn("Administradores registrados", html)
+        self.assertIn("/auditor/radar/administrator", html)
+        self.assertIn('name="_csrf" value="token"', html)
 
     def test_empty_admins_shows_placeholder(self):
         from views.auditor.radar.tab_admins import build
@@ -114,11 +133,15 @@ class TestTabAccionistasReadOnly(unittest.TestCase):
         html = build(self.audit_id, self.audit, shareholders=[], read_only=True)
         self.assertIsInstance(html, str)
         self.assertIn("Nómina de socios", html)
+        self.assertNotIn("/auditor/radar/shareholder", html)
+        self.assertNotIn("<form", html)
 
     def test_build_read_only_false_no_error(self):
         from views.auditor.radar.tab_accionistas import build
-        html = build(self.audit_id, self.audit, shareholders=[], read_only=False)
+        html = build(self.audit_id, self.audit, shareholders=[], read_only=False, csrf_token="token")
         self.assertIsInstance(html, str)
+        self.assertIn("/auditor/radar/shareholder", html)
+        self.assertIn('name="_csrf" value="token"', html)
 
     def test_empty_shareholders_shows_placeholder(self):
         from views.auditor.radar.tab_accionistas import build
@@ -148,12 +171,50 @@ class TestTabResumenReadOnly(unittest.TestCase):
         self.assertNotIn('/auditor/radar/summary', html,
                          "read_only=True no debe mostrar el formulario de generación de resumen")
 
+    def test_read_only_checklist_uses_view_actions(self):
+        """El jefe navega a los pendientes sin recibir acciones operativas."""
+        from views.auditor.radar.tab_resumen import build
+        html = build(
+            self.audit_id,
+            self.research,
+            readiness=_blocked_readiness(),
+            read_only=True,
+        )
+        self.assertIn(">Ver</button>", html)
+        self.assertNotIn(">Completar</button>", html)
+
     def test_auditor_mode_has_generate_button(self):
         """El auditor sí debe ver el botón para generar el resumen."""
         from views.auditor.radar.tab_resumen import build
         html = build(self.audit_id, self.research, read_only=False)
         self.assertIn('/auditor/radar/summary', html,
                       "read_only=False debe mostrar el formulario de generación")
+
+    def test_blocked_readiness_suppresses_generate_form(self):
+        """Los faltantes obligatorios bloquean el formulario también para el auditor."""
+        from views.auditor.radar.tab_resumen import build
+        html = build(
+            self.audit_id,
+            self.research,
+            readiness=_blocked_readiness(),
+            read_only=False,
+        )
+        self.assertIn("Resumen bloqueado", html)
+        self.assertIn("Estado contribuyente", html)
+        self.assertNotIn('/auditor/radar/summary', html)
+
+    def test_blocked_readiness_separates_warnings(self):
+        """Las recomendaciones se muestran separadas de los requisitos obligatorios."""
+        from views.auditor.radar.tab_resumen import build
+        html = build(
+            self.audit_id,
+            self.research,
+            readiness=_blocked_readiness(),
+            read_only=False,
+        )
+        self.assertIn("Obligatorios pendientes", html)
+        self.assertIn("Recomendaciones", html)
+        self.assertIn("Informacion financiera", html)
 
     def test_summary_content_visible_in_both_modes(self):
         """El contenido del resumen (si existe) debe verse en ambos modos."""

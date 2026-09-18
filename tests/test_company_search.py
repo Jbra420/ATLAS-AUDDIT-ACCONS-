@@ -90,6 +90,41 @@ class TestCompanySearchMap(unittest.TestCase):
         sri = next(card for card in source_map["cards"] if card["key"] == "sri")
         self.assertEqual(sri["status"], "pending")
         self.assertFalse(source_map["totals"]["ready_for_summary"])
+        blocker_labels = {item["label"] for item in source_map["readiness"]["blockers"]}
+        self.assertIn("RUC validado", blocker_labels)
+        self.assertIn("Fuente Supercias consultada", blocker_labels)
+
+    def test_required_fields_enable_summary_with_optional_warnings(self):
+        source_map = build_source_map(
+            {"ruc": "0190377210001"},
+            {
+                "economic_activity": "Servicios de auditoria",
+                "legal_status": "ACTIVA",
+                "representative": "Ana Torres",
+                "address": "",
+                "observations": "",
+                "sri_info": "Contribuyente activo",
+            },
+            None,
+            None,
+            [{"nombre": "Ana Torres"}],
+            [{"nombre": "Socio Uno"}],
+            [],
+            None,
+            [
+                {"fuente": "SRI", "estado": "consultada"},
+                {"fuente": "Supercias", "estado": "consultada"},
+            ],
+            [],
+        )
+
+        readiness = source_map["readiness"]
+        self.assertTrue(readiness["ready"])
+        self.assertEqual(readiness["blocker_count"], 0)
+        self.assertEqual(readiness["required_completed"], readiness["required_total"])
+        warning_labels = {item["label"] for item in readiness["warnings"]}
+        self.assertIn("Tipo contribuyente", warning_labels)
+        self.assertIn("Informacion financiera", warning_labels)
 
 
 if __name__ == "__main__":

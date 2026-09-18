@@ -14,17 +14,6 @@ from services.rowutil import row_get as _get
 
 RowLike = Union[sqlite3.Row, dict[str, Any], None]
 
-# ── Umbrales para determinar si el expediente está listo para generar resumen ──
-# SUMMARY_MIN_PERCENT: porcentaje mínimo de campos clave completados (sobre el total
-#   de todos los campos de todas las fuentes) para habilitar la generación de resumen.
-# SUMMARY_MAX_PENDING: número máximo de tarjetas de fuente que pueden quedar en estado
-#   "pendiente" sin bloquear la generación del resumen.
-# Estos valores reflejan el umbral mínimo acordado con el equipo auditor para garantizar
-# que el resumen cuente con suficiente respaldo de información antes de ser emitido.
-SUMMARY_MIN_PERCENT: int = 60
-SUMMARY_MAX_PENDING: int = 1
-
-
 def _present(value: Any) -> bool:
     text = str(value or "").strip()
     return bool(text and text not in {"—", "-", "N/A", "n/a", "Pendiente de confirmar"})
@@ -49,28 +38,13 @@ def _row_count(rows: list[Any] | None) -> int:
     return len(rows or [])
 
 
-def _reviewed_docs(docs: list[RowLike]) -> int:
-    return sum(1 for doc in docs if _get(doc, "estado") == "revisado")
-
-
-def _source_count(sources: list[RowLike], *tokens: str) -> int:
-    total = 0
-    for source in sources:
-        haystack = " ".join(
-            str(_get(source, key, "") or "")
-            for key in ("title", "source_type", "notes", "url")
-        ).lower()
-        if any(token in haystack for token in tokens):
-            total += 1
-    return total
-
-
 def _card(
     *,
     key: str,
     title: str,
     tab: str,
     fields: list[tuple[str, Any]],
+    required_labels: tuple[str, ...],
     next_action: str,
 ) -> dict[str, Any]:
     found = [
@@ -79,6 +53,9 @@ def _card(
         if _present(value)
     ]
     missing = [label for label, value in fields if not _present(value)]
+    required = set(required_labels)
+    blocking_missing = [label for label in missing if label in required]
+    warning_missing = [label for label in missing if label not in required]
     total = len(fields)
     completed = len(found)
     if completed == total:
@@ -99,9 +76,17 @@ def _card(
         "completed": completed,
         "total": total,
         "found": found[:4],
-        "missing": missing[:4],
+        "missing": missing,
+        "blocking_missing": blocking_missing,
+        "warning_missing": warning_missing,
+        "required_total": len(required),
+        "required_completed": len(required) - len(blocking_missing),
         "next_action": next_action,
     }
+
+
+def _readiness_item(label: str, source: str, tab: str) -> dict[str, str]:
+    return {"label": label, "source": source, "tab": tab}
 
 
 def build_source_map(
@@ -119,15 +104,9 @@ def build_source_map(
     """Construye el mapa interpretado de fuentes para el Radar Empresarial."""
     sri_consulted = "Consultada" if _consulted(source_checks, ("sri",)) else ""
     supercias_consulted = "Consultada" if _consulted(source_checks, ("supercias",), ("documento",)) else ""
-    docs_consulted = "Consultada" if _consulted(source_checks, ("documento",)) else ""
-    sercop_consulted = "Consultada" if _consulted(source_checks, ("sercop",)) else ""
-    web_consulted = "Consultada" if _consulted(source_checks, ("web",)) else ""
 
     admin_count = _row_count(admins)
     shareholder_count = _row_count(shareholders)
-    reviewed_docs = _reviewed_docs(docs)
-    docs_total = _row_count(docs)
-    registered_sources = _row_count(sources)
 
     cards = [
         _card(
@@ -142,6 +121,12 @@ def build_source_map(
                 ("Obligado a contabilidad", _get(profile, "obligado_contabilidad")),
                 ("Actividad economica", _get(profile, "actividad_economica") or _get(research, "economic_activity")),
             ],
+            required_labels=(
+                "RUC validado",
+                "Fuente SRI consultada",
+                "Estado contribuyente",
+                "Actividad economica",
+            ),
             next_action="Confirmar estado, regimen y obligaciones tributarias.",
         ),
         _card(
@@ -157,41 +142,14 @@ def build_source_map(
                 ("Administradores registrados", f"{admin_count} registro(s)" if admin_count else ""),
                 ("Accionistas registrados", f"{shareholder_count} registro(s)" if shareholder_count else ""),
             ],
+            required_labels=(
+                "Fuente Supercias consultada",
+                "Situacion legal",
+                "Representante legal",
+                "Administradores registrados",
+                "Accionistas registrados",
+            ),
             next_action="Cruzar estado societario, representantes y estructura accionaria.",
-        ),
-        _card(
-            key="sercop",
-            title="SERCOP",
-            tab="fuentes",
-            fields=[
-                ("Fuente SERCOP consultada", sercop_consulted),
-                ("Resultado de contratacion publica", _get(research, "sercop_info") or _get(research, "public_contracting")),
-                ("Evidencia registrada", _source_count(sources, "sercop") or ""),
-            ],
-            next_action="Registrar si existen contratos, inhabilitaciones o ausencia de resultados.",
-        ),
-        _card(
-            key="documentos",
-            title="Documentos economicos",
-            tab="documentos",
-            fields=[
-                ("Fuente documentos consultada", docs_consulted),
-                ("Documentos revisados", f"{reviewed_docs}/{docs_total}" if docs_total else ""),
-                ("Datos financieros capturados", "Registrados" if snapshot else ""),
-            ],
-            next_action="Marcar documentos revisados y capturar cifras base para indicadores.",
-        ),
-        _card(
-            key="web",
-            title="Busqueda web general",
-            tab="fuentes",
-            fields=[
-                ("Fuente web consultada", web_consulted),
-                ("Fuentes registradas", f"{registered_sources} fuente(s)" if registered_sources else ""),
-                ("Texto de respaldo pegado", _get(research, "pasted_text")),
-                ("Observaciones del auditor", _get(research, "observations") or _get(research, "risk_flags")),
-            ],
-            next_action="Agregar enlaces, noticias, sanciones o referencias complementarias.",
         ),
     ]
 
@@ -202,8 +160,47 @@ def build_source_map(
     partial_cards = sum(1 for card in cards if card["status"] == "partial")
     pending_cards = sum(1 for card in cards if card["status"] == "pending")
 
+    blockers = [
+        _readiness_item(label, card["title"], card["tab"])
+        for card in cards
+        for label in card["blocking_missing"]
+    ]
+    warnings = [
+        _readiness_item(label, card["title"], card["tab"])
+        for card in cards
+        for label in card["warning_missing"]
+    ]
+
+    location_checks = (
+        ("Provincia de la empresa", _get(location, "provincia"), "ubicacion"),
+        ("Ciudad o canton de la empresa", _get(location, "ciudad") or _get(location, "canton"), "ubicacion"),
+        ("Direccion principal", _get(location, "calle") or _get(research, "address"), "ubicacion"),
+        ("Informacion financiera", _get(snapshot, "activo_total"), "indicadores"),
+        ("Observaciones del auditor", _get(research, "observations"), "resumen"),
+    )
+    warnings.extend(
+        _readiness_item(label, "Complementario", tab)
+        for label, value, tab in location_checks
+        if not _present(value)
+    )
+
+    required_total = sum(card["required_total"] for card in cards)
+    required_completed = sum(card["required_completed"] for card in cards)
+    required_percent = int(round((required_completed / required_total) * 100)) if required_total else 0
+    ready_for_summary = not blockers
+
     return {
         "cards": cards,
+        "readiness": {
+            "ready": ready_for_summary,
+            "blockers": blockers,
+            "warnings": warnings,
+            "blocker_count": len(blockers),
+            "warning_count": len(warnings),
+            "required_completed": required_completed,
+            "required_total": required_total,
+            "required_percent": required_percent,
+        },
         "totals": {
             "completed_fields": completed_fields,
             "total_fields": total_fields,
@@ -211,6 +208,7 @@ def build_source_map(
             "complete_cards": complete_cards,
             "partial_cards": partial_cards,
             "pending_cards": pending_cards,
-            "ready_for_summary": percent >= SUMMARY_MIN_PERCENT and pending_cards <= SUMMARY_MAX_PENDING,
+            "ready_for_summary": ready_for_summary,
+            "required_percent": required_percent,
         },
     }
