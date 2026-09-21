@@ -242,11 +242,26 @@ class AtlasHandler(BaseHTTPRequestHandler):
             self.redirect("/login", cookie=expired)
             return
 
-        if path == "/static/atlas.css":
-            self.send_response(HTTPStatus.OK)
-            self.send_header("Content-type", "text/css")
-            self.end_headers()
-            self.wfile.write(_CSS_CONTENT.encode("utf-8"))
+        if path.startswith("/static/"):
+            if path == "/static/atlas.css":
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-type", "text/css")
+                self.end_headers()
+                self.wfile.write(_CSS_CONTENT.encode("utf-8"))
+                return
+            
+            import mimetypes
+            filepath = Path.cwd() / path.lstrip("/")
+            if filepath.is_file() and filepath.parent.name == "static":
+                self.send_response(HTTPStatus.OK)
+                mime_type, _ = mimetypes.guess_type(filepath)
+                self.send_header("Content-type", mime_type or "application/octet-stream")
+                self.end_headers()
+                with open(filepath, "rb") as f:
+                    self.wfile.write(f.read())
+                return
+            
+            self.send_error(HTTPStatus.NOT_FOUND, "File not found")
             return
 
         if path == "/api/lookup-ruc":
