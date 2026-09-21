@@ -574,11 +574,18 @@ class AtlasHandler(BaseHTTPRequestHandler):
             try:
                 clean_ruc, _validation_msg = register_audit_ruc(audit_id, ruc_input)
                 outcome = research_company_by_ruc(audit_id, clean_ruc, current["id"])
-                msg = (
-                    f"Búsqueda completada: {outcome['populated_fields']} datos SRI cargados. "
-                    "Revise los resultados y edítelos si es necesario. "
-                    "La información de Supercias continúa pendiente."
-                )
+                if outcome["sri_found"]:
+                    sri_msg = f"{outcome['populated_fields']} datos SRI cargados desde el catastro local."
+                else:
+                    sri_msg = "SRI: RUC no encontrado en el catastro local."
+                if outcome["supercias_found"]:
+                    supercias_msg = f"{outcome['supercias_populated_fields']} datos de Supercías cargados desde el catálogo local."
+                else:
+                    supercias_msg = (
+                        "Supercías: RUC no encontrado en el catálogo local "
+                        "(¿está actualizado? use scripts/update_supercias_catalog.py) o el catálogo aún no fue importado."
+                    )
+                msg = f"Búsqueda completada: {sri_msg} {supercias_msg} Revise los resultados y edítelos si es necesario."
                 self.redirect(f"/auditor/radar?audit_id={audit_id}&msg={quote_plus(msg)}&tab=sri")
             except Exception as exc:
                 self.redirect(f"/auditor/radar?audit_id={audit_id}&err={quote_plus(str(exc))}&tab=sri")
@@ -675,6 +682,8 @@ class AtlasHandler(BaseHTTPRequestHandler):
                     "actividad_economica", "representante_legal", "expediente_supercias",
                     "nacionalidad", "tipo_compania", "situacion_legal", "fecha_constitucion",
                     "plazo_social", "oficina_control", "objeto_social",
+                    "telefono", "representante_cargo", "capital_suscrito",
+                    "ciiu_nivel1", "ciiu_nivel6", "ultimo_anio_balance",
                 ]
             }
             loc_data = {

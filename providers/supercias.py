@@ -54,4 +54,29 @@ class SuperciasProvider(BaseProvider):
                 icon="🏛️",
                 field_hint="supercias_info",
             ),
+            ProviderLink(
+                name="Supercias — Certificado de administradores y accionistas",
+                url=(
+                    "https://www.gob.ec/scvs/tramites/emision-certificados-electronicos-"
+                    "cumplimiento-obligaciones-datos-generales-administradores-accionistas-"
+                    "actos-juridicos"
+                ),
+                instructions=(
+                    "1. Abra el trámite oficial (gratuito, sin clave de acceso previa).\n"
+                    "2. En 'CONSULTA DE COMPAÑÍAS' busque por expediente, RUC o nombre.\n"
+                    f"3. Ingrese el RUC: {ruc}\n"
+                    "4. Genere el certificado de 'Nómina de administradores' y el de "
+                    "'Nómina de accionistas/socios' por separado (son documentos distintos).\n"
+                    "5. Registre cada certificado como evidencia (fuente 'Supercias', título "
+                    "que incluya la palabra 'certificado') antes de transcribir la nómina."
+                ),
+                source_type="Supercias",
+                icon="🏛️",
+                notes=(
+                    "El Directorio de Compañías (catálogo local) solo trae el representante "
+                    "legal actual, no la nómina completa. Esta es la única fuente oficial "
+                    "para administradores y accionistas completos."
+                ),
+                field_hint="supercias_info",
+            ),
         ]

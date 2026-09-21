@@ -478,6 +478,13 @@ class TestCompanyPeople(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestProgress(unittest.TestCase):
+    """Usa la empresa demo auto-sembrada por seed_defaults/seed_demo_radar
+    (RUC, SRI, Supercias y financieros ya completos; solo 'fuentes guiadas
+    consultadas' y 'resumen' quedan pendientes), así que las aserciones
+    comparan el progreso antes/después de update_research en vez de fijar
+    umbrales absolutos: un umbral fijo se vuelve falso en cuanto cambie
+    cualquier dato del fixture demo, sin que compute_progress esté mal.
+    """
 
     def setUp(self):
         self.db = _make_db()
@@ -486,29 +493,34 @@ class TestProgress(unittest.TestCase):
         self.audit_id = audits[0]["id"]
         self.admin = _admin_row(self.db)
 
-    def test_initial_progress_low(self):
+    def _progress(self, source_count: int = 0) -> dict:
         audit = get_audit(self.audit_id, self.admin, self.db)
         research = get_research(self.audit_id, self.db)
-        progress = compute_progress(audit, research, source_count=0)
-        self.assertLess(progress["percent"], 50)
+        return compute_progress(audit, research, source_count=source_count, db_path=self.db)
+
+    def test_initial_progress_low(self):
+        """La demo trae RUC/SRI/Supercias/financieros, pero ninguna fuente
+        guiada marcada como consultada ni resumen generado todavía."""
+        progress = self._progress()
+        self.assertFalse(progress["stages"]["has_sources"])
+        self.assertFalse(progress["stages"]["has_summary"])
+        self.assertLess(progress["percent"], 100)
 
     def test_progress_increases_after_research(self):
+        before = self._progress(source_count=2)
         update_research(
             self.audit_id, self.auditor["id"], _full_data(), mark_ready=False, db_path=self.db
         )
-        audit = get_audit(self.audit_id, self.admin, self.db)
-        research = get_research(self.audit_id, self.db)
-        progress = compute_progress(audit, research, source_count=2)
-        self.assertGreater(progress["percent"], 20)
+        after = self._progress(source_count=2)
+        self.assertGreater(after["percent"], before["percent"])
+        self.assertTrue(after["stages"]["has_summary"])
 
     def test_progress_includes_summary_without_send_step(self):
         update_research(
             self.audit_id, self.auditor["id"], _full_data(), mark_ready=True, db_path=self.db
         )
-        audit = get_audit(self.audit_id, self.admin, self.db)
-        research = get_research(self.audit_id, self.db)
-        progress = compute_progress(audit, research, source_count=2)
-        self.assertGreaterEqual(progress["percent"], 25)
+        progress = self._progress(source_count=2)
+        self.assertTrue(progress["stages"]["has_summary"])
         self.assertNotIn("is_sent", progress["stages"])
 
 

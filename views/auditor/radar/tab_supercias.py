@@ -21,7 +21,18 @@ def build(
     if not read_only:
         for lnk in SuperciasProvider().get_links(ruc, company_name)[:2]:
             links_html += f'<a class="btn-ext-link" href="{esc(lnk.url)}" target="_blank" rel="noopener">{SVG_EXTERNAL} {esc(lnk.name)}</a>'
-    sri_pass = "".join(f'<input type="hidden" name="{k}" value="{esc(pv(k))}">' for k in ["ruc","razon_social","estado_contribuyente","tipo_contribuyente","regimen","categoria","obligado_contabilidad","agente_retencion","contribuyente_especial","fecha_inicio_actividades","fecha_actualizacion","actividad_economica","representante_legal","plazo_social"])
+
+    fuente = pv("supercias_fuente")
+    fecha_cat = pv("supercias_catalogo_fecha")
+    fuente_badge = ""
+    if fuente == "catalogo_local":
+        fuente_badge = (
+            f'<span class="badge badge-gray" title="Datos cargados desde el Directorio de Compañías '
+            f'(catálogo local importado con scripts/update_supercias_catalog.py)">'
+            f'Catálogo local{f" · corte {esc(fecha_cat)}" if fecha_cat else ""}</span>'
+        )
+
+    sri_pass = "".join(f'<input type="hidden" name="{k}" value="{esc(pv(k))}">' for k in ["ruc","razon_social","estado_contribuyente","tipo_contribuyente","regimen","categoria","obligado_contabilidad","agente_retencion","contribuyente_especial","fecha_inicio_actividades","fecha_actualizacion","actividad_economica","plazo_social"])
     edit_block = "" if read_only else f"""
     <div class="external-links-row">{links_html}</div>
     <hr class="section-divider">
@@ -38,6 +49,13 @@ def build(
           <div class="col-6"><label>Fecha constitución</label><input name="fecha_constitucion" value="{esc(pv('fecha_constitucion'))}"></div>
           <div class="col-6"><label>Expediente Supercias</label><input name="expediente_supercias" value="{esc(pv('expediente_supercias'))}"></div>
           <div class="col-6"><label>Oficina de control</label><input name="oficina_control" value="{esc(pv('oficina_control'))}"></div>
+          <div class="col-6"><label>Representante legal</label><input name="representante_legal" value="{esc(pv('representante_legal'))}"></div>
+          <div class="col-6"><label>Cargo del representante</label><input name="representante_cargo" value="{esc(pv('representante_cargo'))}"></div>
+          <div class="col-6"><label>Teléfono</label><input name="telefono" value="{esc(pv('telefono'))}"></div>
+          <div class="col-6"><label>Capital suscrito</label><input name="capital_suscrito" value="{esc(pv('capital_suscrito'))}"></div>
+          <div class="col-6"><label>CIIU nivel 1</label><input name="ciiu_nivel1" value="{esc(pv('ciiu_nivel1'))}"></div>
+          <div class="col-6"><label>CIIU nivel 6</label><input name="ciiu_nivel6" value="{esc(pv('ciiu_nivel6'))}"></div>
+          <div class="col-6"><label>Último año de balance</label><input name="ultimo_anio_balance" value="{esc(pv('ultimo_anio_balance'))}"></div>
           <div class="col-12"><label>Objeto social</label><textarea name="objeto_social" style="min-height:60px;">{esc(pv('objeto_social'))}</textarea></div>
           {sri_pass}
         </div>
@@ -50,7 +68,7 @@ def build(
     return f"""
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <h3 style="margin:0;font-size:15px;">Estado societario — Supercias</h3>
-      {check_html}
+      <div style="display:flex;align-items:center;gap:8px;">{fuente_badge}{check_html}</div>
     </div>
     <div class="info-grid">
       {_ic("Situación legal", pv("situacion_legal"))}
@@ -60,6 +78,13 @@ def build(
       {_ic("Expediente Supercias", pv("expediente_supercias"))}
       {_ic("Oficina de control", pv("oficina_control"))}
       {_ic("Plazo social", pv("plazo_social"))}
+      {_ic("Representante legal", pv("representante_legal"))}
+      {_ic("Cargo del representante", pv("representante_cargo"))}
+      {_ic("Teléfono", pv("telefono"))}
+      {_ic("Capital suscrito", pv("capital_suscrito"))}
+      {_ic("CIIU nivel 1", pv("ciiu_nivel1"))}
+      {_ic("CIIU nivel 6", pv("ciiu_nivel6"))}
+      {_ic("Último año de balance", pv("ultimo_anio_balance"))}
       {_ic("Objeto social", pv("objeto_social"), "full-width")}
     </div>
     {edit_block}

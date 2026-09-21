@@ -254,6 +254,43 @@ class TestTabAdminsReadOnly(unittest.TestCase):
         html = build(self.audit_id, self.audit, admins=[], read_only=True)
         self.assertIn("Sin administradores registrados", html)
 
+    def test_read_only_hides_assisted_certificate_panel(self):
+        from views.auditor.radar.tab_admins import build
+        html = build(self.audit_id, self.audit, admins=[], read_only=True)
+        self.assertNotIn("Flujo asistido", html)
+
+    def test_assisted_panel_shows_pending_without_certificate(self):
+        from views.auditor.radar.tab_admins import build
+        html = build(
+            self.audit_id, self.audit, admins=[], read_only=False,
+            csrf_token="token", sources=[],
+        )
+        self.assertIn("Flujo asistido", html)
+        self.assertIn("Certificado aún no registrado", html)
+        self.assertNotIn("Certificado registrado como evidencia", html)
+
+    def test_assisted_panel_shows_registered_with_matching_certificate(self):
+        from views.auditor.radar.tab_admins import build
+        sources = [{
+            "source_type": "Supercias",
+            "title": "Certificado de administradores",
+            "notes": "",
+        }]
+        html = build(
+            self.audit_id, self.audit, admins=[], read_only=False,
+            csrf_token="token", sources=sources,
+        )
+        self.assertIn("Certificado registrado como evidencia", html)
+
+    def test_assisted_panel_ignores_unrelated_evidence(self):
+        from views.auditor.radar.tab_admins import build
+        sources = [{"source_type": "SERCOP", "title": "Certificado de administradores", "notes": ""}]
+        html = build(
+            self.audit_id, self.audit, admins=[], read_only=False,
+            csrf_token="token", sources=sources,
+        )
+        self.assertIn("Certificado aún no registrado", html)
+
 
 class TestTabAccionistasReadOnly(unittest.TestCase):
     """tab_accionistas acepta read_only sin error."""
@@ -287,6 +324,32 @@ class TestTabAccionistasReadOnly(unittest.TestCase):
         from views.auditor.radar.tab_accionistas import build
         html = build(self.audit_id, self.audit, shareholders=[], read_only=True)
         self.assertIn("Sin accionistas registrados", html)
+
+    def test_read_only_hides_assisted_certificate_panel(self):
+        from views.auditor.radar.tab_accionistas import build
+        html = build(self.audit_id, self.audit, shareholders=[], read_only=True)
+        self.assertNotIn("Flujo asistido", html)
+
+    def test_assisted_panel_shows_pending_without_certificate(self):
+        from views.auditor.radar.tab_accionistas import build
+        html = build(
+            self.audit_id, self.audit, shareholders=[], read_only=False,
+            csrf_token="token", sources=[],
+        )
+        self.assertIn("Certificado aún no registrado", html)
+
+    def test_assisted_panel_shows_registered_with_matching_certificate(self):
+        from views.auditor.radar.tab_accionistas import build
+        sources = [{
+            "source_type": "Supercias",
+            "title": "Certificado de nómina de accionistas",
+            "notes": "",
+        }]
+        html = build(
+            self.audit_id, self.audit, shareholders=[], read_only=False,
+            csrf_token="token", sources=sources,
+        )
+        self.assertIn("Certificado registrado como evidencia", html)
 
 
 class TestTabResumenReadOnly(unittest.TestCase):

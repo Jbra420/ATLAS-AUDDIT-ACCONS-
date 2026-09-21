@@ -332,6 +332,20 @@ class TestHTTPAdminFlow(unittest.TestCase):
         self.assertEqual(status, 403,
                          f"Admin no debe poder hacer POST /auditor/radar/profile — obtuvo {status}")
 
+    def test_admin_cannot_post_to_auditor_source(self):
+        """HC-1: el admin no debe poder registrar evidencia (incluido el
+        certificado de administradores/accionistas de Supercias) vía POST."""
+        status, _, _ = _post_raw(
+            "/auditor/source",
+            {
+                "audit_id": "1", "source_type": "Supercias",
+                "title": "Certificado de administradores",
+            },
+            self.cookie,
+        )
+        self.assertEqual(status, 403,
+                         f"Admin no debe poder hacer POST /auditor/source — obtuvo {status}")
+
     def test_admin_auditor_dashboard_accessible_as_viewer(self):
         """
         GET /auditor es accesible para el admin (requiere sesión, no rol específico).
@@ -400,6 +414,110 @@ class TestHTTPAdminFlow(unittest.TestCase):
         self.assertNotEqual(status, 403, "La desactivación no debe rechazarse por CSRF inválido")
         self.assertEqual(status, 303)
         self.assertIn("propio+usuario", location)
+
+
+@unittest.skipUnless(_server_available(), "Servidor Atlas no disponible en localhost:8765 — inicia con: python3 app.py")
+class TestHTTPSuperciasFlow(unittest.TestCase):
+    """Fase 5 — pruebas integrales del catálogo local de Supercias y del
+    flujo asistido de certificados, end-to-end contra el servidor real.
+
+    Depende de que sri_catastro.db y supercias_catalog.db ya existan y
+    contengan el RUC 0190314014001 (mismo RUC que test_lookup_ruc_returns_
+    framed_json usa para el catastro SRI): si el catálogo de Supercias no
+    fue importado, la aserción sobre "Catálogo local" fallará con un mensaje
+    claro en vez de un error de conexión, indicando que hay que correr
+    scripts/update_supercias_catalog.py antes de esta prueba.
+    """
+
+    RUC = "0190314014001"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.cookie = _login("auditor", "auditor123")
+
+    def setUp(self) -> None:
+        with connect() as conn:
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+        self.audit_id = create_company_audit(
+            f"Empresa Supercias HTTP {time.time_ns()}", self.RUC, "Cuenca",
+            "Comercio", "2026", auditor_id, admin_id,
+        )
+        with connect() as conn:
+            self.company_id = conn.execute(
+                "SELECT company_id FROM audits WHERE id = ?", (self.audit_id,)
+            ).fetchone()["company_id"]
+        self.addCleanup(self._cleanup_company)
+
+    def _cleanup_company(self) -> None:
+        with connect() as conn:
+            conn.execute("DELETE FROM companies WHERE id = ?", (self.company_id,))
+
+    def test_investigate_loads_sri_and_supercias_in_one_pass(self):
+        csrf_token = _csrf_token(f"/auditor/radar?audit_id={self.audit_id}&tab=sri", self.cookie)
+        status, location, _ = _post_raw(
+            "/auditor/radar/investigate",
+            {"audit_id": str(self.audit_id), "search_ruc": self.RUC, "_csrf": csrf_token},
+            self.cookie,
+        )
+        self.assertEqual(status, 303)
+        self.assertIn("datos+SRI+cargados", location)
+        self.assertIn("datos+de+Superc", location,
+                       "El mensaje debe reportar el resultado real de Supercias, no un 'pendiente' fijo")
+        self.assertIn("cargados+desde+el+cat", location,
+                       "El catálogo de Supercias no encontró el RUC de prueba: "
+                       "¿corriste scripts/update_supercias_catalog.py?")
+
+        _, body = _get(f"/auditor/radar?audit_id={self.audit_id}&tab=supercias", self.cookie)
+        self.assertIn("Catálogo local", body)
+        self.assertIn("IMPORTADORA AUTOMOTRIZ SALINAS", body)
+
+    def test_repeated_investigate_is_idempotent(self):
+        """Repetir la búsqueda del mismo RUC no debe duplicar la fuente
+        'Directorio Supercías (catálogo local)' en la bitácora de evidencia."""
+        csrf_token = _csrf_token(f"/auditor/radar?audit_id={self.audit_id}&tab=sri", self.cookie)
+        for _ in range(2):
+            status, _, _ = _post_raw(
+                "/auditor/radar/investigate",
+                {"audit_id": str(self.audit_id), "search_ruc": self.RUC, "_csrf": csrf_token},
+                self.cookie,
+            )
+            self.assertEqual(status, 303)
+
+        with connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM sources WHERE audit_id = ? AND title = 'Directorio Supercías (catálogo local)'",
+                (self.audit_id,),
+            ).fetchone()[0]
+        self.assertEqual(count, 1)
+
+    def test_certificate_evidence_flips_admin_badge(self):
+        _, body_before = _get(f"/auditor/radar?audit_id={self.audit_id}&tab=admins", self.cookie)
+        self.assertIn("Certificado aún no registrado", body_before)
+
+        csrf_token = _csrf_token(f"/auditor/radar?audit_id={self.audit_id}&tab=documentos", self.cookie)
+        status, location, _ = _post_raw(
+            "/auditor/source",
+            {
+                "audit_id": str(self.audit_id),
+                "source_type": "Supercias",
+                "title": "Certificado de administradores",
+                "url": "",
+                "finding": "Nomina completa obtenida del certificado oficial",
+                "notes": "",
+                "_csrf": csrf_token,
+            },
+            self.cookie,
+        )
+        self.assertEqual(status, 303)
+
+        _, body_after = _get(f"/auditor/radar?audit_id={self.audit_id}&tab=admins", self.cookie)
+        self.assertIn("Certificado registrado como evidencia", body_after)
+        # El certificado de administradores no debe confundirse con el de accionistas
+        # (mismo delimitador de panes que TestHTTPAuditorFlow._pane_content).
+        match = re.search(r'id="tab-accionistas"(.*?)id="tab-indicadores"', body_after, re.S)
+        accionistas_pane = match.group(1) if match else body_after
+        self.assertIn("Certificado aún no registrado", accionistas_pane)
 
 
 if __name__ == "__main__":

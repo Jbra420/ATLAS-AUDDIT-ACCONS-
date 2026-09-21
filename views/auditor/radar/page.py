@@ -289,10 +289,10 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     )
     tab_ubicacion = build_ubicacion(audit_id, audit, location, read_only=is_read_only, csrf_token=csrf_tok)
     tab_admins = build_admins(
-        audit_id, audit, admins, read_only=is_read_only, csrf_token=csrf_tok,
+        audit_id, audit, admins, read_only=is_read_only, csrf_token=csrf_tok, sources=sources,
     )
     tab_accionistas = build_accionistas(
-        audit_id, audit, shareholders, read_only=is_read_only, csrf_token=csrf_tok,
+        audit_id, audit, shareholders, read_only=is_read_only, csrf_token=csrf_tok, sources=sources,
     )
     tab_financiero = build_financiero(audit_id, indicators, read_only=is_read_only, csrf_token=csrf_tok)
     tab_documentos = build_documentos(

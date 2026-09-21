@@ -48,6 +48,26 @@ def _consulted(source_checks: list[RowLike], include: tuple[str, ...], exclude: 
     return bool(check) and _get(check, "estado") == "consultada"
 
 
+def find_certificate_evidence(sources: list[RowLike], keyword: str) -> RowLike:
+    """Busca en la bitácora de evidencia (tabla 'sources') un certificado
+    oficial de Supercias que mencione 'keyword' (p. ej. 'administrador' o
+    'accionista'), usada por tab_admins/tab_accionistas para mostrar si el
+    auditor ya registró el certificado antes de transcribir la nómina.
+
+    El Directorio de Compañías (catálogo local) nunca aparece aquí: solo
+    trae el representante legal actual, no la nómina completa, así que no
+    puede sustituir a este certificado.
+    """
+    keyword_lower = keyword.lower()
+    for source in sources or []:
+        if str(_get(source, "source_type", "")).strip().lower() != "supercias":
+            continue
+        haystack = f"{_get(source, 'title', '')} {_get(source, 'notes', '')}".lower()
+        if "certificado" in haystack and keyword_lower in haystack:
+            return source
+    return None
+
+
 def _row_count(rows: list[Any] | None) -> int:
     return len(rows or [])
 

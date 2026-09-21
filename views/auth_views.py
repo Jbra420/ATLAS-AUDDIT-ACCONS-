@@ -76,11 +76,11 @@ def render_login_page(user: sqlite3.Row | None = None, query: dict = None, activ
 
     body = f"""
     {custom_styles}
-    <div class="login-wrap">
-      <div class="login-card">
+    <div class="login-wrap has-auddit-bg">
+      <div class="login-card" style="z-index: 1;">
         <div class="login-brand">
           <span class="login-logo">
-            <div class="login-logo-icon">{SVG_LOGO}</div>
+            <img src="/static/atlas_logo.jpg" alt="Atlas" style="height: 36px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-right: 12px;">
             Atlas
           </span>
           <div class="login-tagline">Plataforma de investigación de auditoría · Auddit</div>
@@ -113,7 +113,7 @@ def render_login_page(user: sqlite3.Row | None = None, query: dict = None, activ
   <title>Ingresar | Atlas</title>
   <style>{layout_state._CSS_CONTENT}</style>
 </head>
-<body>
+<body class="has-auddit-bg">
   {body}
   {auto_hide_js}
 </body>

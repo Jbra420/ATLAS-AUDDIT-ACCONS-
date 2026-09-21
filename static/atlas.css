@@ -2138,3 +2138,51 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
   color: var(--muted) !important;
   border-color: transparent !important;
 }
+
+/* 
+ * Auddit Creative Background 
+ * A sleek, massive watermark placed in the corner for a stunning effect.
+ */
+body.has-auddit-bg {
+  position: relative;
+  overflow-x: hidden;
+  background-color: #f7f9fb; /* Slight off-white to make the background pop */
+}
+
+body.has-auddit-bg::after {
+  content: "";
+  position: fixed;
+  bottom: -15vh;
+  right: -10vw;
+  width: 90vw;
+  height: 90vh;
+  background-image: url("/static/logoauddit.jpeg");
+  background-repeat: no-repeat;
+  background-position: bottom right;
+  background-size: contain;
+  opacity: 0.04;
+  pointer-events: none;
+  z-index: 0;
+  /* Add subtle blur for depth */
+  filter: blur(2px) grayscale(100%);
+  transform: rotate(-2deg);
+}
+
+.login-wrap.has-auddit-bg::after {
+  /* En el login, lo centramos o lo hacemos más prominente */
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 150%;
+  height: 150%;
+  background-image: url("/static/logoauddit.jpeg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  opacity: 0.03;
+  pointer-events: none;
+  z-index: 0;
+  filter: blur(8px);
+}

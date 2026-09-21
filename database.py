@@ -182,6 +182,22 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if col not in rn_existing:
             conn.execute(f"ALTER TABLE research_notes ADD COLUMN {col} {col_type}")
 
+    # company_profiles: campos del catálogo local de Supercías (Directorio de
+    # Compañías) que no existían en el Radar Empresarial v3.0 original.
+    cp_existing = {row[1] for row in conn.execute("PRAGMA table_info(company_profiles)")}
+    for col, col_type in [
+        ("telefono", "TEXT"),
+        ("representante_cargo", "TEXT"),
+        ("capital_suscrito", "TEXT"),
+        ("ciiu_nivel1", "TEXT"),
+        ("ciiu_nivel6", "TEXT"),
+        ("ultimo_anio_balance", "TEXT"),
+        ("supercias_fuente", "TEXT"),
+        ("supercias_catalogo_fecha", "TEXT"),
+    ]:
+        if col not in cp_existing:
+            conn.execute(f"ALTER TABLE company_profiles ADD COLUMN {col} {col_type}")
+
     # sessions: agregar csrf_token si la BD fue creada antes de esta versión
     sess_existing = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
     if "csrf_token" not in sess_existing:
@@ -441,7 +457,10 @@ def apply_sri_research_result(
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(audit_id) DO UPDATE SET
                 ruc = excluded.ruc,
-                razon_social = excluded.razon_social,
+                razon_social = CASE
+                    WHEN TRIM(COALESCE(company_profiles.razon_social, '')) = '' THEN excluded.razon_social
+                    ELSE company_profiles.razon_social
+                END,
                 estado_contribuyente = excluded.estado_contribuyente,
                 tipo_contribuyente = excluded.tipo_contribuyente,
                 categoria = excluded.categoria,
@@ -524,6 +543,178 @@ def apply_sri_research_result(
                 INSERT INTO sources (audit_id, title, url, source_type, notes, created_by, created_at)
                 VALUES (?, 'Catastro RUC SRI (base local)', 'https://www.sri.gob.ec/datasets',
                         'SRI', ?, ?, ?)
+                """,
+                (audit_id, source_notes, user_id, ts),
+            )
+
+        status = "en_investigacion" if audit["status"] == "pendiente" else audit["status"]
+        conn.execute(
+            "UPDATE audits SET status = ?, updated_at = ? WHERE id = ?",
+            (status, ts, audit_id),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Catálogo Local de Supercías (Directorio de Compañías)
+# ---------------------------------------------------------------------------
+
+SUPERCIAS_CATALOG_PATH = BASE_DIR / "supercias_catalog.db"
+
+
+def lookup_supercias_catalog(ruc: str) -> dict | None:
+    """Busca el RUC en el catálogo local de Supercías (Directorio de Compañías).
+
+    Nota: al igual que lookup_catastro, esta función siempre conecta a
+    supercias_catalog.db junto al módulo, nunca a la base de la aplicación.
+    No acepta db_path porque no es intercambiable con una base de prueba.
+    Retorna None si el catálogo no ha sido importado o el RUC no consta en él;
+    nunca lanza una excepción hacia el llamador (mejor esfuerzo, sin 500).
+    """
+    if not SUPERCIAS_CATALOG_PATH.exists():
+        return None
+    try:
+        with sqlite3.connect(SUPERCIAS_CATALOG_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM supercias_catalog WHERE ruc = ?", (ruc,)
+            ).fetchone()
+            if row is None:
+                return None
+            record = dict(row)
+            meta = conn.execute(
+                "SELECT fecha_actualizacion, total_filas FROM supercias_catalog_meta "
+                "ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            record["_catalogo_fecha_actualizacion"] = meta["fecha_actualizacion"] if meta else ""
+            record["_catalogo_total_filas"] = meta["total_filas"] if meta else ""
+            return record
+    except Exception as e:
+        import logging
+        logging.error(f"Error querying local Supercias catalog: {e}")
+        return None
+
+
+def apply_supercias_research_result(
+    audit_id: int,
+    user_id: int,
+    result: dict[str, dict[str, str]],
+    db_path: Path | str = DB_PATH,
+) -> None:
+    """Guarda una consulta al catálogo local de Supercías sin pisar campos que
+    el auditor ya haya editado a mano ni los que pertenecen a SRI.
+
+    A diferencia de apply_sri_research_result, cada columna solo se llena si
+    hoy está vacía (patrón CASE WHEN ... = '' THEN excluded ELSE columna):
+    el catálogo de Supercías puede llegar antes o después que la búsqueda SRI
+    y nunca debe sobrescribir una corrección manual del auditor.
+    """
+    profile = result["profile"]
+    location = result["location"]
+    research = result["research"]
+    catalogo = result.get("catalogo", {})
+    ts = now_iso()
+
+    def _fill_if_empty(col: str) -> str:
+        return (
+            f"{col} = CASE WHEN TRIM(COALESCE(company_profiles.{col}, '')) = '' "
+            f"THEN excluded.{col} ELSE company_profiles.{col} END"
+        )
+
+    with connect(db_path) as conn:
+        audit = conn.execute(
+            "SELECT company_id, status FROM audits WHERE id = ?", (audit_id,)
+        ).fetchone()
+        if audit is None:
+            raise ValueError("Auditoría no encontrada")
+
+        profile_cols = [
+            "expediente_supercias", "razon_social", "situacion_legal",
+            "fecha_constitucion", "tipo_compania", "nacionalidad",
+            "representante_legal", "representante_cargo", "capital_suscrito",
+            "ciiu_nivel1", "ciiu_nivel6", "ultimo_anio_balance", "telefono",
+        ]
+        set_clause = ", ".join(_fill_if_empty(c) for c in profile_cols)
+        conn.execute(
+            f"""
+            INSERT INTO company_profiles (
+                audit_id, {", ".join(profile_cols)},
+                supercias_fuente, supercias_catalogo_fecha, updated_at
+            ) VALUES (?, {", ".join("?" for _ in profile_cols)}, ?, ?, ?)
+            ON CONFLICT(audit_id) DO UPDATE SET
+                {set_clause},
+                supercias_fuente = 'catalogo_local',
+                supercias_catalogo_fecha = excluded.supercias_catalogo_fecha,
+                updated_at = excluded.updated_at
+            """,  # noqa: S608
+            (
+                audit_id, *(profile[c] for c in profile_cols),
+                "catalogo_local", catalogo.get("fecha_actualizacion", ""), ts,
+            ),
+        )
+
+        loc_cols = ["provincia", "canton", "ciudad", "calle", "numero", "interseccion", "barrio"]
+        loc_set_clause = ", ".join(
+            f"{c} = CASE WHEN TRIM(COALESCE(company_locations.{c}, '')) = '' "
+            f"THEN excluded.{c} ELSE company_locations.{c} END"
+            for c in loc_cols
+        )
+        conn.execute(
+            f"""
+            INSERT INTO company_locations (audit_id, {", ".join(loc_cols)}, updated_at)
+            VALUES (?, {", ".join("?" for _ in loc_cols)}, ?)
+            ON CONFLICT(audit_id) DO UPDATE SET
+                {loc_set_clause},
+                updated_at = excluded.updated_at
+            """,  # noqa: S608
+            (audit_id, *(location[c] for c in loc_cols), ts),
+        )
+
+        conn.execute(
+            """
+            INSERT INTO research_notes (audit_id, legal_status, representative, supercias_info, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(audit_id) DO UPDATE SET
+                legal_status = CASE WHEN TRIM(COALESCE(research_notes.legal_status, '')) = '' THEN excluded.legal_status ELSE research_notes.legal_status END,
+                representative = CASE WHEN TRIM(COALESCE(research_notes.representative, '')) = '' THEN excluded.representative ELSE research_notes.representative END,
+                supercias_info = excluded.supercias_info,
+                updated_by = excluded.updated_by,
+                updated_at = excluded.updated_at
+            """,
+            (audit_id, research["legal_status"], research["representative"], research["supercias_info"], user_id, ts),
+        )
+
+        conn.execute(
+            """
+            UPDATE source_checks
+            SET estado = 'consultada', observacion = ?, consultada_por = ?, consultada_at = ?
+            WHERE audit_id = ? AND lower(fuente) LIKE '%supercias%' AND lower(fuente) NOT LIKE '%documento%'
+            """,
+            ("Consulta automática del Directorio de Compañías (catálogo local)", user_id, ts, audit_id),
+        )
+
+        source = conn.execute(
+            """
+            SELECT id FROM sources
+            WHERE audit_id = ? AND source_type = 'Supercias'
+              AND title = 'Directorio Supercías (catálogo local)'
+            """,
+            (audit_id,),
+        ).fetchone()
+        fecha_cat = catalogo.get("fecha_actualizacion") or "sin fecha declarada"
+        expediente = profile.get("expediente_supercias") or "sin expediente"
+        source_notes = (
+            f"Consulta automática del expediente {expediente} realizada el {ts}. "
+            f"Corte del catálogo: {fecha_cat}."
+        )
+        if source:
+            conn.execute("UPDATE sources SET notes = ? WHERE id = ?", (source_notes, source["id"]))
+        else:
+            conn.execute(
+                """
+                INSERT INTO sources (audit_id, title, url, source_type, notes, created_by, created_at)
+                VALUES (?, 'Directorio Supercías (catálogo local)',
+                        'https://mercadodevalores.supercias.gob.ec/reportes/directorioCompanias.jsf',
+                        'Supercias', ?, ?, ?)
                 """,
                 (audit_id, source_notes, user_id, ts),
             )
@@ -1250,8 +1441,10 @@ def upsert_company_profile(audit_id: int, data: dict, db_path: Path | str = DB_P
                 contribuyente_especial, fecha_inicio_actividades, fecha_actualizacion,
                 actividad_economica, representante_legal, expediente_supercias,
                 nacionalidad, tipo_compania, situacion_legal, fecha_constitucion,
-                plazo_social, oficina_control, objeto_social, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                plazo_social, oficina_control, objeto_social,
+                telefono, representante_cargo, capital_suscrito,
+                ciiu_nivel1, ciiu_nivel6, ultimo_anio_balance, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(audit_id) DO UPDATE SET
                 ruc=excluded.ruc, razon_social=excluded.razon_social,
                 estado_contribuyente=excluded.estado_contribuyente,
@@ -1271,6 +1464,12 @@ def upsert_company_profile(audit_id: int, data: dict, db_path: Path | str = DB_P
                 plazo_social=excluded.plazo_social,
                 oficina_control=excluded.oficina_control,
                 objeto_social=excluded.objeto_social,
+                telefono=excluded.telefono,
+                representante_cargo=excluded.representante_cargo,
+                capital_suscrito=excluded.capital_suscrito,
+                ciiu_nivel1=excluded.ciiu_nivel1,
+                ciiu_nivel6=excluded.ciiu_nivel6,
+                ultimo_anio_balance=excluded.ultimo_anio_balance,
                 updated_at=excluded.updated_at
             """,
             (
@@ -1286,6 +1485,9 @@ def upsert_company_profile(audit_id: int, data: dict, db_path: Path | str = DB_P
                 data.get("tipo_compania", ""), data.get("situacion_legal", ""),
                 data.get("fecha_constitucion", ""), data.get("plazo_social", ""),
                 data.get("oficina_control", ""), data.get("objeto_social", ""),
+                data.get("telefono", ""), data.get("representante_cargo", ""),
+                data.get("capital_suscrito", ""), data.get("ciiu_nivel1", ""),
+                data.get("ciiu_nivel6", ""), data.get("ultimo_anio_balance", ""),
                 ts,
             ),
         )

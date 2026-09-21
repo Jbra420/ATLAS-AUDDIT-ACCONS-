@@ -89,8 +89,8 @@ def layout(
         topbar_html = f"""
         <header class="topbar">
           <div class="topbar-left">
-            <a href="/" class="topbar-brand">
-              <div class="topbar-brand-icon">{SVG_LOGO}</div>
+            <a href="/" class="topbar-brand" style="display: flex; align-items: center; text-decoration: none;">
+              <img src="/static/atlas_logo.jpg" alt="Atlas" style="height: 28px; border-radius: 6px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); margin-right: 12px; display: block;">
               <div class="topbar-brand-text">
                 Atlas
                 <span class="topbar-brand-sub">Auddit</span>
@@ -129,10 +129,10 @@ def layout(
   <title>{esc(title)} | Atlas</title>
   <style>{_CSS_CONTENT}</style>
 </head>
-<body>
+<body class="has-auddit-bg">
 <div class="atlas-wrap">
   {topbar_html}
-  <main class="main-content">
+  <main class="main-content" style="position: relative; z-index: 1;">
     <div class="shell">
       {flash_html}
       {content}

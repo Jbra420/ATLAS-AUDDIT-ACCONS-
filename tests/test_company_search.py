@@ -127,5 +127,35 @@ class TestCompanySearchMap(unittest.TestCase):
         self.assertIn("Informacion financiera", warning_labels)
 
 
+class TestFindCertificateEvidence(unittest.TestCase):
+    """find_certificate_evidence: no consulta la BD, solo filtra la lista de
+    'sources' ya cargada (usada por tab_admins/tab_accionistas)."""
+
+    def test_matches_supercias_source_with_keyword_and_certificado(self):
+        from services.company_search import find_certificate_evidence
+        sources = [
+            {"source_type": "SERCOP", "title": "Certificado de administradores", "notes": ""},
+            {"source_type": "Supercias", "title": "Certificado de administradores", "notes": ""},
+        ]
+        found = find_certificate_evidence(sources, "administrador")
+        self.assertIsNotNone(found)
+        self.assertEqual(found["source_type"], "Supercias")
+
+    def test_requires_both_certificado_word_and_keyword(self):
+        from services.company_search import find_certificate_evidence
+        sources = [{"source_type": "Supercias", "title": "Consulta general de la empresa", "notes": ""}]
+        self.assertIsNone(find_certificate_evidence(sources, "administrador"))
+
+    def test_case_insensitive_and_checks_notes_too(self):
+        from services.company_search import find_certificate_evidence
+        sources = [{"source_type": "Supercias", "title": "Evidencia societaria", "notes": "CERTIFICADO DE ACCIONISTAS adjunto"}]
+        self.assertIsNotNone(find_certificate_evidence(sources, "accionista"))
+
+    def test_empty_sources_returns_none(self):
+        from services.company_search import find_certificate_evidence
+        self.assertIsNone(find_certificate_evidence([], "administrador"))
+        self.assertIsNone(find_certificate_evidence(None, "administrador"))
+
+
 if __name__ == "__main__":
     unittest.main()

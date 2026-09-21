@@ -62,7 +62,7 @@ def build(
             <input name="actividad_economica" value="{esc(pv('actividad_economica'))}"></div>
           <input type="hidden" name="ruc" value="{esc(ruc)}">
           <input type="hidden" name="razon_social" value="{esc(company_name)}">
-          {"".join(f'<input type="hidden" name="{k}" value="{esc(pv(k))}">' for k in ["expediente_supercias","nacionalidad","tipo_compania","situacion_legal","fecha_constitucion","plazo_social","oficina_control","objeto_social","categoria","fecha_actualizacion"])}
+          {"".join(f'<input type="hidden" name="{k}" value="{esc(pv(k))}">' for k in ["expediente_supercias","nacionalidad","tipo_compania","situacion_legal","fecha_constitucion","plazo_social","oficina_control","objeto_social","categoria","fecha_actualizacion","telefono","representante_cargo","capital_suscrito","ciiu_nivel1","ciiu_nivel6","ultimo_anio_balance"])}
         </div>
         <div class="actions" style="justify-content:flex-end;margin-top:12px;">
           <button type="submit" class="btn btn-primary btn-sm">{SVG_SAVE} Guardar SRI</button>

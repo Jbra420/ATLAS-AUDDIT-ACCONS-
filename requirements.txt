@@ -1,8 +1,13 @@
 # ── Auddit MVP Local — Dependencias ──────────────────────────────────────────
 #
-# Runtime: ninguna dependencia externa. El proyecto usa exclusivamente la
-# biblioteca estándar de Python (≥ 3.10):
+# Runtime: la aplicación (app.py / core / services / views) usa exclusivamente
+# la biblioteca estándar de Python (≥ 3.10):
 #   - http.server, http.client, urllib, sqlite3, hashlib, html, csv, io, argparse
+#
+# Excepción aprobada: openpyxl (lectura de .xlsx en modo read_only) es usada
+# ÚNICAMENTE por scripts/update_supercias_catalog.py para importar el
+# Directorio de Compañías de Supercías (.xlsx oficial). No la importa ningún
+# módulo de runtime de la aplicación (app.py, core/, services/, views/).
 #
 # Desarrollo / tests:
 #   - pytest: runner alternativo a unittest (opcional, unittest funciona sin instalarlo)
@@ -15,6 +20,9 @@
 #
 # Correr tests (con pytest):
 #   python3 -m pytest tests/ -v
+
+# ── Herramientas de carga de datos (scripts/) ────────────────────────────────
+openpyxl>=3.1,<4.0
 
 # ── Herramientas de desarrollo ────────────────────────────────────────────────
 pytest>=7.0
