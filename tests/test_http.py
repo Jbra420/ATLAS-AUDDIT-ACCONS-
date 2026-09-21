@@ -20,10 +20,14 @@ from __future__ import annotations
 import json
 import re
 import socket
+import time
 import unittest
 from urllib.request import urlopen, Request
 from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
+
+from database import connect, create_company_audit
+from seed_data import DEMO_RUC
 
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8765
@@ -188,6 +192,79 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         self.assertIn("err=No+se+puede+generar+el+resumen", location)
         self.assertIn("tab=resumen", location)
 
+    @staticmethod
+    def _pane_content(html: str, tab_id: str, next_tab_id: str) -> str:
+        """Extrae el HTML del pane de un tab, delimitado por el siguiente tab
+        en el orden de renderizado (ver lista `tabs` en radar/page.py)."""
+        match = re.search(rf'id="tab-{tab_id}"(.*?)id="tab-{next_tab_id}"', html, re.S)
+        return match.group(1) if match else ""
+
+    def test_complete_audit_via_ui_forms_can_generate_summary(self):
+        """Flujo feliz completo, exclusivamente vía las rutas/controles que la
+        UI expone: cubre la regresión donde no existía forma de marcar
+        'Fuente SRI/Supercias consultada' desde la interfaz (hallazgo crítico
+        del informe de arquitectura — tab_fuentes.py se eliminó sin dejar
+        reemplazo en commit 7b80504). El expediente demo se crea y limpia en
+        la propia prueba para no depender de IDs o asignaciones persistentes."""
+        with connect() as conn:
+            auditor_id = conn.execute(
+                "SELECT id FROM users WHERE username = 'auditor'"
+            ).fetchone()["id"]
+            admin_id = conn.execute(
+                "SELECT id FROM users WHERE username = 'admin'"
+            ).fetchone()["id"]
+
+        audit_id = create_company_audit(
+            f"Empresa flujo HTTP {time.time_ns()}", DEMO_RUC, "Cuenca",
+            "Servicios de alojamiento", "2026", auditor_id, admin_id,
+        )
+        with connect() as conn:
+            company_id = conn.execute(
+                "SELECT company_id FROM audits WHERE id = ?", (audit_id,)
+            ).fetchone()["company_id"]
+
+        def cleanup_company() -> None:
+            with connect() as conn:
+                conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+
+        self.addCleanup(cleanup_company)
+
+        _, body = _get(f"/auditor/radar?audit_id={audit_id}&tab=sri", self.cookie)
+        sri_pane = self._pane_content(body, "sri", "supercias")
+        sup_pane = self._pane_content(body, "supercias", "ubicacion")
+
+        sri_match = re.search(r'action="/auditor/radar/source-check".*?check_id" value="(\d+)"', sri_pane, re.S)
+        sup_match = re.search(r'action="/auditor/radar/source-check".*?check_id" value="(\d+)"', sup_pane, re.S)
+        self.assertIsNotNone(sri_match, "El tab SRI debe tener un control para marcar la fuente como consultada")
+        self.assertIsNotNone(sup_match, "El tab Supercias debe tener un control para marcar la fuente como consultada")
+
+        csrf_token = _csrf_token(f"/auditor/radar?audit_id={audit_id}&tab=sri", self.cookie)
+        for check_id, tab in ((sri_match.group(1), "sri"), (sup_match.group(1), "supercias")):
+            status, location, _ = _post_raw(
+                "/auditor/radar/source-check",
+                {
+                    "audit_id": str(audit_id), "check_id": check_id, "accion": "consultar",
+                    "return_tab": tab, "observacion": "Verificado en prueba", "_csrf": csrf_token,
+                },
+                self.cookie,
+            )
+            self.assertEqual(status, 303)
+            self.assertIn(f"tab={tab}", location)
+
+        _, resumen_body = _get(f"/auditor/radar?audit_id={audit_id}&tab=resumen", self.cookie)
+        self.assertIn("Resumen habilitado", resumen_body,
+                      "Tras marcar SRI y Supercias como consultadas, el resumen debe habilitarse")
+        self.assertIn('action="/auditor/radar/summary"', resumen_body)
+
+        summary_csrf = _csrf_token(f"/auditor/radar?audit_id={audit_id}&tab=resumen", self.cookie)
+        status, location, _ = _post_raw(
+            "/auditor/radar/summary",
+            {"audit_id": str(audit_id), "_csrf": summary_csrf},
+            self.cookie,
+        )
+        self.assertEqual(status, 303)
+        self.assertIn("msg=Resumen+generado", location)
+
 
 @unittest.skipUnless(_server_available(), "Servidor Atlas no disponible en localhost:8765 — inicia con: python3 app.py")
 class TestHTTPAdminFlow(unittest.TestCase):
@@ -225,6 +302,15 @@ class TestHTTPAdminFlow(unittest.TestCase):
         )
         self.assertEqual(status, 403,
                          f"Admin no debe poder hacer POST /auditor/radar/search — obtuvo {status}")
+
+    def test_admin_cannot_execute_automatic_research(self):
+        """El jefe puede ver el resultado, pero no ejecutar la investigación del auditor."""
+        status, _, _ = _post_raw(
+            "/auditor/radar/investigate",
+            {"audit_id": "1", "search_ruc": "0190314014001"},
+            self.cookie,
+        )
+        self.assertEqual(status, 403)
 
     def test_admin_cannot_post_to_auditor_financial(self):
         """HC-1: el admin no debe poder guardar datos financieros vía POST."""
@@ -272,6 +358,48 @@ class TestHTTPAdminFlow(unittest.TestCase):
         self.assertIn("application/json", content_type)
         data = json.loads(body)
         self.assertEqual(data["name"], "IMPORTADORA AUTOMOTRIZ SALINAS S.A.")
+
+    def test_delete_user_flow_completes_without_csrf_rejection(self):
+        """Regresión: modal_html era un string plano (sin prefijo f), así que
+        {csrf_input(csrf_token)} nunca se evaluaba y la gestión de usuario
+        siempre era rechazada por CSRF inválido. Verifica el endpoint con
+        operaciones rechazadas por negocio que no modifican cuentas reales."""
+        csrf_token = _csrf_token("/admin/users", self.cookie)
+        self.assertTrue(csrf_token)
+
+        with connect() as conn:
+            admin_id = conn.execute(
+                "SELECT id FROM users WHERE username = 'admin'"
+            ).fetchone()["id"]
+            auditor_id = conn.execute(
+                "SELECT id FROM users WHERE username = 'auditor'"
+            ).fetchone()["id"]
+
+        # La ruta recibe un CSRF válido y llega a la regla de negocio: un
+        # usuario activo no puede darse de baja sin desactivarlo primero.
+        status, location, _ = _post_raw(
+            "/admin/users/delete",
+            {
+                "user_id": str(auditor_id),
+                "deletion_reason": "Validación no destructiva",
+                "_csrf": csrf_token,
+            },
+            self.cookie,
+        )
+        self.assertNotEqual(status, 403, "La baja no debe rechazarse por CSRF inválido")
+        self.assertEqual(status, 303)
+        self.assertIn("Primero+debes+desactivar", location)
+
+        # La protección contra auto-desactivación también se evalúa después
+        # del CSRF y deja intacta la sesión administrativa.
+        status, location, _ = _post_raw(
+            "/admin/users/deactivate",
+            {"user_id": str(admin_id), "_csrf": csrf_token},
+            self.cookie,
+        )
+        self.assertNotEqual(status, 403, "La desactivación no debe rechazarse por CSRF inválido")
+        self.assertEqual(status, 303)
+        self.assertIn("propio+usuario", location)
 
 
 if __name__ == "__main__":

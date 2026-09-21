@@ -4,17 +4,26 @@ from ui.helpers import esc, csrf_input
 from ui.icons import SVG_EXTERNAL, SVG_SAVE
 from providers.sri import SriProvider
 from services.rowutil import row_get
-from ui.components import info_card as _ic
+from ui.components import info_card as _ic, source_check_control
 
 
 def _pval(profile, key: str) -> str:
     return str(row_get(profile, key, "")).strip()
 
 
-def build(audit_id: int, audit: object, profile: object, research: object, read_only: bool = False, csrf_token: str = "") -> str:
+def build(
+    audit_id: int,
+    audit: object,
+    profile: object,
+    research: object,
+    read_only: bool = False,
+    csrf_token: str = "",
+    source_check: object | None = None,
+) -> str:
     ruc = audit["ruc"] or ""
     company_name = audit["company_name"]
     pv = lambda k: _pval(profile, k)
+    check_html = "" if read_only else source_check_control(audit_id, source_check, csrf_token, return_tab="sri")
 
     sri_links_html = ""
     if not read_only:
@@ -63,7 +72,10 @@ def build(audit_id: int, audit: object, profile: object, research: object, read_
     """
 
     return f"""
-    <h3 style="margin:0 0 16px;font-size:15px;">Identidad tributaria — SRI</h3>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <h3 style="margin:0;font-size:15px;">Identidad tributaria — SRI</h3>
+      {check_html}
+    </div>
     <div class="info-grid">
       {_ic("Estado contribuyente", pv("estado_contribuyente"))}
       {_ic("Tipo contribuyente", pv("tipo_contribuyente"))}

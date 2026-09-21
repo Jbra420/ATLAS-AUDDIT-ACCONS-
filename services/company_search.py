@@ -26,12 +26,26 @@ def _short(value: Any, limit: int = 80) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
-def _consulted(source_checks: list[RowLike], include: tuple[str, ...], exclude: tuple[str, ...] = ()) -> bool:
+def find_source_check(
+    source_checks: list[RowLike], include: tuple[str, ...], exclude: tuple[str, ...] = ()
+) -> RowLike:
+    """Devuelve la fila de source_checks cuyo 'fuente' coincide con los tokens dados.
+
+    Usada tanto por _consulted() (para el mapa de fuentes) como por page.py
+    (para resolver a qué fila debe apuntar el botón 'Marcar consultada' de
+    cada tab), de modo que la lógica de coincidencia de tokens vive en un
+    solo lugar.
+    """
     for check in source_checks:
         name = str(_get(check, "fuente", "")).lower()
         if any(token in name for token in include) and not any(token in name for token in exclude):
-            return _get(check, "estado") == "consultada"
-    return False
+            return check
+    return None
+
+
+def _consulted(source_checks: list[RowLike], include: tuple[str, ...], exclude: tuple[str, ...] = ()) -> bool:
+    check = find_source_check(source_checks, include, exclude)
+    return bool(check) and _get(check, "estado") == "consultada"
 
 
 def _row_count(rows: list[Any] | None) -> int:

@@ -27,8 +27,18 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
 
     rows_html = []
     for a in audits:
-        is_active = a['auditor_active']
-        auditor_label = esc(a['auditor_name']) if is_active else f'<span style="color:var(--danger)">Libre (antes: {esc(a["auditor_name"])})</span>'
+        if a["auditor_deleted_at"]:
+            auditor_label = f"""
+              <strong>{esc(a['auditor_name'])}</strong>
+              <span class="assignment-state"><span class="badge badge-red">Baja definitiva</span> Reasignación disponible</span>
+            """
+        elif not a["auditor_active"]:
+            auditor_label = f"""
+              <strong>{esc(a['auditor_name'])}</strong>
+              <span class="assignment-state"><span class="badge badge-amber">Inactivo</span> Reasignación disponible</span>
+            """
+        else:
+            auditor_label = f"<strong>{esc(a['auditor_name'])}</strong>"
         
         # Build options for reassignment dropdown, excluding the current assigned auditor
         reassign_options = "".join(
@@ -56,7 +66,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
             <span>RUC: {esc(a['ruc'] or '—')}</span>
           </td>
           <td>{esc(a['period'])}</td>
-          <td>{auditor_label}<br>{reassign_form}</td>
+          <td>{auditor_label}{reassign_form}</td>
           <td>{badge(a['status'])}</td>
           <td>
             <a class="btn btn-sm" href="/admin/audit?audit_id={a['id']}">{SVG_ARROW_RIGHT} Seguimiento</a>
@@ -70,7 +80,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
       <h1 class="page-title">Directorio de Empresas</h1>
       <p class="page-subtitle muted">Asigne nuevas empresas a los auditores para iniciar la investigación.</p>
     </div>
-    {'<div class="error-msg">' + SVG_ALERT + ' ' + esc(err) + '</div>' if err else ''}
+    {'<div class="error-msg toast">' + SVG_ALERT + ' ' + esc(err) + '</div>' if err else ''}
 
     <div class="grid">
       <div class="panel col-4">

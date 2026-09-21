@@ -4,6 +4,11 @@ from ui.helpers import esc, csrf_input
 from ui.icons import SVG_DOWNLOAD, SVG_RADAR, SVG_SAVE
 
 
+def _tab_href(audit_id: int, tab_id: str, read_only: bool) -> str:
+    route = "/admin/audit" if read_only else "/auditor/radar"
+    return f"{route}?audit_id={audit_id}&tab={tab_id}#radar-tabs-main"
+
+
 def _metric(label: str, value: str, hint: str = "") -> str:
     hint_html = f"<span>{esc(hint)}</span>" if hint else ""
     return f"""
@@ -19,7 +24,7 @@ def _list_items(items: list[str]) -> str:
     return "".join(f"<li>{esc(item)}</li>" for item in items)
 
 
-def _render_generation_status(readiness: dict, read_only: bool) -> str:
+def _render_generation_status(readiness: dict, read_only: bool, audit_id: int) -> str:
     blockers = readiness.get("blockers", [])
     warnings = readiness.get("warnings", [])
     ready = bool(readiness.get("ready"))
@@ -30,7 +35,8 @@ def _render_generation_status(readiness: dict, read_only: bool) -> str:
             f"""
             <li class="summary-check-item {item_class}">
               <span><strong>{esc(item['label'])}</strong><small>{esc(item['source'])}</small></span>
-              <button type="button" onclick="switchTab('{item['tab']}')">{action_label}</button>
+              <a href="{_tab_href(audit_id, item['tab'], read_only)}"
+                 onclick="return switchTab('{item['tab']}')">{action_label}</a>
             </li>
             """
             for item in items
@@ -273,7 +279,7 @@ def build(
     )
 
     return f"""
-    {_render_generation_status(readiness, read_only)}
+    {_render_generation_status(readiness, read_only, audit_id)}
     {_render_dossier(audit_id, dossier)}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <h3 style="margin:0;font-size:15px;">Resumen preliminar de investigación</h3>

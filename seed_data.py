@@ -48,6 +48,13 @@ def seed_defaults(conn: sqlite3.Connection) -> None:
         (company_id, "2024", auditor_id, admin_id, ts, ts),
     )
     audit_id = int(cur.lastrowid)
+    conn.execute(
+        """
+        INSERT INTO audit_assignments (audit_id, auditor_id, assigned_by, assigned_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (audit_id, auditor_id, admin_id, ts),
+    )
 
     # Seed demo completo de GRUCANQUI
     seed_demo_radar(conn, audit_id)

@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from database import AUDIT_STATUSES
 from services.ruc_validator import validate_ruc
-from ui.helpers import esc
+from services.rowutil import row_get
+from ui.helpers import csrf_input, esc
 from ui.icons import (
     SVG_ALERT,
     SVG_CHECK,
@@ -58,6 +59,44 @@ def info_card(label: str, value: str, css_extra: str = "") -> str:
         f'<div class="{val_cls}">{val_text}</div>'
         f'</div>'
     )
+
+
+def source_check_control(
+    audit_id: int, check: object | None, csrf_token: str = "", return_tab: str = "sri",
+) -> str:
+    """Badge + botón toggle para marcar una fuente guiada (source_checks) como consultada.
+
+    Usado en tab_sri, tab_supercias y tab_documentos del Radar Empresarial.
+    'check' es la fila de source_checks ya resuelta por page.py (o None si esa
+    fuente no está configurada para el expediente, en cuyo caso no se dibuja nada).
+    """
+    if not check:
+        return ""
+    consulted = row_get(check, "estado") == "consultada"
+    badge_html = (
+        f'<span class="badge {"badge-green" if consulted else "badge-gray"}">'
+        f'{"Consultada" if consulted else "Pendiente de consultar"}</span>'
+    )
+    accion = "revertir" if consulted else "consultar"
+    btn_text = "Marcar pendiente" if consulted else "Marcar consultada"
+    obs_input = (
+        "" if consulted else
+        '<input name="observacion" placeholder="Observación (opcional)" class="source-check-obs-input">'
+    )
+    return f"""
+    <div class="source-check-inline">
+      {badge_html}
+      <form method="post" action="/auditor/radar/source-check" class="source-check-inline-form">
+        {csrf_input(csrf_token)}
+        <input type="hidden" name="audit_id" value="{audit_id}">
+        <input type="hidden" name="check_id" value="{row_get(check, 'id')}">
+        <input type="hidden" name="accion" value="{accion}">
+        <input type="hidden" name="return_tab" value="{esc(return_tab)}">
+        {obs_input}
+        <button type="submit" class="btn btn-sm">{btn_text}</button>
+      </form>
+    </div>
+    """
 
 
 def ruc_banner_html(ruc: str | None) -> str:

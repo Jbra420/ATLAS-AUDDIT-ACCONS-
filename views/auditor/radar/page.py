@@ -13,7 +13,7 @@ from database import (
     get_audit_context,
 )
 from services.financial import compute_indicators
-from services.company_search import build_source_map
+from services.company_search import build_source_map, find_source_check
 from services.dossier import build_dossier_model
 from ui.components import ruc_banner_html
 from ui.helpers import esc, form_value, csrf_input
@@ -25,6 +25,7 @@ from ui.icons import (
     SVG_CLOCK,
     SVG_DOLLAR,
     SVG_DOWNLOAD,
+    SVG_FILE,
     SVG_INFO,
     SVG_MAP_PIN,
     SVG_RADAR,
@@ -34,19 +35,25 @@ from ui.icons import (
 from ui.layout import layout
 
 
+def _tab_href(audit_id: int, tab_id: str, read_only: bool) -> str:
+    route = "/admin/audit" if read_only else "/auditor/radar"
+    return f"{route}?audit_id={audit_id}&tab={tab_id}#radar-tabs-main"
 
-def _render_readiness_panel(readiness: dict, read_only: bool) -> str:
+
+def _render_readiness_panel(readiness: dict, read_only: bool, audit_id: int) -> str:
     blockers = readiness.get("blockers", [])
     warnings = readiness.get("warnings", [])
     ready = bool(readiness.get("ready"))
 
     def item_html(item: dict, item_class: str) -> str:
+        target_tab = item["tab"]
         return f"""
           <li class="readiness-item {item_class}">
             <span><strong>{esc(item["label"])}</strong><small>{esc(item["source"])}</small></span>
-            <button type="button" onclick="switchTab('{item['tab']}')">
+            <a href="{_tab_href(audit_id, target_tab, read_only)}"
+               onclick="return switchTab('{target_tab}')">
               Revisar {SVG_ARROW_RIGHT}
-            </button>
+            </a>
           </li>
         """
 
@@ -109,7 +116,7 @@ def _render_readiness_panel(readiness: dict, read_only: bool) -> str:
     """
 
 
-def _render_source_map(source_map: dict, read_only: bool) -> str:
+def _render_source_map(source_map: dict, read_only: bool, audit_id: int) -> str:
     totals = source_map["totals"]
     readiness = source_map["readiness"]
 
@@ -139,9 +146,10 @@ def _render_source_map(source_map: dict, read_only: bool) -> str:
               <span class="step-badge {color_cls}">{esc(card["status_label"])}</span>
             </div>
             <p class="step-meta">{found} de {tot} datos validados</p>
-            <button type="button" class="btn-step-action" onclick="switchTab('{tab_id}')">
+            <a class="btn-step-action" href="{_tab_href(audit_id, tab_id, read_only)}"
+               onclick="return switchTab('{tab_id}')">
               {esc(btn_txt)} {SVG_ARROW_RIGHT}
-            </button>
+            </a>
           </div>
         </div>
         """
@@ -156,6 +164,11 @@ def _render_source_map(source_map: dict, read_only: bool) -> str:
     s3_icon = SVG_CHECK if is_ready else SVG_RADAR
     s3_label = "Listo para generar" if is_ready else "Faltan datos obligatorios"
     s3_btn = "Abrir resumen" if is_ready else "Revisar pendientes"
+    first_pending_tab = (
+        readiness.get("blockers", [{}])[0].get("tab", "resumen")
+        if readiness.get("blockers") else "resumen"
+    )
+    s3_tab = "resumen" if is_ready else first_pending_tab
 
     step3 = f"""
         <div class="step-item step-{s3_st}">
@@ -169,9 +182,10 @@ def _render_source_map(source_map: dict, read_only: bool) -> str:
               <span class="step-badge step-{s3_st}">{s3_label}</span>
             </div>
             <p class="step-meta">Generación del dossier automático</p>
-            <button type="button" class="btn-step-action" onclick="switchTab('resumen')">
+            <a class="btn-step-action" href="{_tab_href(audit_id, s3_tab, read_only)}"
+               onclick="return switchTab('{s3_tab}')">
               {s3_btn} {SVG_ARROW_RIGHT}
-            </button>
+            </a>
           </div>
         </div>
     """
@@ -203,7 +217,7 @@ def _render_source_map(source_map: dict, read_only: bool) -> str:
         <div class="step-connector"></div>
         {step3}
       </div>
-      {_render_readiness_panel(readiness, read_only)}
+      {_render_readiness_panel(readiness, read_only, audit_id)}
     </section>
     """
 
@@ -232,7 +246,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
         audit, research, profile, location, admins, shareholders,
         docs, snapshot, src_checks, sources,
     )
-    source_map_panel = _render_source_map(source_map, is_read_only)
+    source_map_panel = _render_source_map(source_map, is_read_only, audit_id)
 
     # ── Indicadores financieros ───────────────────────────────────────────
     indicators = compute_indicators(dict(snapshot) if snapshot else None)
@@ -254,10 +268,25 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     from .tab_admins import build as build_admins
     from .tab_accionistas import build as build_accionistas
     from .tab_financiero import build as build_financiero
+    from .tab_documentos import build as build_documentos
     from .tab_resumen import build as build_resumen
 
-    tab_sri = build_sri(audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok)
-    tab_supercias = build_supercias(audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok)
+    # Fuentes guiadas: SRI y Supercias (portal) se resuelven aquí para pasarle
+    # a cada tab solo su propia fila de source_checks; el resto (Supercias —
+    # documentos, SERCOP, búsqueda web) queda para el tab "Documentos".
+    sri_check = find_source_check(src_checks, ("sri",))
+    supercias_check = find_source_check(src_checks, ("supercias",), ("documento",))
+    resolved_ids = {row["id"] for row in (sri_check, supercias_check) if row}
+    other_checks = [c for c in src_checks if c["id"] not in resolved_ids]
+
+    tab_sri = build_sri(
+        audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok,
+        source_check=sri_check,
+    )
+    tab_supercias = build_supercias(
+        audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok,
+        source_check=supercias_check,
+    )
     tab_ubicacion = build_ubicacion(audit_id, audit, location, read_only=is_read_only, csrf_token=csrf_tok)
     tab_admins = build_admins(
         audit_id, audit, admins, read_only=is_read_only, csrf_token=csrf_tok,
@@ -266,6 +295,9 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
         audit_id, audit, shareholders, read_only=is_read_only, csrf_token=csrf_tok,
     )
     tab_financiero = build_financiero(audit_id, indicators, read_only=is_read_only, csrf_token=csrf_tok)
+    tab_documentos = build_documentos(
+        audit_id, docs, other_checks, sources, read_only=is_read_only, csrf_token=csrf_tok,
+    )
     tab_resumen = build_resumen(
         audit_id,
         research,
@@ -306,7 +338,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
       <div class="radar-search-eyebrow"><span>Búsqueda inicial por RUC</span></div>
       <h1 class="radar-search-title">Buscar información de la empresa</h1>
       <p class="radar-search-subtitle">
-        Confirme el RUC asignado o ingrese el RUC de la empresa para iniciar la ficha de investigación.
+        Valide el RUC y ejecute la búsqueda automática para cargar la ficha inicial de investigación.
       </p>
       {ruc_banner}
       <form method="post" action="/auditor/radar/search" class="radar-search-form">
@@ -326,7 +358,15 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
             <label>Razón social registrada</label>
             <input value="{esc(company_name)}" readonly>
           </div>
-          <button type="submit" class="btn-radar-search">{SVG_SEARCH} Validar RUC</button>
+          <div class="radar-search-actions">
+            <button type="submit" class="btn-radar-validate" data-running-label="Validando...">
+              {SVG_CHECK} Validar RUC
+            </button>
+            <button type="submit" class="btn-radar-search"
+                    formaction="/auditor/radar/investigate" data-running-label="Buscando...">
+              {SVG_SEARCH} Iniciar búsqueda
+            </button>
+          </div>
         </div>
       </form>
     </div>
@@ -340,6 +380,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
         ("admins",       "Administradores",SVG_USERS,    tab_admins),
         ("accionistas",  "Accionistas",    SVG_USERS,    tab_accionistas),
         ("indicadores",  "Financiero",     SVG_DOLLAR,   tab_financiero),
+        ("documentos",   "Documentos",     SVG_FILE,     tab_documentos),
         ("resumen",      "Resumen",        SVG_RADAR,    tab_resumen),
     ]
 
@@ -403,18 +444,29 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     # ── JS para tabs ──────────────────────────────────────────────────────
     tab_js = """
     <script>
-    function switchTab(id, updateUrl = true) {
-      document.querySelectorAll('.radar-tab-pane').forEach(p => p.classList.remove('active'));
-      document.querySelectorAll('.radar-tab-btn').forEach(b => b.classList.remove('active'));
+    function switchTab(id, updateUrl = true, scrollToTabs = true) {
       const pane = document.getElementById('tab-' + id);
       const btn  = document.getElementById('tab-btn-' + id);
-      if (pane) pane.classList.add('active');
-      if (btn)  btn.classList.add('active');
+      if (!pane || !btn) return true;
+
+      document.querySelectorAll('.radar-tab-pane').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('.radar-tab-btn').forEach(b => b.classList.remove('active'));
+      pane.classList.add('active');
+      btn.classList.add('active');
       if (updateUrl) {
         const url = new URL(window.location);
         url.searchParams.set('tab', id);
+        url.hash = 'radar-tabs-main';
         window.history.replaceState({tab: id}, '', url);
       }
+      if (scrollToTabs) {
+        const tabs = document.getElementById('radar-tabs-main');
+        window.requestAnimationFrame(() => {
+          tabs.scrollIntoView({behavior: 'smooth', block: 'start'});
+          btn.focus({preventScroll: true});
+        });
+      }
+      return false;
     }
     window.addEventListener('popstate', (e) => {
        const urlParams = new URLSearchParams(window.location.search);
@@ -438,6 +490,18 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
           rucHint.innerHTML = '<span class="ruc-status-warn">Ingrese el RUC de 13 dígitos</span>';
           this.classList.remove('ruc-valid','ruc-invalid');
         }
+      });
+    }
+
+    const researchForm = document.querySelector('.radar-search-form');
+    if (researchForm) {
+      researchForm.addEventListener('submit', function(event) {
+        const submitter = event.submitter;
+        if (!submitter) return;
+        window.requestAnimationFrame(() => {
+          submitter.disabled = true;
+          submitter.textContent = submitter.dataset.runningLabel || 'Procesando...';
+        });
       });
     }
     </script>

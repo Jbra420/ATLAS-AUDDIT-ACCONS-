@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS users (
     password_salt TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1,
+    deleted_at TEXT,
+    deleted_by INTEGER REFERENCES users(id),
+    deletion_reason TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -41,6 +44,18 @@ CREATE TABLE IF NOT EXISTS audits (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS audit_assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+    auditor_id INTEGER NOT NULL REFERENCES users(id),
+    assigned_by INTEGER NOT NULL REFERENCES users(id),
+    assigned_at TEXT NOT NULL,
+    unassigned_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_assignments_current
+ON audit_assignments(audit_id) WHERE unassigned_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS research_notes (
     audit_id INTEGER PRIMARY KEY REFERENCES audits(id) ON DELETE CASCADE,

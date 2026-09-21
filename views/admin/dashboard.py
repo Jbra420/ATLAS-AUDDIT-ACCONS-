@@ -70,6 +70,19 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
 
     rows_html = ""
     for a in audits:
+        if a["auditor_deleted_at"]:
+            auditor_html = f"""
+              <strong>{esc(a['auditor_name'])}</strong>
+              <span class="assignment-state"><span class="badge badge-red">Baja definitiva</span></span>
+            """
+        elif not a["auditor_active"]:
+            auditor_html = f"""
+              <strong>{esc(a['auditor_name'])}</strong>
+              <span class="assignment-state"><span class="badge badge-amber">Inactivo</span></span>
+            """
+        else:
+            auditor_html = esc(a["auditor_name"])
+
         rows_html += f"""
         <tr>
           <td class="td-company">
@@ -77,7 +90,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
             <span>RUC: {esc(a['ruc'] or '—')}</span>
           </td>
           <td>{esc(a['period'])}</td>
-          <td>{esc(a['auditor_name'])}</td>
+          <td>{auditor_html}</td>
           <td>{badge(a['status'])}</td>
           <td>
             <a class="btn btn-sm" href="/admin/audit?audit_id={a['id']}">{SVG_ARROW_RIGHT} Ver expediente</a>

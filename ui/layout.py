@@ -8,7 +8,36 @@ import sqlite3
 
 from ui.components import avatar_initials
 from ui.helpers import esc
-from ui.icons import SVG_ALERT, SVG_CHECK, SVG_LOGO, SVG_LOGOUT
+from ui.icons import SVG_ALERT, SVG_CHECK, SVG_CROSS, SVG_LOGO, SVG_LOGOUT
+
+# Tiempo que un toast (.flash / .error-msg con clase .toast) permanece
+# visible antes de desvanecerse solo. Se pausa mientras el cursor está encima.
+TOAST_AUTO_DISMISS_MS = 4500
+
+_TOAST_SCRIPT = f"""
+<script>
+(function() {{
+  document.querySelectorAll('.toast').forEach(function(el) {{
+    var timer;
+    function hide() {{
+      el.classList.add('toast-hide');
+      el.addEventListener('animationend', function() {{ el.remove(); }}, {{ once: true }});
+    }}
+    function schedule() {{ timer = setTimeout(hide, {TOAST_AUTO_DISMISS_MS}); }}
+    var closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'toast-close';
+    closeBtn.setAttribute('aria-label', 'Cerrar aviso');
+    closeBtn.innerHTML = '{SVG_CROSS}';
+    closeBtn.addEventListener('click', function() {{ clearTimeout(timer); hide(); }});
+    el.appendChild(closeBtn);
+    el.addEventListener('mouseenter', function() {{ clearTimeout(timer); }});
+    el.addEventListener('mouseleave', schedule);
+    schedule();
+  }});
+}})();
+</script>
+"""
 
 # CSS se inyecta desde afuera (cargado en startup desde static/atlas.css)
 _CSS_CONTENT: str = ""
@@ -87,9 +116,9 @@ def layout(
     flash_html = ""
     if flash:
         if "✗" in flash or "Error" in flash:
-            flash_html = f'<div class="error-msg">{SVG_ALERT} {esc(flash.replace("✗ ", ""))}</div>'
+            flash_html = f'<div class="error-msg toast">{SVG_ALERT} {esc(flash.replace("✗ ", ""))}</div>'
         else:
-            flash_html = f'<div class="flash">{SVG_CHECK} {esc(flash.replace("✓ ", ""))}</div>'
+            flash_html = f'<div class="flash toast">{SVG_CHECK} {esc(flash.replace("✓ ", ""))}</div>'
 
     return f"""<!doctype html>
 <html lang="es">
@@ -110,5 +139,6 @@ def layout(
     </div>
   </main>
 </div>
+{_TOAST_SCRIPT}
 </body>
 </html>"""

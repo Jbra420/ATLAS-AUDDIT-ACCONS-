@@ -15,18 +15,26 @@ from database import (
     compute_progress,
     connect,
     create_company_audit,
+    create_session,
     create_user,
+    deactivate_user,
     delete_administrator,
     delete_shareholder,
     get_audit,
     get_research,
     init_db,
     list_administrators,
+    list_admin_audits,
     list_auditor_audits,
+    list_auditors,
     list_shareholders,
     list_users,
+    reactivate_user,
+    reassign_audit,
     register_audit_ruc,
+    soft_delete_user,
     update_research,
+    user_from_session,
 )
 
 
@@ -132,6 +140,121 @@ class TestAuthentication(unittest.TestCase):
         with connect(self.db) as conn:
             conn.execute("UPDATE users SET active = 0 WHERE username = 'auditor'")
         self.assertIsNone(authenticate("auditor", "auditor123", self.db))
+
+
+class TestUserLifecycle(unittest.TestCase):
+
+    def setUp(self):
+        self.db = _make_db()
+        self.admin = _admin_row(self.db)
+        self.auditor = _auditor_row(self.db)
+
+    def test_deactivate_revokes_access_and_active_sessions(self):
+        token = create_session(self.auditor["id"], self.db)
+        self.assertIsNotNone(user_from_session(token, self.db))
+
+        message = deactivate_user(self.auditor["id"], self.admin["id"], self.db)
+
+        self.assertIn("empresas", message.lower())
+        self.assertIsNone(authenticate("auditor", "auditor123", self.db))
+        self.assertIsNone(user_from_session(token, self.db))
+        with connect(self.db) as conn:
+            session_count = conn.execute(
+                "SELECT COUNT(*) FROM sessions WHERE user_id = ?",
+                (self.auditor["id"],),
+            ).fetchone()[0]
+        self.assertEqual(session_count, 0)
+
+    def test_reactivate_requires_a_fresh_login(self):
+        old_token = create_session(self.auditor["id"], self.db)
+        deactivate_user(self.auditor["id"], self.admin["id"], self.db)
+        reactivate_user(self.auditor["id"], self.admin["id"], self.db)
+
+        self.assertIsNone(user_from_session(old_token, self.db))
+        self.assertIsNotNone(authenticate("auditor", "auditor123", self.db))
+
+    def test_definitive_deletion_requires_prior_deactivation(self):
+        with self.assertRaisesRegex(ValueError, "Primero debes desactivar"):
+            soft_delete_user(
+                self.auditor["id"], self.admin["id"], "Salida de la empresa", self.db,
+            )
+
+    def test_definitive_deletion_preserves_user_company_and_audit(self):
+        audit_before = list_auditor_audits(self.auditor["id"], self.db)[0]
+        deactivate_user(self.auditor["id"], self.admin["id"], self.db)
+        soft_delete_user(
+            self.auditor["id"], self.admin["id"], "Finalización de relación laboral", self.db,
+        )
+
+        users = {row["id"]: row for row in list_users(self.db)}
+        self.assertIn(self.auditor["id"], users)
+        self.assertIsNotNone(users[self.auditor["id"]]["deleted_at"])
+        self.assertEqual(users[self.auditor["id"]]["deleted_by"], self.admin["id"])
+        self.assertEqual(
+            users[self.auditor["id"]]["deletion_reason"],
+            "Finalización de relación laboral",
+        )
+
+        audits = {row["id"]: row for row in list_admin_audits(self.db)}
+        preserved = audits[audit_before["id"]]
+        self.assertEqual(preserved["company_name"], audit_before["company_name"])
+        self.assertEqual(preserved["auditor_name"], self.auditor["full_name"])
+        self.assertIsNotNone(preserved["auditor_deleted_at"])
+
+    def test_deleted_user_cannot_be_reactivated_or_reassigned(self):
+        deactivate_user(self.auditor["id"], self.admin["id"], self.db)
+        soft_delete_user(
+            self.auditor["id"], self.admin["id"], "Finalización de relación laboral", self.db,
+        )
+
+        with self.assertRaisesRegex(ValueError, "no puede reactivarse"):
+            reactivate_user(self.auditor["id"], self.admin["id"], self.db)
+        self.assertNotIn(self.auditor["id"], [row["id"] for row in list_auditors(self.db)])
+
+        with self.assertRaisesRegex(ValueError, "no está activo"):
+            reassign_audit(1, self.auditor["id"], self.admin["id"], self.db)
+
+    def test_deleted_username_is_reserved_for_history(self):
+        deactivate_user(self.auditor["id"], self.admin["id"], self.db)
+        soft_delete_user(
+            self.auditor["id"], self.admin["id"], "Finalización de relación laboral", self.db,
+        )
+
+        with connect(self.db) as conn:
+            with self.assertRaisesRegex(ValueError, "cuenta histórica"):
+                create_user(conn, "auditor", "Nuevo Auditor", "auditor", "clave123")
+
+    def test_admin_cannot_change_own_state(self):
+        with self.assertRaisesRegex(ValueError, "propio usuario"):
+            deactivate_user(self.admin["id"], self.admin["id"], self.db)
+
+    def test_database_prevents_physical_user_deletion(self):
+        with connect(self.db) as conn:
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "permanent historical records"):
+                conn.execute("DELETE FROM users WHERE id = ?", (self.auditor["id"],))
+
+    def test_reassignment_keeps_previous_auditor_company_history(self):
+        with connect(self.db) as conn:
+            auditor_two_id = create_user(
+                conn, "auditor.dos", "Auditor Dos", "auditor", "clave123",
+            )
+        audit = list_auditor_audits(self.auditor["id"], self.db)[0]
+
+        reassign_audit(audit["id"], auditor_two_id, self.admin["id"], self.db)
+
+        with connect(self.db) as conn:
+            history = list(conn.execute(
+                """
+                SELECT auditor_id, unassigned_at
+                FROM audit_assignments
+                WHERE audit_id = ?
+                ORDER BY id
+                """,
+                (audit["id"],),
+            ))
+        self.assertEqual([row["auditor_id"] for row in history], [self.auditor["id"], auditor_two_id])
+        self.assertIsNotNone(history[0]["unassigned_at"])
+        self.assertIsNone(history[1]["unassigned_at"])
 
 
 # ---------------------------------------------------------------------------

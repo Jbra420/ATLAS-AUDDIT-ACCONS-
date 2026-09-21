@@ -26,9 +26,9 @@ from database import (
     authenticate,
     connect,
     create_company_audit,
-    reassign_audit,
     create_session,
     create_user,
+    deactivate_user,
     delete_administrator,
     delete_shareholder,
     destroy_session,
@@ -37,8 +37,6 @@ from database import (
     get_csrf_token,
     get_research,
     init_db,
-    delete_user,
-    load_demo_if_ruc_matches,
     mark_document_reviewed,
     mark_document_pending,
     mark_source_checked,
@@ -47,6 +45,9 @@ from database import (
     register_audit_ruc,
     refresh_summary,
     patch_research,
+    reactivate_user,
+    reassign_audit,
+    soft_delete_user,
     upsert_company_profile,
     upsert_company_location,
     upsert_financial_snapshot,
@@ -56,6 +57,7 @@ from database import (
 from services.summary import generate_summary
 from services.financial import compute_indicators
 from services.company_search import build_source_map
+from services.company_research import research_company_by_ruc
 from services.dossier import build_dossier_model, build_dossier_text
 from ui.layout import layout, set_css
 from ui.helpers import form_value, _now
@@ -248,6 +250,11 @@ class AtlasHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/lookup-ruc":
+            # Requiere admin a propósito: esta es la búsqueda de ALTA de empresa
+            # (pre-llenar nombre/ciudad/actividad en /admin/companies antes de
+            # asignarla a un auditor), tarea exclusiva del jefe. No confundir
+            # con la búsqueda de INVESTIGACIÓN del auditor sobre un expediente
+            # ya asignado (/auditor/radar/search), que exige require_auditor().
             user = self.require_admin()
             if not user:
                 return
@@ -377,15 +384,41 @@ class AtlasHandler(BaseHTTPRequestHandler):
                 self.redirect(f"/admin/users?err={quote_plus(str(exc))}")
             return
 
+        if path == "/admin/users/deactivate":
+            admin = self.require_admin()
+            if not admin:
+                return
+            try:
+                target_user_id = int(form_value(form, "user_id", "0"))
+                msg = deactivate_user(target_user_id, admin["id"])
+                self.redirect(f"/admin/users?msg={quote_plus(msg)}")
+            except Exception as exc:
+                self.redirect(f"/admin/users?err={quote_plus(str(exc))}")
+            return
+
+        if path == "/admin/users/reactivate":
+            admin = self.require_admin()
+            if not admin:
+                return
+            try:
+                target_user_id = int(form_value(form, "user_id", "0"))
+                msg = reactivate_user(target_user_id, admin["id"])
+                self.redirect(f"/admin/users?msg={quote_plus(msg)}")
+            except Exception as exc:
+                self.redirect(f"/admin/users?err={quote_plus(str(exc))}")
+            return
+
         if path == "/admin/users/delete":
             admin = self.require_admin()
             if not admin:
                 return
             try:
                 target_user_id = int(form_value(form, "user_id", "0"))
-                if target_user_id == admin["id"]:
-                    raise ValueError("No puedes eliminar tu propio usuario activo.")
-                msg = delete_user(target_user_id)
+                msg = soft_delete_user(
+                    target_user_id,
+                    admin["id"],
+                    form_value(form, "deletion_reason"),
+                )
                 self.redirect(f"/admin/users?msg={quote_plus(msg)}")
             except Exception as exc:
                 self.redirect(f"/admin/users?err={quote_plus(str(exc))}")
@@ -417,7 +450,7 @@ class AtlasHandler(BaseHTTPRequestHandler):
             try:
                 audit_id = int(form_value(form, "audit_id", "0"))
                 new_auditor_id = int(form_value(form, "new_auditor_id", "0"))
-                reassign_audit(audit_id, new_auditor_id)
+                reassign_audit(audit_id, new_auditor_id, admin["id"])
                 self.redirect("/admin/companies?msg=Auditor+reasignado+correctamente")
             except Exception as exc:
                 self.redirect(f"/admin/companies?err={quote_plus(str(exc))}")
@@ -499,9 +532,9 @@ class AtlasHandler(BaseHTTPRequestHandler):
                     finding or notes or "Evidencia registrada",
                 )
                 append_research_source_note(audit_id, current["id"], source_type, finding, evidence_text)
-                self.redirect(f"/auditor/radar?audit_id={audit_id}&msg=Evidencia+registrada&tab=fuentes")
+                self.redirect(f"/auditor/radar?audit_id={audit_id}&msg=Evidencia+registrada&tab=documentos")
             except Exception as exc:
-                self.redirect(f"/auditor/radar?audit_id={audit_id}&err={quote_plus(str(exc))}&tab=fuentes")
+                self.redirect(f"/auditor/radar?audit_id={audit_id}&err={quote_plus(str(exc))}&tab=documentos")
             return
 
         if path == "/auditor/radar/search":
@@ -518,12 +551,34 @@ class AtlasHandler(BaseHTTPRequestHandler):
                 )
                 return
             try:
-                clean_ruc, validation_msg = register_audit_ruc(audit_id, ruc_input)
-                loaded = load_demo_if_ruc_matches(audit_id, clean_ruc)
-                if loaded:
-                    msg = "RUC validado. Expediente de investigación inicializado con éxito."
-                else:
-                    msg = f"{validation_msg} Expediente listo para completar con fuentes oficiales."
+                _clean_ruc, validation_msg = register_audit_ruc(audit_id, ruc_input)
+                msg = f"{validation_msg} Ahora puede iniciar la búsqueda automática."
+                self.redirect(f"/auditor/radar?audit_id={audit_id}&msg={quote_plus(msg)}&tab=sri")
+            except Exception as exc:
+                self.redirect(f"/auditor/radar?audit_id={audit_id}&err={quote_plus(str(exc))}&tab=sri")
+            return
+
+        if path == "/auditor/radar/investigate":
+            current = self.require_auditor()
+            if not current:
+                return
+            audit_id = int(form_value(form, "audit_id", "0"))
+            ruc_input = form_value(form, "search_ruc").strip()
+            audit = get_audit(audit_id, current)
+            if not audit:
+                self.send_html(
+                    layout("Acceso denegado", current,
+                           '<div class="error-msg">Auditoría no disponible.</div>'), 403,
+                )
+                return
+            try:
+                clean_ruc, _validation_msg = register_audit_ruc(audit_id, ruc_input)
+                outcome = research_company_by_ruc(audit_id, clean_ruc, current["id"])
+                msg = (
+                    f"Búsqueda completada: {outcome['populated_fields']} datos SRI cargados. "
+                    "Revise los resultados y edítelos si es necesario. "
+                    "La información de Supercias continúa pendiente."
+                )
                 self.redirect(f"/auditor/radar?audit_id={audit_id}&msg={quote_plus(msg)}&tab=sri")
             except Exception as exc:
                 self.redirect(f"/auditor/radar?audit_id={audit_id}&err={quote_plus(str(exc))}&tab=sri")
@@ -548,7 +603,8 @@ class AtlasHandler(BaseHTTPRequestHandler):
             else:
                 obs = form_value(form, "observacion", "")
                 mark_source_checked(check_id, current["id"], obs)
-            self.redirect(f"/auditor/radar?audit_id={audit_id}&msg=Fuente+actualizada&tab=fuentes")
+            tab = form_value(form, "return_tab", "sri")
+            self.redirect(f"/auditor/radar?audit_id={audit_id}&msg=Fuente+actualizada&tab={tab}")
             return
 
         if path == "/auditor/radar/document":

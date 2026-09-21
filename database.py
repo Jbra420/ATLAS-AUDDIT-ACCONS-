@@ -135,6 +135,42 @@ def init_db(db_path: Path | str = DB_PATH) -> None:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Agrega columnas nuevas a tablas existentes (migración idempotente)."""
+    # users: una baja definitiva conserva la fila y todas sus referencias históricas
+    user_existing = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+    for col, col_type in [
+        ("deleted_at", "TEXT"),
+        ("deleted_by", "INTEGER REFERENCES users(id)"),
+        ("deletion_reason", "TEXT"),
+    ]:
+        if col not in user_existing:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
+
+    conn.executescript(
+        """
+        CREATE TRIGGER IF NOT EXISTS prevent_physical_user_delete
+        BEFORE DELETE ON users
+        BEGIN
+            SELECT RAISE(ABORT, 'users are permanent historical records');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS require_inactive_before_user_deletion
+        BEFORE UPDATE OF deleted_at ON users
+        WHEN OLD.deleted_at IS NULL
+             AND NEW.deleted_at IS NOT NULL
+             AND OLD.active = 1
+        BEGIN
+            SELECT RAISE(ABORT, 'user must be inactive before definitive deletion');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS prevent_deleted_user_reactivation
+        BEFORE UPDATE OF active ON users
+        WHEN OLD.deleted_at IS NOT NULL AND NEW.active = 1
+        BEGIN
+            SELECT RAISE(ABORT, 'deleted user cannot be reactivated');
+        END;
+        """
+    )
+
     # research_notes
     rn_existing = {row[1] for row in conn.execute("PRAGMA table_info(research_notes)")}
     for col, col_type in [
@@ -150,6 +186,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
     sess_existing = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
     if "csrf_token" not in sess_existing:
         conn.execute("ALTER TABLE sessions ADD COLUMN csrf_token TEXT NOT NULL DEFAULT ''")
+
+    # Historial de asignaciones para conservar qué empresas atendió cada auditor.
+    conn.execute(
+        """
+        INSERT INTO audit_assignments (audit_id, auditor_id, assigned_by, assigned_at, unassigned_at)
+        SELECT a.id, a.assigned_auditor_id, a.created_by, a.created_at, NULL
+        FROM audits a
+        WHERE NOT EXISTS (
+            SELECT 1 FROM audit_assignments h WHERE h.audit_id = a.id
+        )
+        """
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +223,15 @@ def create_user(
     if len(password) < 6:
         raise ValueError("La clave temporal debe tener al menos 6 caracteres")
 
+    existing = conn.execute(
+        "SELECT deleted_at FROM users WHERE username = ?",
+        (username,),
+    ).fetchone()
+    if existing:
+        if existing["deleted_at"]:
+            raise ValueError("El nombre de usuario pertenece a una cuenta histórica y no puede reutilizarse")
+        raise ValueError("El nombre de usuario ya existe")
+
     salt, pw_hash = hash_password(password)
     try:
         cur = conn.execute(
@@ -192,7 +249,7 @@ def create_user(
 def authenticate(username: str, password: str, db_path: Path | str = DB_PATH) -> sqlite3.Row | None:
     with connect(db_path) as conn:
         user = conn.execute(
-            "SELECT * FROM users WHERE username = ? AND active = 1",
+            "SELECT * FROM users WHERE username = ? AND active = 1 AND deleted_at IS NULL",
             (username.strip().lower(),),
         ).fetchone()
         if user and verify_password(password, user["password_salt"], user["password_hash"]):
@@ -203,27 +260,111 @@ def authenticate(username: str, password: str, db_path: Path | str = DB_PATH) ->
 def list_users(db_path: Path | str = DB_PATH) -> list[sqlite3.Row]:
     with connect(db_path) as conn:
         return list(conn.execute(
-            "SELECT id, username, full_name, role, active, created_at FROM users ORDER BY role, full_name"
+            """
+            SELECT u.id, u.username, u.full_name, u.role, u.active, u.created_at,
+                   u.deleted_at, u.deleted_by, u.deletion_reason,
+                   actor.full_name AS deleted_by_name
+            FROM users u
+            LEFT JOIN users actor ON actor.id = u.deleted_by
+            ORDER BY u.role, u.deleted_at IS NOT NULL, u.active DESC, u.full_name
+            """
         ))
 
 
 def list_auditors(db_path: Path | str = DB_PATH) -> list[sqlite3.Row]:
     with connect(db_path) as conn:
         return list(conn.execute(
-            "SELECT id, username, full_name FROM users WHERE role = 'auditor' AND active = 1 ORDER BY full_name"
+            """
+            SELECT id, username, full_name
+            FROM users
+            WHERE role = 'auditor' AND active = 1 AND deleted_at IS NULL
+            ORDER BY full_name
+            """
         ))
 
 
-def delete_user(user_id: int, db_path: Path | str = DB_PATH) -> str:
-    """Elimina un usuario por su ID. Si tiene relaciones asociadas, lo desactiva en su lugar."""
-    try:
-        with connect(db_path) as conn:
-            conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
-        return "Usuario eliminado exitosamente"
-    except sqlite3.IntegrityError:
-        with connect(db_path) as conn:
-            conn.execute("UPDATE users SET active = 0 WHERE id = ?", (user_id,))
-        return "El usuario tiene expedientes o revisiones asociadas, por lo que fue desactivado permanentemente en lugar de borrado."
+def _admin_user_action(
+    conn: sqlite3.Connection,
+    user_id: int,
+    performed_by: int,
+) -> sqlite3.Row:
+    actor = conn.execute(
+        "SELECT id, role, active, deleted_at FROM users WHERE id = ?",
+        (performed_by,),
+    ).fetchone()
+    if actor is None or actor["role"] != "admin" or actor["active"] != 1 or actor["deleted_at"]:
+        raise ValueError("Solo un administrador activo puede gestionar usuarios")
+    if user_id == performed_by:
+        raise ValueError("No puedes cambiar el estado de tu propio usuario")
+
+    target = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if target is None:
+        raise ValueError("Usuario no encontrado")
+    return target
+
+
+def deactivate_user(
+    user_id: int,
+    performed_by: int,
+    db_path: Path | str = DB_PATH,
+) -> str:
+    """Suspende el acceso de una cuenta sin alterar su historial ni asignaciones."""
+    with connect(db_path) as conn:
+        target = _admin_user_action(conn, user_id, performed_by)
+        if target["deleted_at"]:
+            raise ValueError("El usuario ya tiene baja definitiva")
+        if target["active"] != 1:
+            raise ValueError("El usuario ya está inactivo")
+        conn.execute("UPDATE users SET active = 0 WHERE id = ?", (user_id,))
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    return "Usuario desactivado. Sus empresas y su historial se conservaron."
+
+
+def reactivate_user(
+    user_id: int,
+    performed_by: int,
+    db_path: Path | str = DB_PATH,
+) -> str:
+    """Restablece el acceso de una cuenta suspendida, pero nunca de una cuenta dada de baja."""
+    with connect(db_path) as conn:
+        target = _admin_user_action(conn, user_id, performed_by)
+        if target["deleted_at"]:
+            raise ValueError("Una cuenta con baja definitiva no puede reactivarse")
+        if target["active"] == 1:
+            raise ValueError("El usuario ya está activo")
+        conn.execute("UPDATE users SET active = 1 WHERE id = ?", (user_id,))
+    return "Usuario reactivado. Deberá iniciar una sesión nueva."
+
+
+def soft_delete_user(
+    user_id: int,
+    performed_by: int,
+    deletion_reason: str,
+    db_path: Path | str = DB_PATH,
+) -> str:
+    """Registra una baja definitiva sin borrar la cuenta ni sus relaciones históricas."""
+    reason = deletion_reason.strip()
+    if len(reason) < 5:
+        raise ValueError("Indica un motivo de baja de al menos 5 caracteres")
+    if len(reason) > 250:
+        raise ValueError("El motivo de baja no puede superar los 250 caracteres")
+
+    with connect(db_path) as conn:
+        target = _admin_user_action(conn, user_id, performed_by)
+        if target["deleted_at"]:
+            raise ValueError("El usuario ya tiene baja definitiva")
+        if target["active"] == 1:
+            raise ValueError("Primero debes desactivar al usuario antes de darle de baja")
+        conn.execute(
+            """
+            UPDATE users
+            SET active = 0, deleted_at = ?, deleted_by = ?, deletion_reason = ?
+            WHERE id = ?
+            """,
+            (now_iso(), performed_by, reason, user_id),
+        )
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    return "Baja definitiva registrada. Las empresas y el historial del usuario se conservaron."
 
 
 # ---------------------------------------------------------------------------
@@ -232,9 +373,8 @@ def delete_user(user_id: int, db_path: Path | str = DB_PATH) -> str:
 
 def lookup_catastro(ruc: str, db_path: Path | str = DB_PATH) -> dict | None:
     """
-    Nivel 1: Busca el RUC en el Catastro Local (Opción 3).
-    Si se encuentra, retorna los datos {name, city, activity_hint}.
-    Si no existe, retorna None.
+    Busca el RUC en el catastro local del SRI y devuelve todos los campos
+    disponibles para que la investigación automática pueda construir la ficha.
 
     Nota: db_path se acepta por consistencia con el resto de database.py
     pero no se usa: esta función siempre conecta a sri_catastro.db junto al
@@ -251,16 +391,148 @@ def lookup_catastro(ruc: str, db_path: Path | str = DB_PATH) -> dict | None:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM sri_catastro WHERE ruc = ?", (ruc,)).fetchone()
             if row:
-                return {
-                    "name": row["name"],
-                    "city": row["city"],
-                    "activity_hint": row["activity_hint"]
-                }
+                return dict(row)
     except Exception as e:
         import logging
         logging.error(f"Error querying local catastro: {e}")
         
     return None
+
+
+def apply_sri_research_result(
+    audit_id: int,
+    user_id: int,
+    result: dict[str, dict[str, str]],
+    db_path: Path | str = DB_PATH,
+) -> None:
+    """Guarda una consulta SRI sin modificar campos pertenecientes a Supercias."""
+    company = result["company"]
+    profile = result["profile"]
+    location = result["location"]
+    research = result["research"]
+    ts = now_iso()
+
+    with connect(db_path) as conn:
+        audit = conn.execute(
+            "SELECT company_id, status FROM audits WHERE id = ?",
+            (audit_id,),
+        ).fetchone()
+        if audit is None:
+            raise ValueError("Auditoría no encontrada")
+
+        conn.execute(
+            """
+            UPDATE companies
+            SET name = ?, ruc = ?, city = ?, activity_hint = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                company["name"], company["ruc"], company["city"],
+                company["activity_hint"], ts, audit["company_id"],
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO company_profiles (
+                audit_id, ruc, razon_social, estado_contribuyente, tipo_contribuyente,
+                categoria, obligado_contabilidad, agente_retencion,
+                contribuyente_especial, fecha_inicio_actividades,
+                fecha_actualizacion, actividad_economica, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(audit_id) DO UPDATE SET
+                ruc = excluded.ruc,
+                razon_social = excluded.razon_social,
+                estado_contribuyente = excluded.estado_contribuyente,
+                tipo_contribuyente = excluded.tipo_contribuyente,
+                categoria = excluded.categoria,
+                obligado_contabilidad = excluded.obligado_contabilidad,
+                agente_retencion = excluded.agente_retencion,
+                contribuyente_especial = excluded.contribuyente_especial,
+                fecha_inicio_actividades = excluded.fecha_inicio_actividades,
+                fecha_actualizacion = excluded.fecha_actualizacion,
+                actividad_economica = excluded.actividad_economica,
+                updated_at = excluded.updated_at
+            """,
+            (
+                audit_id, profile["ruc"], profile["razon_social"],
+                profile["estado_contribuyente"], profile["tipo_contribuyente"],
+                profile["categoria"], profile["obligado_contabilidad"],
+                profile["agente_retencion"], profile["contribuyente_especial"],
+                profile["fecha_inicio_actividades"], profile["fecha_actualizacion"],
+                profile["actividad_economica"], ts,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO company_locations (audit_id, provincia, canton, ciudad, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(audit_id) DO UPDATE SET
+                provincia = excluded.provincia,
+                canton = excluded.canton,
+                ciudad = excluded.ciudad,
+                updated_at = excluded.updated_at
+            """,
+            (
+                audit_id, location["provincia"], location["canton"],
+                location["ciudad"], ts,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO research_notes (
+                audit_id, commercial_name, economic_activity, sri_info,
+                updated_by, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(audit_id) DO UPDATE SET
+                commercial_name = CASE
+                    WHEN excluded.commercial_name <> '' THEN excluded.commercial_name
+                    ELSE research_notes.commercial_name
+                END,
+                economic_activity = excluded.economic_activity,
+                sri_info = excluded.sri_info,
+                updated_by = excluded.updated_by,
+                updated_at = excluded.updated_at
+            """,
+            (
+                audit_id, research["commercial_name"], research["economic_activity"],
+                research["sri_info"], user_id, ts,
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE source_checks
+            SET estado = 'consultada', observacion = ?, consultada_por = ?, consultada_at = ?
+            WHERE audit_id = ? AND lower(fuente) LIKE '%sri%'
+            """,
+            ("Consulta automática en el catastro local oficial del SRI", user_id, ts, audit_id),
+        )
+
+        source = conn.execute(
+            """
+            SELECT id FROM sources
+            WHERE audit_id = ? AND source_type = 'SRI'
+              AND title = 'Catastro RUC SRI (base local)'
+            """,
+            (audit_id,),
+        ).fetchone()
+        source_notes = f"Consulta automática del RUC {company['ruc']} realizada el {ts}."
+        if source:
+            conn.execute("UPDATE sources SET notes = ? WHERE id = ?", (source_notes, source["id"]))
+        else:
+            conn.execute(
+                """
+                INSERT INTO sources (audit_id, title, url, source_type, notes, created_by, created_at)
+                VALUES (?, 'Catastro RUC SRI (base local)', 'https://www.sri.gob.ec/datasets',
+                        'SRI', ?, ?, ?)
+                """,
+                (audit_id, source_notes, user_id, ts),
+            )
+
+        status = "en_investigacion" if audit["status"] == "pendiente" else audit["status"]
+        conn.execute(
+            "UPDATE audits SET status = ?, updated_at = ? WHERE id = ?",
+            (status, ts, audit_id),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +591,8 @@ def user_from_session(token: str | None, db_path: Path | str = DB_PATH) -> sqlit
             SELECT u.*
             FROM sessions s
             JOIN users u ON u.id = s.user_id
-            WHERE s.token_hash = ? AND u.active = 1 AND s.expires_at >= ?
+            WHERE s.token_hash = ? AND u.active = 1 AND u.deleted_at IS NULL
+              AND s.expires_at >= ?
             """,
             (session_hash(token), now_iso()),
         ).fetchone()
@@ -362,10 +635,15 @@ def create_company_audit(
 
     with connect(db_path) as conn:
         auditor = conn.execute(
-            "SELECT id, role, active FROM users WHERE id = ?",
+            "SELECT id, role, active, deleted_at FROM users WHERE id = ?",
             (int(assigned_auditor_id),),
         ).fetchone()
-        if auditor is None or auditor["role"] != "auditor" or auditor["active"] != 1:
+        if (
+            auditor is None
+            or auditor["role"] != "auditor"
+            or auditor["active"] != 1
+            or auditor["deleted_at"]
+        ):
             raise ValueError("La empresa debe asignarse a un auditor activo")
 
         cur = conn.execute(
@@ -384,6 +662,13 @@ def create_company_audit(
             (company_id, period, int(assigned_auditor_id), created_by, ts, ts),
         )
         audit_id = int(cur.lastrowid)
+        conn.execute(
+            """
+            INSERT INTO audit_assignments (audit_id, auditor_id, assigned_by, assigned_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (audit_id, int(assigned_auditor_id), created_by, ts),
+        )
         # Si el RUC coincide con el demo, cargar datos automáticamente
         if ruc.strip() == DEMO_RUC:
             seed_demo_radar(conn, audit_id)
@@ -456,7 +741,7 @@ def list_admin_audits(db_path: Path | str = DB_PATH) -> list[sqlite3.Row]:
                 """
                 SELECT a.*, c.name AS company_name, c.ruc, c.city, c.activity_hint,
                        u.full_name AS auditor_name, u.username AS auditor_username,
-                       u.active AS auditor_active
+                       u.active AS auditor_active, u.deleted_at AS auditor_deleted_at
                 FROM audits a
                 JOIN companies c ON c.id = a.company_id
                 JOIN users u ON u.id = a.assigned_auditor_id
@@ -466,17 +751,61 @@ def list_admin_audits(db_path: Path | str = DB_PATH) -> list[sqlite3.Row]:
         )
 
 
-def reassign_audit(audit_id: int, new_auditor_id: int, db_path: Path | str = DB_PATH) -> None:
+def reassign_audit(
+    audit_id: int,
+    new_auditor_id: int,
+    performed_by: int,
+    db_path: Path | str = DB_PATH,
+) -> None:
     ts = now_iso()
     with connect(db_path) as conn:
-        # Check if the new auditor exists and is active
-        auditor = conn.execute("SELECT id FROM users WHERE id = ? AND role = 'auditor' AND active = 1", (new_auditor_id,)).fetchone()
+        actor = conn.execute(
+            """
+            SELECT id FROM users
+            WHERE id = ? AND role = 'admin' AND active = 1 AND deleted_at IS NULL
+            """,
+            (performed_by,),
+        ).fetchone()
+        if not actor:
+            raise ValueError("Solo un administrador activo puede reasignar empresas")
+
+        auditor = conn.execute(
+            """
+            SELECT id FROM users
+            WHERE id = ? AND role = 'auditor' AND active = 1 AND deleted_at IS NULL
+            """,
+            (new_auditor_id,),
+        ).fetchone()
         if not auditor:
             raise ValueError("El nuevo auditor no es válido o no está activo.")
-        
+
+        audit = conn.execute(
+            "SELECT assigned_auditor_id FROM audits WHERE id = ?",
+            (audit_id,),
+        ).fetchone()
+        if not audit:
+            raise ValueError("Auditoría no encontrada")
+        if audit["assigned_auditor_id"] == new_auditor_id:
+            raise ValueError("La empresa ya está asignada a ese auditor")
+
         conn.execute(
             "UPDATE audits SET assigned_auditor_id = ?, updated_at = ? WHERE id = ?",
             (new_auditor_id, ts, audit_id)
+        )
+        conn.execute(
+            """
+            UPDATE audit_assignments
+            SET unassigned_at = ?
+            WHERE audit_id = ? AND unassigned_at IS NULL
+            """,
+            (ts, audit_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO audit_assignments (audit_id, auditor_id, assigned_by, assigned_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (audit_id, new_auditor_id, performed_by, ts),
         )
 
 

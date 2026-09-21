@@ -7,7 +7,7 @@ import sqlite3
 
 from database import list_users
 from ui.helpers import esc, form_value, csrf_input
-from ui.icons import SVG_ALERT, SVG_TRASH
+from ui.icons import SVG_ALERT, SVG_PAUSE, SVG_REFRESH, SVG_TRASH
 from ui.layout import layout
 
 
@@ -19,44 +19,122 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     rows_html = ""
     for u in users:
         is_self = u["id"] == user["id"]
-        delete_btn = f"""
-            <button type="button" class="btn btn-sm btn-outline" style="color:var(--red-600); border-color:var(--red-200); padding:4px 8px;" title="Eliminar" onclick="openDeleteModal({u['id']}, '{esc(u['full_name'])}')">
-              {SVG_TRASH}
-            </button>
-        """ if not is_self else ""
-        
+        is_deleted = bool(u["deleted_at"])
+
+        if is_deleted:
+            deleted_date = esc(u["deleted_at"][:16])
+            deleted_by = esc(u["deleted_by_name"] or "Administrador")
+            reason = esc(u["deletion_reason"] or "Sin motivo registrado")
+            status_html = f"""
+              <span class="badge badge-red">Baja definitiva</span>
+              <span class="user-state-meta" title="{reason}">{deleted_date} · por {deleted_by}</span>
+            """
+            actions_html = '<span class="user-no-actions" title="Registro histórico sin acciones">—</span>'
+        elif u["active"]:
+            status_html = '<span class="badge badge-green">Activo</span>'
+            actions_html = ""
+            if not is_self:
+                actions_html = f"""
+                  <button type="button" class="user-action-btn user-action-warning"
+                          data-user-id="{u['id']}" data-user-name="{esc(u['full_name'])}"
+                          title="Desactivar usuario" aria-label="Desactivar usuario"
+                          onclick="openDeactivateModal(this)">{SVG_PAUSE}</button>
+                """
+        else:
+            status_html = """
+              <span class="badge badge-amber">Inactivo</span>
+              <span class="user-state-meta">Acceso suspendido; historial conservado</span>
+            """
+            actions_html = ""
+            if not is_self:
+                actions_html = f"""
+                  <form method="post" action="/admin/users/reactivate" class="user-inline-form">
+                    {csrf_input(csrf_token)}
+                    <input type="hidden" name="user_id" value="{u['id']}">
+                    <button type="submit" class="user-action-btn user-action-success"
+                            title="Reactivar usuario" aria-label="Reactivar usuario">{SVG_REFRESH}</button>
+                  </form>
+                  <button type="button" class="user-action-btn user-action-danger"
+                          data-user-id="{u['id']}" data-user-name="{esc(u['full_name'])}"
+                          title="Registrar baja definitiva" aria-label="Registrar baja definitiva"
+                          onclick="openDeleteModal(this)">{SVG_TRASH}</button>
+                """
+
         rows_html += f"""<tr>
           <td><strong>{esc(u['full_name'])}</strong></td>
           <td><code style="font-size:13px; background:var(--line-2); padding:2px 6px; border-radius:4px;">{esc(u['username'])}</code></td>
           <td>{'<span class="badge badge-blue">Jefe auditor</span>' if u['role'] == 'admin' else '<span class="badge badge-gray">Auditor</span>'}</td>
-          <td>{'<span class="badge badge-green">Activo</span>' if u['active'] else '<span class="badge badge-red">Inactivo</span>'}</td>
-          <td style="text-align:right;">{delete_btn}</td>
+          <td>{status_html}</td>
+          <td><div class="user-actions">{actions_html}</div></td>
         </tr>"""
 
-    modal_html = """
-    <div id="deleteModal" class="modal-overlay">
+    modal_html = f"""
+    <div id="deactivateModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="deactivateModalTitle">
       <div class="modal-content">
-        <div class="modal-title">Eliminar usuario</div>
-        <div class="modal-desc">¿Estás seguro de que deseas eliminar a <strong id="deleteUserName"></strong>? Esta acción es permanente y no se puede deshacer.</div>
-        <form method="post" action="/admin/users/delete" style="margin:0;">
+        <div class="modal-title" id="deactivateModalTitle">Desactivar usuario</div>
+        <div class="modal-desc">
+          Se suspenderá el acceso de <strong id="deactivateUserName"></strong> y se cerrarán sus sesiones.
+          Sus empresas, expedientes y registros se conservarán sin cambios.
+        </div>
+        <form method="post" action="/admin/users/deactivate" style="margin:0;">
           {csrf_input(csrf_token)}
-          <input type="hidden" name="user_id" id="deleteUserId">
+          <input type="hidden" name="user_id" id="deactivateUserId">
           <div class="modal-actions">
-            <button type="button" class="btn btn-outline" onclick="closeDeleteModal()">Cancelar</button>
-            <button type="submit" class="btn" style="background:var(--red-600);color:white;border:none;">Sí, eliminar</button>
+            <button type="button" class="btn btn-outline" onclick="closeModal('deactivateModal')">Cancelar</button>
+            <button type="submit" class="btn user-confirm-warning">Desactivar</button>
           </div>
         </form>
       </div>
     </div>
+
+    <div id="deleteModal" class="modal-overlay">
+      <div class="modal-content">
+        <div class="modal-title">Registrar baja definitiva</div>
+        <div class="modal-desc">
+          <strong id="deleteUserName"></strong> no podrá reactivarse. La cuenta no se borrará:
+          sus empresas, expedientes y autoría permanecerán en el historial.
+        </div>
+        <form method="post" action="/admin/users/delete" style="margin:0;">
+          {csrf_input(csrf_token)}
+          <input type="hidden" name="user_id" id="deleteUserId">
+          <label for="deletionReason">Motivo de la baja *</label>
+          <textarea id="deletionReason" name="deletion_reason" minlength="5" maxlength="250"
+                    required placeholder="Ej. Finalización de relación laboral"></textarea>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-outline" onclick="closeModal('deleteModal')">Cancelar</button>
+            <button type="submit" class="btn user-confirm-danger">Confirmar baja</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    """ + """
     <script>
-    function openDeleteModal(id, name) {
-      document.getElementById('deleteUserId').value = id;
-      document.getElementById('deleteUserName').textContent = name;
+    function openDeactivateModal(button) {
+      document.getElementById('deactivateUserId').value = button.dataset.userId;
+      document.getElementById('deactivateUserName').textContent = button.dataset.userName;
+      document.getElementById('deactivateModal').classList.add('active');
+    }
+    function openDeleteModal(button) {
+      document.getElementById('deleteUserId').value = button.dataset.userId;
+      document.getElementById('deleteUserName').textContent = button.dataset.userName;
+      document.getElementById('deletionReason').value = '';
       document.getElementById('deleteModal').classList.add('active');
+      document.getElementById('deletionReason').focus();
     }
-    function closeDeleteModal() {
-      document.getElementById('deleteModal').classList.remove('active');
+    function closeModal(id) {
+      document.getElementById(id).classList.remove('active');
     }
+    document.querySelectorAll('.modal-overlay').forEach(function(modal) {
+      modal.addEventListener('click', function(event) {
+        if (event.target === modal) closeModal(modal.id);
+      });
+    });
+    document.addEventListener('keydown', function(event) {
+      if (event.key === 'Escape') {
+        closeModal('deactivateModal');
+        closeModal('deleteModal');
+      }
+    });
     </script>
     """
 
@@ -65,7 +143,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
       <h1 class="page-title">Usuarios</h1>
       <p class="page-subtitle muted">Administración de cuentas y accesos al sistema.</p>
     </div>
-    {'<div class="error-msg">' + SVG_ALERT + ' ' + esc(err) + '</div>' if err else ''}
+    {'<div class="error-msg toast">' + SVG_ALERT + ' ' + esc(err) + '</div>' if err else ''}
 
     <div class="grid">
       <div class="panel col-4">

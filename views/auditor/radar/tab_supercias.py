@@ -4,15 +4,19 @@ from ui.helpers import esc, csrf_input
 from ui.icons import SVG_EXTERNAL, SVG_SAVE
 from providers.supercias import SuperciasProvider
 from services.rowutil import row_get
-from ui.components import info_card as _ic
+from ui.components import info_card as _ic, source_check_control
 
 def _pval(profile, key):
     return str(row_get(profile, key, "")).strip()
 
-def build(audit_id, audit, profile, research, read_only: bool = False, csrf_token: str = ""):
+def build(
+    audit_id, audit, profile, research,
+    read_only: bool = False, csrf_token: str = "", source_check: object | None = None,
+):
     ruc = audit["ruc"] or ""
     company_name = audit["company_name"]
     pv = lambda k: _pval(profile, k)
+    check_html = "" if read_only else source_check_control(audit_id, source_check, csrf_token, return_tab="supercias")
     links_html = ""
     if not read_only:
         for lnk in SuperciasProvider().get_links(ruc, company_name)[:2]:
@@ -44,7 +48,10 @@ def build(audit_id, audit, profile, research, read_only: bool = False, csrf_toke
     </details>
     """
     return f"""
-    <h3 style="margin:0 0 16px;font-size:15px;">Estado societario — Supercias</h3>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <h3 style="margin:0;font-size:15px;">Estado societario — Supercias</h3>
+      {check_html}
+    </div>
     <div class="info-grid">
       {_ic("Situación legal", pv("situacion_legal"))}
       {_ic("Tipo de compañía", pv("tipo_compania"))}
