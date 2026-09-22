@@ -3,6 +3,7 @@ from __future__ import annotations
 from ui.helpers import esc, csrf_input
 from ui.icons import SVG_EXTERNAL, SVG_SAVE
 from providers.supercias import SuperciasProvider
+from services.normalizacion import clasificar_situacion_legal, clasificar_tipo_compania, con_valor_oficial
 from services.rowutil import row_get
 from ui.components import info_card as _ic, source_check_control
 
@@ -72,8 +73,8 @@ def build(
     </div>
     <div class="info-grid">
       {_ic("Razón social (Supercias)", pv("razon_social_supercias"), "full-width")}
-      {_ic("Situación legal", pv("situacion_legal"))}
-      {_ic("Tipo de compañía", pv("tipo_compania"))}
+      {_ic("Situación legal", con_valor_oficial(clasificar_situacion_legal(pv("situacion_legal")), pv("situacion_legal")))}
+      {_ic("Tipo de compañía", con_valor_oficial(clasificar_tipo_compania(pv("tipo_compania")), pv("tipo_compania")))}
       {_ic("Nacionalidad", pv("nacionalidad"))}
       {_ic("Fecha constitución", pv("fecha_constitucion"))}
       {_ic("Expediente Supercias", pv("expediente_supercias"))}

@@ -31,7 +31,27 @@ def _ind_card(label: str, value: str, threshold: float | None = None,
     )
 
 
-def build(audit_id: int, indicators: dict, read_only: bool = False, csrf_token: str = "") -> str:
+def _anio_sugerido_html(anio_sugerido: dict | None) -> str:
+    """Aviso del año fiscal sugerido por el Directorio de Compañías. Es una
+    sugerencia: el auditor debe confirmar el año en Documentos económicos."""
+    if not anio_sugerido:
+        return ""
+    return (
+        f'<div class="fin-alert alert-info">{SVG_ALERT}<div>'
+        f'<strong>Año fiscal sugerido: {anio_sugerido["anio"]}</strong> — último balance presentado '
+        f'según el Directorio de Compañías. Descargue en Supercias los documentos económicos con '
+        f'fecha de corte {esc(anio_sugerido["fecha_corte"])} y confirme el año antes de registrar cifras.'
+        f'</div></div>'
+    )
+
+
+def build(
+    audit_id: int,
+    indicators: dict,
+    read_only: bool = False,
+    csrf_token: str = "",
+    anio_sugerido: dict | None = None,
+) -> str:
     fin_alerts_html = ""
     for alerta in indicators.get("alertas", []):
         css = "alert-high" if alerta["tipo"] == "alto" else (
@@ -78,6 +98,7 @@ def build(audit_id: int, indicators: dict, read_only: bool = False, csrf_token: 
       <h3 style="margin:0;font-size:15px;">Indicadores financieros</h3>
       {'<span class="badge badge-green">Datos cargados</span>' if indicators["tiene_datos"] else '<span class="badge badge-gray">Pendiente de datos</span>'}
     </div>
+    {_anio_sugerido_html(anio_sugerido)}
     <div class="kpi-grid">
       {_kpi("blue",   "Activo total",    indicators["fmt_activo"],            "Estado de situación")}
       {_kpi("red",    "Pasivo total",    indicators["fmt_pasivo"],            "Estado de situación")}

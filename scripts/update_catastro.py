@@ -5,11 +5,18 @@ El SRI publica mensualmente el padrón completo en datosabiertos.gob.ec.
 Este script lee el archivo CSV descomprimido y lo carga en una base de datos
 local ultrarrápida (sri_catastro.db) para que Atlas la consulte instantáneamente.
 
+El SRI publica el catastro por provincia. Cada carga actualiza los RUC del
+archivo sin borrar los de otras provincias, así que se pueden importar varias
+provincias (en una o en varias ejecuciones) y la base conserva todas.
+
 Uso:
-  python scripts/update_catastro.py ruta/al/catastro.csv
+  python scripts/update_catastro.py SRI_RUC_Azuay.csv
+  python scripts/update_catastro.py SRI_RUC_Azuay.csv SRI_RUC_Pichincha.csv SRI_RUC_Guayas.csv
+  python scripts/update_catastro.py --reemplazar SRI_RUC_*.csv   # vacía la base antes de cargar
 """
 import csv
 import sqlite3
+from datetime import datetime
 import sys
 from pathlib import Path
 
@@ -66,8 +73,8 @@ CSV_FIELDS = {
     "special_taxpayer": "ESPECIAL",
 }
 
-def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
+def init_db(db_path: Path = None) -> None:
+    with sqlite3.connect(db_path or DB_PATH) as conn:
         conn.execute("""
         CREATE TABLE IF NOT EXISTS sri_catastro (
             ruc TEXT PRIMARY KEY,
@@ -81,24 +88,42 @@ def init_db():
             if column not in existing:
                 conn.execute(f"ALTER TABLE sri_catastro ADD COLUMN {column} {column_type}")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_catastro_ruc ON sri_catastro(ruc)")
+        # Registro de cada archivo importado: permite saber qué provincias y
+        # qué corte contiene la base local (trazabilidad de la fuente).
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS sri_catastro_meta (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            archivo TEXT NOT NULL,
+            filas INTEGER NOT NULL,
+            modo TEXT NOT NULL,
+            importado_at TEXT NOT NULL
+        )
+        """)
 
 
 def _is_main_establishment(value: str) -> bool:
     normalized = value.strip().lstrip("0")
     return normalized == "1"
 
-def load_csv(csv_path: Path):
-    if not csv_path.exists():
-        print(f"Error: El archivo {csv_path} no existe.")
-        sys.exit(1)
 
-    print(f"Iniciando carga de catastro desde {csv_path}...")
-    init_db()
-    
-    with sqlite3.connect(DB_PATH) as conn:
+def _insert_batch(conn: sqlite3.Connection, batch: list) -> None:
+    conn.executemany(
+        f"INSERT OR REPLACE INTO sri_catastro ({', '.join(INSERT_COLUMNS)}) "
+        f"VALUES ({', '.join('?' for _ in INSERT_COLUMNS)})",
+        batch,
+    )
+
+
+def load_csv(csv_path: Path, db_path: Path = None, modo: str = "incremental") -> int:
+    """Carga un archivo del catastro. Actualiza los RUC presentes en el archivo
+    y conserva los demás. Devuelve la cantidad de RUC importados."""
+    db_path = db_path or DB_PATH
+    print(f"Cargando catastro desde {csv_path}...")
+    init_db(db_path)
+
+    with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA synchronous = OFF")
         conn.execute("PRAGMA journal_mode = MEMORY")
-        conn.execute("DELETE FROM sri_catastro")
 
         count = 0
         batch = []
@@ -116,28 +141,63 @@ def load_csv(csv_path: Path):
                     count += 1
 
                 if len(batch) >= 10000:
-                    conn.executemany(
-                        f"INSERT OR REPLACE INTO sri_catastro ({', '.join(INSERT_COLUMNS)}) "
-                        f"VALUES ({', '.join('?' for _ in INSERT_COLUMNS)})",
-                        batch,
-                    )
+                    _insert_batch(conn, batch)
                     batch.clear()
                     if count % 50000 == 0:
                         print(f"{count} registros procesados...")
 
             if batch:
-                conn.executemany(
-                    f"INSERT OR REPLACE INTO sri_catastro ({', '.join(INSERT_COLUMNS)}) "
-                    f"VALUES ({', '.join('?' for _ in INSERT_COLUMNS)})",
-                    batch,
-                )
+                _insert_batch(conn, batch)
 
-    print(f"Carga completa. {count} empresas importadas a {DB_PATH}.")
+        conn.execute(
+            "INSERT INTO sri_catastro_meta (archivo, filas, modo, importado_at) VALUES (?, ?, ?, ?)",
+            (csv_path.name, count, modo, datetime.now().replace(microsecond=0).isoformat(sep=" ")),
+        )
+
+    print(f"  {count} empresas importadas desde {csv_path.name}.")
+    return count
+
+
+def clear_catastro(db_path: Path = None) -> None:
+    init_db(db_path)
+    with sqlite3.connect(db_path or DB_PATH) as conn:
+        conn.execute("DELETE FROM sri_catastro")
+
+
+def print_coverage(db_path: Path = None) -> None:
+    with sqlite3.connect(db_path or DB_PATH) as conn:
+        total = conn.execute("SELECT COUNT(*) FROM sri_catastro").fetchone()[0]
+        rows = conn.execute(
+            "SELECT COALESCE(NULLIF(TRIM(jurisdiction), ''), 'SIN JURISDICCION'), COUNT(*) "
+            "FROM sri_catastro GROUP BY 1 ORDER BY 2 DESC"
+        ).fetchall()
+    print(f"Base {db_path or DB_PATH}: {total} RUC en total.")
+    for jurisdiccion, filas in rows:
+        print(f"  {jurisdiccion}: {filas}")
+
+
+def main(argv: list) -> int:
+    reemplazar = "--reemplazar" in argv
+    archivos = [Path(a) for a in argv if a != "--reemplazar"]
+    if not archivos:
+        print("Uso: python scripts/update_catastro.py [--reemplazar] <archivo.csv> [<archivo.csv> ...]")
+        print("Puedes descargar los CSV desde: https://www.sri.gob.ec/datasets")
+        return 1
+    faltantes = [str(a) for a in archivos if not a.exists()]
+    if faltantes:
+        # Se valida todo antes de tocar la base: con --reemplazar, un archivo
+        # inexistente dejaría la base vacía.
+        print(f"Error: no existen los archivos: {', '.join(faltantes)}")
+        return 1
+
+    if reemplazar:
+        print("Modo --reemplazar: se vacía la base antes de cargar.")
+        clear_catastro()
+    for archivo in archivos:
+        load_csv(archivo, modo="reemplazo" if reemplazar else "incremental")
+    print_coverage()
+    return 0
+
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Uso: python scripts/update_catastro.py <ruta_al_archivo.csv>")
-        print("Puedes descargar el CSV desde: https://www.sri.gob.ec/datasets")
-        sys.exit(1)
-        
-    load_csv(Path(sys.argv[1]))
+    sys.exit(main(sys.argv[1:]))

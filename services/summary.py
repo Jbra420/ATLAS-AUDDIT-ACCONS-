@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 import sqlite3
 
+from services.normalizacion import clasificar_situacion_legal, clasificar_tipo_compania, con_valor_oficial
 from services.rowutil import row_get
 
 
@@ -200,7 +201,7 @@ def generate_summary(
             f"  Tipo contribuyente   : {_val(profile['tipo_contribuyente'])}",
             f"  Régimen              : {_val(profile['regimen'])}",
             f"  Expediente Supercias : {_val(profile['expediente_supercias'])}",
-            f"  Tipo compañía        : {_val(profile['tipo_compania'])}",
+            f"  Tipo compañía        : {_val(con_valor_oficial(clasificar_tipo_compania(profile['tipo_compania']), profile['tipo_compania']))}",
             f"  Nacionalidad         : {_val(profile['nacionalidad'])}",
         ]
     else:
@@ -233,8 +234,8 @@ def generate_summary(
     if profile:
         sec3_lines = [
             f"  Razón social         : {_val(row_get(profile, 'razon_social_supercias'))}",
-            f"  Situación legal      : {_val(profile['situacion_legal'])}",
-            f"  Tipo compañía        : {_val(profile['tipo_compania'])}",
+            f"  Situación legal      : {_val(con_valor_oficial(clasificar_situacion_legal(profile['situacion_legal']), profile['situacion_legal']))}",
+            f"  Tipo compañía        : {_val(con_valor_oficial(clasificar_tipo_compania(profile['tipo_compania']), profile['tipo_compania']))}",
             f"  Fecha constitución   : {_val(profile['fecha_constitucion'])}",
             f"  Oficina control      : {_val(profile['oficina_control'])}",
             f"  Expediente           : {_val(profile['expediente_supercias'])}",

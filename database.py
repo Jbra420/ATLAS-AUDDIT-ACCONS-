@@ -21,6 +21,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from seed_data import DEMO_RUC, seed_defaults, seed_demo_radar
+from services.normalizacion import normalizar_texto
 from services.ruc_validator import format_ruc, validate_ruc
 from services.summary import generate_summary
 
@@ -502,10 +503,10 @@ def apply_sri_research_result(
             """
             INSERT INTO company_profiles (
                 audit_id, ruc, razon_social, razon_social_sri, estado_contribuyente,
-                tipo_contribuyente, categoria, obligado_contabilidad, agente_retencion,
+                tipo_contribuyente, regimen, categoria, obligado_contabilidad, agente_retencion,
                 contribuyente_especial, fecha_inicio_actividades,
                 fecha_actualizacion, actividad_economica, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(audit_id) DO UPDATE SET
                 ruc = excluded.ruc,
                 razon_social = CASE
@@ -515,6 +516,11 @@ def apply_sri_research_result(
                 razon_social_sri = excluded.razon_social_sri,
                 estado_contribuyente = excluded.estado_contribuyente,
                 tipo_contribuyente = excluded.tipo_contribuyente,
+                -- Un código de clase sin equivalencia no borra un régimen ya confirmado.
+                regimen = CASE
+                    WHEN excluded.regimen <> '' THEN excluded.regimen
+                    ELSE company_profiles.regimen
+                END,
                 categoria = excluded.categoria,
                 obligado_contabilidad = excluded.obligado_contabilidad,
                 agente_retencion = excluded.agente_retencion,
@@ -527,7 +533,7 @@ def apply_sri_research_result(
             (
                 audit_id, profile["ruc"], profile["razon_social"], profile["razon_social_sri"],
                 profile["estado_contribuyente"], profile["tipo_contribuyente"],
-                profile["categoria"], profile["obligado_contabilidad"],
+                profile["regimen"], profile["categoria"], profile["obligado_contabilidad"],
                 profile["agente_retencion"], profile["contribuyente_especial"],
                 profile["fecha_inicio_actividades"], profile["fecha_actualizacion"],
                 profile["actividad_economica"], ts,
@@ -721,6 +727,8 @@ def apply_supercias_research_result(
             (audit_id, *(location[c] for c in loc_cols), ts),
         )
 
+        _register_directory_administrators(conn, audit_id, result.get("administradores", []))
+
         conn.execute(
             """
             INSERT INTO research_notes (audit_id, legal_status, representative, supercias_info, updated_by, updated_at)
@@ -776,6 +784,41 @@ def apply_supercias_research_result(
             "UPDATE audits SET status = ?, updated_at = ? WHERE id = ?",
             (status, ts, audit_id),
         )
+
+
+def _register_directory_administrators(
+    conn: sqlite3.Connection,
+    audit_id: int,
+    administradores: list[dict[str, str]],
+) -> None:
+    """Registra en la nómina los administradores que publica el Directorio.
+
+    No duplica a una persona que ya figure con el mismo cargo, aunque el
+    auditor la haya escrito con otra capitalización o con tildes. No completa
+    identificación ni nacionalidad: el Directorio no las publica.
+    """
+    if not administradores:
+        return
+    existing = {
+        (normalizar_texto(row["nombre"]), normalizar_texto(row["cargo"]))
+        for row in conn.execute(
+            "SELECT nombre, cargo FROM company_administrators WHERE audit_id = ?", (audit_id,)
+        )
+    }
+    for admin in administradores:
+        nombre = (admin.get("nombre") or "").strip()
+        cargo = (admin.get("cargo") or "").strip()
+        key = (normalizar_texto(nombre), normalizar_texto(cargo))
+        if not nombre or not cargo or key in existing:
+            continue
+        conn.execute(
+            """
+            INSERT INTO company_administrators (audit_id, identificacion, nombre, nacionalidad, cargo)
+            VALUES (?, '', ?, '', ?)
+            """,
+            (audit_id, nombre, cargo),
+        )
+        existing.add(key)
 
 
 # ---------------------------------------------------------------------------
@@ -1679,13 +1722,15 @@ def add_administrator(
         raise ValueError("Identificacion o nacionalidad excede la longitud permitida")
 
     with connect(db_path) as conn:
-        duplicate = conn.execute(
-            """
-            SELECT id FROM company_administrators
-            WHERE audit_id = ? AND nombre = ? COLLATE NOCASE AND cargo = ? COLLATE NOCASE
-            """,
-            (audit_id, nombre, cargo),
-        ).fetchone()
+        # Misma regla que _register_directory_administrators: sin distinguir
+        # mayúsculas, tildes ni espacios, para no duplicar lo que trajo el Directorio.
+        key = (normalizar_texto(nombre), normalizar_texto(cargo))
+        duplicate = any(
+            (normalizar_texto(row["nombre"]), normalizar_texto(row["cargo"])) == key
+            for row in conn.execute(
+                "SELECT nombre, cargo FROM company_administrators WHERE audit_id = ?", (audit_id,)
+            )
+        )
         if duplicate:
             raise ValueError("El administrador con ese cargo ya esta registrado")
         cur = conn.execute(

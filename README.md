@@ -49,6 +49,22 @@ auditor / auditor123
 
 Cambiar estas claves antes de registrar informacion real.
 
+## Catastro local del SRI
+
+"Iniciar búsqueda" consulta el catastro RUC del SRI importado localmente. El SRI
+publica un archivo por provincia; cada carga actualiza los RUC del archivo y
+conserva los de las provincias ya importadas:
+
+```bash
+python3 scripts/update_catastro.py SRI_RUC_Azuay.csv
+python3 scripts/update_catastro.py SRI_RUC_Pichincha.csv SRI_RUC_Guayas.csv
+python3 scripts/update_catastro.py --reemplazar SRI_RUC_*.csv   # vacía la base antes de cargar
+```
+
+Al terminar, el script muestra cuántos RUC hay por jurisdicción, y cada archivo
+importado queda registrado en la tabla `sri_catastro_meta`. Si un cliente no
+aparece en la búsqueda, lo primero es revisar que su provincia esté cargada.
+
 ## Catálogo local de Supercías (Directorio de Compañías)
 
 "Iniciar búsqueda" consulta, además del catastro RUC del SRI, un catálogo

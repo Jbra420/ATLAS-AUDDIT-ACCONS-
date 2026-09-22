@@ -10,6 +10,7 @@ from database import (
     lookup_catastro,
     lookup_supercias_catalog,
 )
+from services.normalizacion import regimen_desde_clase
 from services.supercias_catalog import build_supercias_result
 
 
@@ -31,11 +32,20 @@ def build_sri_result(record: dict[str, str]) -> dict[str, dict[str, str]]:
     canton = (record.get("canton") or record.get("city") or "").strip()
     parish = (record.get("parish") or "").strip()
     trade_name = (record.get("trade_name") or "").strip()
+    clase = (record.get("taxpayer_class") or "").strip()
+    regimen = regimen_desde_clase(clase)
+    if regimen:
+        regimen_line = f"Régimen: {regimen} (clase {clase})"
+    elif clase:
+        regimen_line = f"Régimen: pendiente de confirmar (clase {clase} sin equivalencia confirmada)"
+    else:
+        regimen_line = ""
 
     sri_lines = [
         f"RUC: {ruc}",
         f"Estado del contribuyente: {(record.get('taxpayer_status') or '').strip()}",
         f"Tipo de contribuyente: {(record.get('taxpayer_type') or '').strip()}",
+        regimen_line,
         f"Código CIIU: {(record.get('ciiu_code') or '').strip()}",
         f"Ubicación registrada: {', '.join(part for part in (parish, canton, province) if part)}",
         "Fuente: Catastro RUC SRI cargado localmente.",
@@ -54,7 +64,8 @@ def build_sri_result(record: dict[str, str]) -> dict[str, dict[str, str]]:
             "razon_social_sri": name,
             "estado_contribuyente": (record.get("taxpayer_status") or "").strip(),
             "tipo_contribuyente": (record.get("taxpayer_type") or "").strip(),
-            "categoria": (record.get("taxpayer_class") or "").strip(),
+            "regimen": regimen,
+            "categoria": clase,
             "obligado_contabilidad": _yes_no(record.get("accounting_required", "")),
             "agente_retencion": _yes_no(record.get("withholding_agent", "")),
             "contribuyente_especial": _yes_no(record.get("special_taxpayer", "")),
@@ -70,7 +81,7 @@ def build_sri_result(record: dict[str, str]) -> dict[str, dict[str, str]]:
         "research": {
             "commercial_name": trade_name,
             "economic_activity": activity,
-            "sri_info": "\n".join(line for line in sri_lines if not line.endswith(": ")),
+            "sri_info": "\n".join(line for line in sri_lines if line and not line.endswith(": ")),
         },
     }
 

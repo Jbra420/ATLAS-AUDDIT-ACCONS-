@@ -15,6 +15,8 @@ from database import (
 from services.financial import compute_indicators
 from services.company_search import build_source_map, find_source_check
 from services.dossier import build_dossier_model
+from services.normalizacion import anio_fiscal_sugerido
+from services.rowutil import row_get
 from ui.components import ruc_banner_html
 from ui.helpers import esc, form_value, csrf_input
 from ui.icons import (
@@ -294,7 +296,10 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     tab_accionistas = build_accionistas(
         audit_id, audit, shareholders, read_only=is_read_only, csrf_token=csrf_tok, sources=sources,
     )
-    tab_financiero = build_financiero(audit_id, indicators, read_only=is_read_only, csrf_token=csrf_tok)
+    tab_financiero = build_financiero(
+        audit_id, indicators, read_only=is_read_only, csrf_token=csrf_tok,
+        anio_sugerido=anio_fiscal_sugerido(row_get(profile, "ultimo_anio_balance")),
+    )
     tab_documentos = build_documentos(
         audit_id, docs, other_checks, sources, read_only=is_read_only, csrf_token=csrf_tok,
     )
