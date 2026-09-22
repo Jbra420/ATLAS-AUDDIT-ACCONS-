@@ -65,7 +65,8 @@ from core.router import GET_ROUTES
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 COOKIE_NAME = "atlas_session"
-CSS_PATH = BASE_DIR / "static" / "atlas.css"
+STATIC_DIR = BASE_DIR / "static"
+CSS_PATH = STATIC_DIR / "atlas.css"
 _CSS_CONTENT: str = ""
 _QUIET_MODE: bool = False  # Se activa con --quiet; suprime el log de peticiones HTTP
 
@@ -244,23 +245,30 @@ class AtlasHandler(BaseHTTPRequestHandler):
 
         if path.startswith("/static/"):
             if path == "/static/atlas.css":
+                encoded = _CSS_CONTENT.encode("utf-8")
                 self.send_response(HTTPStatus.OK)
-                self.send_header("Content-type", "text/css")
+                self.send_header("Content-type", "text/css; charset=utf-8")
+                self.send_header("Content-Length", str(len(encoded)))
                 self.end_headers()
-                self.wfile.write(_CSS_CONTENT.encode("utf-8"))
+                self.wfile.write(encoded)
                 return
-            
+
             import mimetypes
-            filepath = Path.cwd() / path.lstrip("/")
-            if filepath.is_file() and filepath.parent.name == "static":
+            # Resuelto contra STATIC_DIR (no Path.cwd(), que depende del
+            # directorio desde donde se lanzó el proceso) y comparado ya
+            # resuelto para que un "/static/../..." no pueda escapar de la
+            # carpeta static/.
+            requested = (STATIC_DIR / path.removeprefix("/static/")).resolve()
+            if requested.is_file() and requested.is_relative_to(STATIC_DIR.resolve()):
+                data = requested.read_bytes()
+                mime_type, _ = mimetypes.guess_type(requested)
                 self.send_response(HTTPStatus.OK)
-                mime_type, _ = mimetypes.guess_type(filepath)
                 self.send_header("Content-type", mime_type or "application/octet-stream")
+                self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
-                with open(filepath, "rb") as f:
-                    self.wfile.write(f.read())
+                self.wfile.write(data)
                 return
-            
+
             self.send_error(HTTPStatus.NOT_FOUND, "File not found")
             return
 

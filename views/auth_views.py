@@ -4,7 +4,7 @@ views/auth_views.py — Páginas de login y logout de Atlas.
 from __future__ import annotations
 
 from ui.helpers import esc, form_value
-from ui.icons import SVG_ALERT, SVG_CHECK, SVG_LOGO
+from ui.icons import SVG_ALERT, SVG_CHECK
 import ui.layout as layout_state
 import sqlite3
 
@@ -80,7 +80,7 @@ def render_login_page(user: sqlite3.Row | None = None, query: dict = None, activ
       <div class="login-card" style="z-index: 1;">
         <div class="login-brand">
           <span class="login-logo">
-            <img src="/static/atlas_logo.jpg" alt="Atlas" style="height: 36px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-right: 12px;">
+            <img src="/static/atlas_logo.jpg" alt="Atlas" class="brand-mark brand-mark--login">
             Atlas
           </span>
           <div class="login-tagline">Plataforma de investigación de auditoría · Auddit</div>
@@ -102,6 +102,10 @@ def render_login_page(user: sqlite3.Row | None = None, query: dict = None, activ
           Demo: <code>admin / admin123</code><br><code>auditor / auditor123</code>
         </p>
       </div>
+      <div class="login-footer-badge" style="z-index: 1;">
+        <img src="/static/logoauddit.jpeg" alt="Auddit" class="login-footer-logo">
+        <span>Una plataforma de Auddit</span>
+      </div>
     </div>
     """
 
@@ -113,7 +117,7 @@ def render_login_page(user: sqlite3.Row | None = None, query: dict = None, activ
   <title>Ingresar | Atlas</title>
   <style>{layout_state._CSS_CONTENT}</style>
 </head>
-<body class="has-auddit-bg">
+<body>
   {body}
   {auto_hide_js}
 </body>

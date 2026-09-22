@@ -17,13 +17,17 @@
   --bg:           #F8FAFC;
   --panel:        #FFFFFF;
   
-  /* Brand accents - Vibrant and creative */
-  --accent-base:  #3B82F6; /* Blue 500 */
-  --accent-hover: #2563EB; /* Blue 600 */
-  --accent-light: #EFF6FF;
-  
+  /* Brand accents — tomados del isotipo Atlas y el logo de Auddit:
+     morado del remolino "G" de Auddit hacia el azul marino del ícono
+     Atlas y del wordmark "auddit". Ver static/atlas_logo.jpg y
+     static/logoauddit.jpeg. */
+  --accent-base:  #8B3FC0; /* Auddit Púrpura */
+  --accent-hover: #7530A8; /* Auddit Púrpura, oscuro */
+  --accent-light: #F4EAFB; /* Auddit Púrpura, tinte claro */
+  --brand-navy:   #0E3A63; /* Atlas/Auddit Azul marino */
+
   /* Gradients */
-  --grad-primary: linear-gradient(135deg, #3B82F6 0%, #4F46E5 100%); /* Blue to Indigo */
+  --grad-primary: linear-gradient(135deg, #8B3FC0 0%, #0E3A63 100%); /* Auddit Púrpura → Atlas Marino */
   --grad-success: linear-gradient(135deg, #10B981 0%, #059669 100%);
   --grad-warning: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
   --grad-danger:  linear-gradient(135deg, #EF4444 0%, #DC2626 100%);
@@ -66,8 +70,8 @@ body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   background: var(--bg);
   background-image: 
-    radial-gradient(circle at 10% 0%, rgba(59,130,246,0.03) 0%, transparent 40%),
-    radial-gradient(circle at 90% 100%, rgba(79,70,229,0.04) 0%, transparent 40%);
+    radial-gradient(circle at 10% 0%, rgba(139,63,192,0.03) 0%, transparent 40%),
+    radial-gradient(circle at 90% 100%, rgba(14,58,99,0.04) 0%, transparent 40%);
   background-attachment: fixed;
   color: var(--ink);
   line-height: 1.6;
@@ -113,17 +117,21 @@ body {
   text-decoration: none;
 }
 
-.topbar-brand-icon {
-  width: 32px;
-  height: 32px;
-  background: var(--grad-primary);
+/* Marca visual compartida por el topbar y el login (ver también
+   .login-logo más abajo): un solo lugar para el tamaño/sombra/hover del
+   isotipo Atlas en vez de estilos inline repetidos por pantalla. */
+.brand-mark {
+  display: block;
   border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  box-shadow: 0 4px 10px rgba(59, 130, 246, 0.3);
+  box-shadow: 0 2px 8px rgba(14, 58, 99, 0.2);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s;
 }
+.brand-mark:hover {
+  transform: rotate(-4deg) scale(1.06);
+  box-shadow: 0 4px 14px rgba(139, 63, 192, 0.35);
+}
+.brand-mark--topbar { height: 30px; width: 30px; }
+.brand-mark--login  { height: 44px; width: 44px; }
 
 .topbar-brand-text {
   font-size: 20px;
@@ -223,7 +231,7 @@ body {
 .userbox:hover {
   background: white;
   box-shadow: var(--shadow-sm);
-  border-color: rgba(59,130,246,0.2);
+  border-color: rgba(139,63,192,0.25);
 }
 
 .userbox-avatar {
@@ -278,6 +286,26 @@ body {
   flex: 1;
   width: 100%;
 }
+
+/* ── Pie de página: crédito de marca Auddit ─────────────── */
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 20px 32px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+.footer-logo {
+  height: 20px;
+  width: auto;
+  display: block;
+  opacity: 0.85;
+  transition: opacity 0.2s;
+}
+.app-footer:hover .footer-logo { opacity: 1; }
 
 .shell {
   max-width: 1280px;
@@ -535,7 +563,7 @@ h3 { font-size: 15px; font-weight: 600; color: var(--ink-2); margin: 0 0 12px; }
 
 .badge-gray   { background: var(--gray-100); color: var(--gray-700); border-color: rgba(0,0,0,0.05); }
 .badge-amber  { background: var(--amber-50); color: var(--amber-700); border-color: rgba(180, 83, 9, 0.15); }
-.badge-blue   { background: var(--accent-light); color: var(--accent-hover); border-color: rgba(37, 99, 235, 0.15); }
+.badge-blue   { background: var(--accent-light); color: var(--accent-hover); border-color: rgba(117, 48, 168, 0.18); } /* usa el acento de marca: distingue al Jefe Auditor */
 .badge-green  { background: var(--green-50); color: var(--green-700); border-color: rgba(4, 120, 87, 0.15); }
 .badge-red    { background: var(--red-50);   color: var(--red-700); border-color: rgba(185, 28, 28, 0.15); }
 
@@ -577,13 +605,13 @@ h3 { font-size: 15px; font-weight: 600; color: var(--ink-2); margin: 0 0 12px; }
   background: var(--grad-primary);
   color: #FFFFFF;
   border: none;
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  box-shadow: 0 4px 12px rgba(139, 63, 192, 0.3);
 }
 
 .btn-primary:hover, button.primary:hover {
-  background: linear-gradient(135deg, #2563EB 0%, #4338CA 100%);
+  background: linear-gradient(135deg, #7530A8 0%, #0A2C4D 100%);
   color: #FFFFFF;
-  box-shadow: 0 6px 15px rgba(59, 130, 246, 0.4);
+  box-shadow: 0 6px 15px rgba(139, 63, 192, 0.4);
   transform: translateY(-2px);
 }
 
@@ -623,7 +651,7 @@ input, select, textarea {
 input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--accent-base);
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+  box-shadow: 0 0 0 4px rgba(139, 63, 192, 0.15);
   background: #FFFFFF;
 }
 
@@ -747,10 +775,11 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
 .login-wrap {
   min-height: 100vh;
   background: #0F172A;
-  background-image: 
-    radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.15) 0%, transparent 50%),
-    radial-gradient(circle at 85% 30%, rgba(79, 70, 229, 0.15) 0%, transparent 50%);
+  background-image:
+    radial-gradient(circle at 15% 50%, rgba(139, 63, 192, 0.18) 0%, transparent 50%),
+    radial-gradient(circle at 85% 30%, rgba(14, 58, 99, 0.3) 0%, transparent 50%);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 24px;
@@ -778,7 +807,7 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
 .login-card input:focus {
   background: rgba(0,0,0,0.3);
   border-color: var(--accent-base);
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 0 0 4px rgba(139, 63, 192, 0.25);
 }
 .login-card input::placeholder { color: rgba(255,255,255,0.3); }
 
@@ -799,14 +828,6 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
   margin-bottom: 8px;
 }
 
-.login-logo-icon {
-  width: 40px; height: 40px;
-  background: var(--grad-primary);
-  border-radius: 12px;
-  display: flex; align-items: center; justify-content: center;
-}
-.login-logo-icon svg { width: 24px; height: 24px; stroke: white; }
-
 .login-tagline {
   font-size: 14px;
   color: rgba(255,255,255,0.6);
@@ -815,6 +836,33 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
 
 .login-demo { font-size: 12px; color: rgba(255,255,255,0.4); text-align: center; margin-top: 24px; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px;}
 .login-demo code { background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; color: white;}
+
+/* Credito de marca bajo la tarjeta de login: el logo de Auddit trae su
+   propio fondo blanco (no es un PNG transparente), así que se aloja en una
+   pastilla blanca a propósito en vez de flotar directo sobre el fondo
+   oscuro del login. */
+.login-footer-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 28px;
+  padding: 8px 16px;
+  background: rgba(255,255,255,0.92);
+  border-radius: 999px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+  animation: login-footer-fade-in 0.6s ease-out 0.2s both;
+}
+.login-footer-logo { height: 18px; width: auto; display: block; }
+.login-footer-badge span {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2);
+  letter-spacing: 0.02em;
+}
+@keyframes login-footer-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
 /* ── Section divider ────────────────────────────────────── */
 .section-divider {
@@ -835,7 +883,10 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
 
 /* ── Panel de búsqueda inicial ──────────────────────────── */
 .radar-search-panel {
-  background: linear-gradient(135deg, #0F172A 0%, #1E3A5F 50%, #1E40AF 100%);
+  /* Azul marino → morado Auddit: mismo recorrido de color que el
+     remolino "G" del logo de Auddit, aplicado al momento de mayor
+     visibilidad de la pantalla. */
+  background: linear-gradient(135deg, #0F172A 0%, #1E3A5F 45%, #6D3FA8 100%);
   border-radius: var(--radius-lg);
   padding: 32px 36px;
   margin-bottom: 24px;
@@ -849,7 +900,7 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
   top: -60px; right: -60px;
   width: 220px; height: 220px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(59,130,246,0.15) 0%, transparent 70%);
+  background: radial-gradient(circle, rgba(139,63,192,0.2) 0%, transparent 70%);
   pointer-events: none;
 }
 .radar-search-panel::after {
@@ -858,7 +909,7 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
   bottom: -40px; left: 30%;
   width: 160px; height: 160px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(99,102,241,0.1) 0%, transparent 70%);
+  background: radial-gradient(circle, rgba(14,58,99,0.15) 0%, transparent 70%);
   pointer-events: none;
 }
 .radar-search-eyebrow {
@@ -874,7 +925,7 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
 }
 .radar-search-eyebrow svg {
   width: 16px; height: 16px;
-  stroke: #60A5FA;
+  stroke: #C9A6E8;
 }
 .radar-search-title {
   font-size: 26px;
@@ -916,9 +967,9 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
 .radar-search-fields input::placeholder { color: rgba(148,163,184,0.5); }
 .radar-search-fields input:focus {
   outline: none;
-  border-color: #60A5FA;
+  border-color: #C9A6E8;
   background: rgba(255,255,255,0.12);
-  box-shadow: 0 0 0 3px rgba(96,165,250,0.2);
+  box-shadow: 0 0 0 3px rgba(201,166,232,0.25);
 }
 .radar-search-fields input.ruc-valid { border-color: #10B981; }
 .radar-search-fields input.ruc-invalid { border-color: #EF4444; }
@@ -944,9 +995,9 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
   letter-spacing: 0.01em;
 }
 .btn-radar-search {
-  background: linear-gradient(135deg, #3B82F6 0%, #4F46E5 100%);
+  background: var(--grad-primary);
   border: none;
-  box-shadow: 0 4px 12px rgba(59,130,246,0.4);
+  box-shadow: 0 4px 12px rgba(139,63,192,0.4);
 }
 .btn-radar-validate {
   background: rgba(255, 255, 255, 0.08);
@@ -955,7 +1006,7 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
 }
 .btn-radar-search:hover {
   transform: translateY(-1px);
-  box-shadow: 0 8px 20px rgba(59,130,246,0.5);
+  box-shadow: 0 8px 20px rgba(139,63,192,0.5);
 }
 .btn-radar-validate:hover {
   background: rgba(255, 255, 255, 0.14);
@@ -1031,7 +1082,7 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
   position: relative;
 }
 .radar-tab-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
-.radar-tab-btn:hover { color: var(--accent-base); background: rgba(59,130,246,0.05); }
+.radar-tab-btn:hover { color: var(--accent-base); background: rgba(139,63,192,0.06); }
 .radar-tab-btn.active {
   color: var(--accent-base);
   background: var(--panel);
@@ -1280,8 +1331,8 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
 }
 .step-item:hover {
   background: #ffffff;
-  border-color: rgba(59, 130, 246, 0.3);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.08);
+  border-color: rgba(139, 63, 192, 0.3);
+  box-shadow: 0 4px 12px rgba(139, 63, 192, 0.08);
   transform: translateY(-2px);
 }
 .step-indicator {
@@ -1953,7 +2004,7 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
   font-size: 13px;
   color: rgba(148,163,184,0.9);
 }
-.radar-action-left svg { width: 16px; height: 16px; stroke: #60A5FA; }
+.radar-action-left svg { width: 16px; height: 16px; stroke: #C9A6E8; }
 .radar-action-right { display: flex; gap: 10px; }
 
 /* ── Links a fuentes externas ────────────────────────────── */
@@ -2139,50 +2190,49 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
   border-color: transparent !important;
 }
 
-/* 
- * Auddit Creative Background 
- * A sleek, massive watermark placed in the corner for a stunning effect.
+/*
+ * Marca de agua de Auddit: centrada y nítida (sin desenfoque ni rotación),
+ * en escala de grises y muy baja opacidad para que se lea con claridad si
+ * uno se fija, pero sin competir con el contenido ni con el color de marca.
  */
 body.has-auddit-bg {
   position: relative;
   overflow-x: hidden;
-  background-color: #f7f9fb; /* Slight off-white to make the background pop */
+  background-color: #f7f9fb;
 }
 
 body.has-auddit-bg::after {
   content: "";
   position: fixed;
-  bottom: -15vh;
-  right: -10vw;
-  width: 90vw;
-  height: 90vh;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(50vw, 560px);
+  height: min(50vw, 560px);
   background-image: url("/static/logoauddit.jpeg");
   background-repeat: no-repeat;
-  background-position: bottom right;
+  background-position: center;
   background-size: contain;
-  opacity: 0.04;
+  opacity: 0.05;
   pointer-events: none;
   z-index: 0;
-  /* Add subtle blur for depth */
-  filter: blur(2px) grayscale(100%);
-  transform: rotate(-2deg);
+  filter: grayscale(100%);
 }
 
 .login-wrap.has-auddit-bg::after {
-  /* En el login, lo centramos o lo hacemos más prominente */
   content: "";
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 150%;
-  height: 150%;
+  width: min(60vw, 620px);
+  height: min(60vw, 620px);
   background-image: url("/static/logoauddit.jpeg");
   background-repeat: no-repeat;
   background-position: center;
   background-size: contain;
-  opacity: 0.03;
+  opacity: 0.05;
   pointer-events: none;
   z-index: 0;
-  filter: blur(8px);
+  filter: grayscale(100%);
 }

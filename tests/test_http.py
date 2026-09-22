@@ -142,6 +142,37 @@ class TestHTTPPublicRoutes(unittest.TestCase):
         self.assertEqual(cookie, "",
                          "Login fallido no debe devolver cookie de sesión")
 
+    def test_static_brand_assets_have_mime_and_content_length(self):
+        """Los logos deben servirse completos desde /static con MIME correcto."""
+        import http.client
+
+        for path in ("/static/atlas_logo.jpg", "/static/logoauddit.jpeg"):
+            with self.subTest(path=path):
+                conn = http.client.HTTPConnection(SERVER_HOST, SERVER_PORT, timeout=5)
+                conn.request("GET", path)
+                resp = conn.getresponse()
+                body = resp.read()
+                content_type = resp.getheader("Content-Type", "")
+                content_length = resp.getheader("Content-Length")
+                conn.close()
+
+                self.assertEqual(resp.status, 200)
+                self.assertIn("image/jpeg", content_type)
+                self.assertEqual(int(content_length), len(body))
+                self.assertGreater(len(body), 0)
+
+    def test_static_route_rejects_directory_traversal(self):
+        """Una ruta /static/../ no puede leer archivos fuera del directorio público."""
+        import http.client
+
+        conn = http.client.HTTPConnection(SERVER_HOST, SERVER_PORT, timeout=5)
+        conn.request("GET", "/static/../README.md")
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+
+        self.assertEqual(resp.status, 404)
+
 
 @unittest.skipUnless(_server_available(), "Servidor Atlas no disponible en localhost:8765 — inicia con: python3 app.py")
 class TestHTTPAuditorFlow(unittest.TestCase):
@@ -179,12 +210,37 @@ class TestHTTPAuditorFlow(unittest.TestCase):
 
     def test_incomplete_audit_cannot_generate_summary_by_direct_post(self):
         """El servidor debe rechazar la generación aunque se omita el botón de la interfaz."""
-        csrf_token = _csrf_token("/auditor/radar?audit_id=1&tab=resumen", self.cookie)
+        with connect() as conn:
+            auditor_id = conn.execute(
+                "SELECT id FROM users WHERE username = 'auditor'"
+            ).fetchone()["id"]
+            admin_id = conn.execute(
+                "SELECT id FROM users WHERE username = 'admin'"
+            ).fetchone()["id"]
+
+        audit_id = create_company_audit(
+            f"Empresa incompleta HTTP {time.time_ns()}", "0190314014001", "Cuenca",
+            "Comercio", "2026", auditor_id, admin_id,
+        )
+        with connect() as conn:
+            company_id = conn.execute(
+                "SELECT company_id FROM audits WHERE id = ?", (audit_id,)
+            ).fetchone()["company_id"]
+
+        def cleanup_company() -> None:
+            with connect() as conn:
+                conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+
+        self.addCleanup(cleanup_company)
+
+        csrf_token = _csrf_token(
+            f"/auditor/radar?audit_id={audit_id}&tab=resumen", self.cookie,
+        )
         self.assertTrue(csrf_token, "La página del expediente debe incluir un token CSRF")
 
         status, location, _ = _post_raw(
             "/auditor/radar/summary",
-            {"audit_id": "1", "_csrf": csrf_token},
+            {"audit_id": str(audit_id), "_csrf": csrf_token},
             self.cookie,
         )
 

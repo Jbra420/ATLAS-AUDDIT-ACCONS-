@@ -8,7 +8,7 @@ import sqlite3
 
 from ui.components import avatar_initials
 from ui.helpers import esc
-from ui.icons import SVG_ALERT, SVG_CHECK, SVG_CROSS, SVG_LOGO, SVG_LOGOUT
+from ui.icons import SVG_ALERT, SVG_CHECK, SVG_CROSS, SVG_LOGOUT
 
 # Tiempo que un toast (.flash / .error-msg con clase .toast) permanece
 # visible antes de desvanecerse solo. Se pausa mientras el cursor está encima.
@@ -89,8 +89,8 @@ def layout(
         topbar_html = f"""
         <header class="topbar">
           <div class="topbar-left">
-            <a href="/" class="topbar-brand" style="display: flex; align-items: center; text-decoration: none;">
-              <img src="/static/atlas_logo.jpg" alt="Atlas" style="height: 28px; border-radius: 6px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); margin-right: 12px; display: block;">
+            <a href="/" class="topbar-brand">
+              <img src="/static/atlas_logo.jpg" alt="Atlas" class="brand-mark brand-mark--topbar">
               <div class="topbar-brand-text">
                 Atlas
                 <span class="topbar-brand-sub">Auddit</span>
@@ -138,6 +138,10 @@ def layout(
       {content}
     </div>
   </main>
+  <footer class="app-footer">
+    <img src="/static/logoauddit.jpeg" alt="Auddit" class="footer-logo">
+    <span>Atlas es una plataforma de Auddit</span>
+  </footer>
 </div>
 {_TOAST_SCRIPT}
 </body>
