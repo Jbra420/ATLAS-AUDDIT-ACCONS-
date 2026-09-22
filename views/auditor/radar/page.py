@@ -248,6 +248,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     source_map = build_source_map(
         audit, research, profile, location, admins, shareholders,
         docs, snapshot, src_checks, sources,
+        alert_treatments=ctx["alert_treatments"],
     )
     source_map_panel = _render_source_map(source_map, is_read_only, audit_id)
 
@@ -321,6 +322,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
         readiness=source_map["readiness"],
         read_only=is_read_only,
         csrf_token=csrf_tok,
+        validacion=source_map["validacion"],
     )
 
     # Panel lateral de señales eliminado a petición del usuario para mejor uso del espacio horizontal.

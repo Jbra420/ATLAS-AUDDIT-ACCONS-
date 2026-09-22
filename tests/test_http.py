@@ -24,11 +24,10 @@ import time
 import unittest
 from datetime import date, timedelta
 from urllib.request import urlopen, Request
-from urllib.parse import urlencode
+from urllib.parse import unquote_plus, urlencode
 from urllib.error import HTTPError, URLError
 
-from database import connect, create_company_audit, load_demo_if_ruc_matches
-from seed_data import DEMO_RUC
+from database import connect, create_company_audit
 
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8765
@@ -257,12 +256,14 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         return match.group(1) if match else ""
 
     def test_complete_audit_via_ui_forms_can_generate_summary(self):
-        """Flujo feliz completo, exclusivamente vía las rutas/controles que la
-        UI expone: cubre la regresión donde no existía forma de marcar
-        'Fuente SRI/Supercias consultada' desde la interfaz (hallazgo crítico
-        del informe de arquitectura — tab_fuentes.py se eliminó sin dejar
-        reemplazo en commit 7b80504). El expediente demo se crea y limpia en
-        la propia prueba para no depender de IDs o asignaciones persistentes."""
+        """Flujo feliz completo del levantamiento de información, exclusivamente
+        vía las rutas y controles que la UI expone: marcar fuentes consultadas,
+        completar los bloques 1 a 6, revisar validaciones y generar el resumen.
+        También comprueba que una alerta crítica bloquea el resumen hasta que
+        el auditor registra su tratamiento. Usa un RUC ficticio para no escribir
+        ejercicios financieros de un cliente real; el expediente se crea y
+        limpia en la propia prueba."""
+        ruc = "0999999999001"
         with connect() as conn:
             auditor_id = conn.execute(
                 "SELECT id FROM users WHERE username = 'auditor'"
@@ -270,14 +271,13 @@ class TestHTTPAuditorFlow(unittest.TestCase):
             admin_id = conn.execute(
                 "SELECT id FROM users WHERE username = 'admin'"
             ).fetchone()["id"]
+            if conn.execute("SELECT COUNT(*) FROM financial_statements WHERE ruc = ?", (ruc,)).fetchone()[0]:
+                self.skipTest("La base local ya tiene ejercicios del RUC de prueba")
 
         audit_id = create_company_audit(
-            f"Empresa flujo HTTP {time.time_ns()}", DEMO_RUC, "Cuenca",
+            f"Empresa flujo HTTP {time.time_ns()}", ruc, "Cuenca",
             "Servicios de alojamiento", "2026", auditor_id, admin_id,
         )
-        # Crear el expediente ya no carga datos demo; la prueba los carga de
-        # forma explícita para tener administradores y accionistas.
-        load_demo_if_ruc_matches(audit_id, DEMO_RUC)
         with connect() as conn:
             company_id = conn.execute(
                 "SELECT company_id FROM audits WHERE id = ?", (audit_id,)
@@ -285,45 +285,100 @@ class TestHTTPAuditorFlow(unittest.TestCase):
 
         def cleanup_company() -> None:
             with connect() as conn:
+                conn.execute("DELETE FROM financial_statements WHERE ruc = ?", (ruc,))
                 conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
 
         self.addCleanup(cleanup_company)
+        page = f"/auditor/radar?audit_id={audit_id}&tab=resumen"
 
+        def post(path: str, fields: dict) -> str:
+            status, location, _ = _post_raw(
+                path, {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), **fields}, self.cookie,
+            )
+            self.assertEqual(status, 303, path)
+            self.assertNotIn("err=", location, f"{path} rechazó {fields}: {location}")
+            return location
+
+        # Fuentes guiadas SRI y Supercias marcadas desde sus pestañas.
         _, body = _get(f"/auditor/radar?audit_id={audit_id}&tab=sri", self.cookie)
         sri_pane = self._pane_content(body, "sri", "supercias")
         sup_pane = self._pane_content(body, "supercias", "ubicacion")
-
         sri_match = re.search(r'action="/auditor/radar/source-check".*?check_id" value="(\d+)"', sri_pane, re.S)
         sup_match = re.search(r'action="/auditor/radar/source-check".*?check_id" value="(\d+)"', sup_pane, re.S)
         self.assertIsNotNone(sri_match, "El tab SRI debe tener un control para marcar la fuente como consultada")
         self.assertIsNotNone(sup_match, "El tab Supercias debe tener un control para marcar la fuente como consultada")
-
-        csrf_token = _csrf_token(f"/auditor/radar?audit_id={audit_id}&tab=sri", self.cookie)
         for check_id, tab in ((sri_match.group(1), "sri"), (sup_match.group(1), "supercias")):
-            status, location, _ = _post_raw(
-                "/auditor/radar/source-check",
-                {
-                    "audit_id": str(audit_id), "check_id": check_id, "accion": "consultar",
-                    "return_tab": tab, "observacion": "Verificado en prueba", "_csrf": csrf_token,
-                },
-                self.cookie,
-            )
-            self.assertEqual(status, 303)
-            self.assertIn(f"tab={tab}", location)
+            post("/auditor/radar/source-check", {
+                "check_id": check_id, "accion": "consultar", "return_tab": tab,
+                "observacion": "Verificado en prueba",
+            })
 
-        _, resumen_body = _get(f"/auditor/radar?audit_id={audit_id}&tab=resumen", self.cookie)
-        self.assertIn("Resumen habilitado", resumen_body,
-                      "Tras marcar SRI y Supercias como consultadas, el resumen debe habilitarse")
+        _, resumen_body = _get(page, self.cookie)
+        self.assertIn("Resumen bloqueado", resumen_body, "Sin los bloques del levantamiento el resumen se bloquea")
+
+        # Bloques 1 a 6 del levantamiento.
+        post("/auditor/radar/profile", {
+            "return_tab": "sri", "razon_social_sri": "EMPRESA PRUEBA CIA. LTDA",
+            "estado_contribuyente": "ACTIVO", "tipo_contribuyente": "SOCIEDAD", "regimen": "GENERAL",
+            "agente_retencion": "SI", "fecha_inicio_actividades": "2011-08-24",
+            "representante_legal_sri": "TORRES ANA", "contribuyente_fantasma": "NO",
+            "transacciones_inexistentes": "NO", "fecha_consulta": "2026-09-01",
+        })
+        post("/auditor/radar/profile", {
+            "return_tab": "supercias", "razon_social_supercias": "EMPRESA PRUEBA CIA. LTDA.",
+            "expediente_supercias": "141528", "fecha_constitucion": "2011-08-24",
+            "tipo_compania": "RESPONSABILIDAD LIMITADA", "situacion_legal": "ACTIVA",
+            "objeto_social": "Servicios de alojamiento", "fecha_consulta": "2026-09-01",
+        })
+        post("/auditor/radar/profile", {
+            "return_tab": "ubicacion", "provincia": "AZUAY", "ciudad": "CUENCA",
+            "calle": "AV. DEL ESTADIO", "numero": "S/N", "interseccion": "FLORENCIA ASTUDILLO",
+            "fecha_consulta": "2026-09-01",
+        })
+        for nombre, cargo in (("Ana Torres", "Gerente General"), ("Luis Perez", "Presidente")):
+            post("/auditor/radar/administrator", {
+                "action": "add", "nombre": nombre, "cargo": cargo, "tipo_identificacion": "cedula",
+                "identificacion": "0102030400", "fecha_consulta": "2026-09-01",
+            })
+        post("/auditor/radar/shareholder", {
+            "action": "add", "nombre": "Ana Torres", "tipo_identificacion": "cedula",
+            "identificacion": "0102030400", "participacion_porcentaje": "100", "fecha_consulta": "2026-09-01",
+        })
+        post("/auditor/radar/financial-year", {"anio_fiscal": "2025"})
+        post("/auditor/radar/financial", {
+            "anio_fiscal": "2025", "activo_total": "100", "pasivo_total": "60", "patrimonio_neto": "40",
+            "ingresos_401": "50", "otros_ingresos_403": "0", "costo_ventas_501": "20", "gastos_502": "25",
+            "utilidad_neta_707": "3", "fecha_consulta": "2026-09-01",
+        })
+
+        _, resumen_body = _get(page, self.cookie)
+        self.assertIn("Resumen habilitado", resumen_body)
         self.assertIn('action="/auditor/radar/summary"', resumen_body)
+        self.assertIn("Validaciones cruzadas y alertas", resumen_body)
+        self.assertNotIn("No coincide", resumen_body, "Los cuatro cruces del caso de prueba coinciden")
 
-        summary_csrf = _csrf_token(f"/auditor/radar?audit_id={audit_id}&tab=resumen", self.cookie)
+        # Una alerta crítica bloquea el resumen hasta registrar su tratamiento.
+        post("/auditor/radar/profile", {"return_tab": "sri", "contribuyente_fantasma": "SI"})
         status, location, _ = _post_raw(
-            "/auditor/radar/summary",
-            {"audit_id": str(audit_id), "_csrf": summary_csrf},
+            "/auditor/radar/summary", {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie)},
             self.cookie,
         )
         self.assertEqual(status, 303)
+        self.assertIn("err=", location)
+        self.assertIn("Tratamiento", unquote_plus(location))
+        post("/auditor/radar/alert-treatment", {
+            "codigo": "ALERTA_FANTASMA",
+            "observacion": "Se solicitará al cliente la resolución del SRI y se evaluará continuidad.",
+        })
+
+        location = post("/auditor/radar/summary", {})
         self.assertIn("msg=Resumen+generado", location)
+        with connect() as conn:
+            summary = conn.execute(
+                "SELECT generated_summary FROM research_notes WHERE audit_id = ?", (audit_id,)
+            ).fetchone()["generated_summary"]
+        self.assertIn("Tratamiento del auditor: Se solicitará al cliente", summary)
+        self.assertIn("Razón social SRI = Supercias: coincide", summary)
 
     def test_administrator_capture_validates_and_records_source(self):
         """Fase 3: la identificación se valida en el servidor, la fecha de

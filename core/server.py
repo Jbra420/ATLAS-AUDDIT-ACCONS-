@@ -54,6 +54,7 @@ from database import (
     update_company_location_fields,
     update_company_profile_fields,
     update_shareholder,
+    register_alert_treatment,
     set_audit_fiscal_year,
     upsert_financial_statement,
     user_from_session,
@@ -698,6 +699,28 @@ class AtlasHandler(BaseHTTPRequestHandler):
             self.redirect(f"/auditor/radar?audit_id={audit_id}&msg={msg}&tab=indicadores")
             return
 
+        if path == "/auditor/radar/alert-treatment":
+            current = self.require_auditor()
+            if not current:
+                return
+            audit_id = int(form_value(form, "audit_id", "0"))
+            if not get_audit(audit_id, current):
+                self.send_html(
+                    layout("Acceso denegado", current,
+                           '<div class="error-msg">Auditoría no disponible.</div>'), 403,
+                )
+                return
+            try:
+                register_alert_treatment(
+                    audit_id, form_value(form, "codigo"), form_value(form, "observacion"),
+                    user_id=current["id"],
+                )
+            except ValueError as exc:
+                self.redirect(f"/auditor/radar?audit_id={audit_id}&err={quote_plus(str(exc))}&tab=resumen")
+                return
+            self.redirect(f"/auditor/radar?audit_id={audit_id}&msg=Tratamiento+registrado&tab=resumen")
+            return
+
         if path == "/auditor/radar/financial-year":
             current = self.require_auditor()
             if not current:
@@ -892,6 +915,7 @@ class AtlasHandler(BaseHTTPRequestHandler):
                 snapshot,
                 source_checks,
                 sources,
+                alert_treatments=ctx["alert_treatments"],
             )
             readiness = source_map["readiness"]
             if not readiness["ready"]:
@@ -929,6 +953,7 @@ class AtlasHandler(BaseHTTPRequestHandler):
                 snapshot=snapshot, indicators=indicators,
                 source_checks=source_checks,
                 sources=sources,
+                alert_treatments=ctx["alert_treatments"],
             )
             with connect() as conn:
                 conn.execute(
@@ -1016,6 +1041,7 @@ class AtlasHandler(BaseHTTPRequestHandler):
         source_map = build_source_map(
             audit, research, profile, location, admins, shareholders,
             docs, snapshot, source_checks, sources,
+            alert_treatments=ctx["alert_treatments"],
         )
         dossier = build_dossier_model(
             audit, research, profile, location, admins, shareholders,

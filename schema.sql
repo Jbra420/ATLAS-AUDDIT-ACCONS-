@@ -225,3 +225,15 @@ CREATE TABLE IF NOT EXISTS financial_statements (
     updated_at TEXT NOT NULL,
     UNIQUE (ruc, anio_fiscal)
 );
+
+-- ── Levantamiento de información: tratamiento de alertas críticas ────
+-- Una alerta crítica (p. ej. contribuyente fantasma) no bloquea el trabajo,
+-- pero el resumen exige que el auditor registre cómo la trató.
+CREATE TABLE IF NOT EXISTS alert_treatments (
+    audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+    codigo TEXT NOT NULL,
+    observacion TEXT NOT NULL,
+    registrado_por INTEGER REFERENCES users(id),
+    registrado_at TEXT NOT NULL,
+    PRIMARY KEY (audit_id, codigo)
+);

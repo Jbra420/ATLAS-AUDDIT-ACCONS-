@@ -114,7 +114,15 @@ def build_dossier_model(
         for alert in indicators.get("alertas", [])
         if alert.get("tipo") in {"alto", "medio"} and str(alert.get("mensaje", "")).strip()
     ]
-    risk_items = _manual_risks(research) + financial_alerts
+    validacion = source_map.get("validacion") or {}
+    validation_risks = [
+        f"{alert['mensaje']}" + (f" Tratamiento: {alert['tratamiento']}" if alert.get("tratamiento") else "")
+        for alert in validacion.get("alertas", [])
+    ] + [
+        f"{cruce['regla']}: no coincide. {cruce['detalle']}"
+        for cruce in validacion.get("cruces", []) if cruce["estado"] == "no_coincide"
+    ]
+    risk_items = validation_risks + _manual_risks(research) + financial_alerts
     if not totals.get("ready_for_summary"):
         risk_items.append("La base de fuentes aun requiere soporte antes de una conclusion definitiva.")
     pending_items = _pending_from_source_map(source_map)

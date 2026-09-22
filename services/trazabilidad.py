@@ -36,6 +36,7 @@ BLOQUE_UBICACION = "ubicacion"
 BLOQUE_ADMINISTRADORES = "administradores"
 BLOQUE_ACCIONISTAS = "accionistas"
 BLOQUE_FINANCIERO = "financiero"
+BLOQUE_VALIDACIONES = "validaciones"
 
 FUENTE_MANUAL_POR_BLOQUE = {
     BLOQUE_SRI: FUENTE_SRI,
@@ -52,7 +53,7 @@ CAMPOS_PERFIL_SRI = (
     "razon_social_sri", "estado_contribuyente", "tipo_contribuyente", "regimen",
     "categoria", "obligado_contabilidad", "agente_retencion", "contribuyente_especial",
     "fecha_inicio_actividades", "fecha_actualizacion", "actividad_economica",
-    "representante_legal_sri", "contribuyente_fantasma", "transacciones_inexistentes",
+    "representante_legal_sri", "contribuyente_fantasma", "transacciones_inexistentes", "ciiu_sri",
 )
 CAMPOS_PERFIL_SUPERCIAS = (
     "razon_social_supercias", "expediente_supercias", "nacionalidad", "tipo_compania",

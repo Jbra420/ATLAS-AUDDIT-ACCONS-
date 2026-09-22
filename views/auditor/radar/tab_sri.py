@@ -26,6 +26,7 @@ CAMPOS = (
     ("transacciones_inexistentes", "Transacciones inexistentes", ""),
     ("fecha_actualizacion", "Última actualización", ""),
     ("representante_legal_sri", "Representante legal (SRI)", ""),
+    ("ciiu_sri", "Código CIIU (SRI)", ""),
     ("actividad_economica", "Actividad económica", "full-width"),
 )
 ETIQUETAS = {campo: etiqueta for campo, etiqueta, _css in CAMPOS} | {"categoria": "Clase de contribuyente (código)"}
@@ -99,6 +100,8 @@ def build(
             <input name="fecha_inicio_actividades" value="{esc(pv('fecha_inicio_actividades'))}"></div>
           <div class="col-6"><label>Representante legal (SRI)</label>
             <input name="representante_legal_sri" value="{esc(pv('representante_legal_sri'))}"></div>
+          <div class="col-6"><label>Código CIIU (SRI)</label>
+            <input name="ciiu_sri" value="{esc(pv('ciiu_sri'))}" placeholder="I551001"></div>
           <div class="col-12"><label>Actividad económica</label>
             <input name="actividad_economica" value="{esc(pv('actividad_economica'))}"></div>
           {fecha_consulta_field()}

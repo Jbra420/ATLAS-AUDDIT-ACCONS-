@@ -25,6 +25,15 @@ import sqlite3
 
 from services.normalizacion import clasificar_situacion_legal, clasificar_tipo_compania, con_valor_oficial
 from services.rowutil import row_get
+from services.validaciones import NO_COINCIDE, evaluar_levantamiento
+
+_NIVELES = {"critica": "crítica", "alta": "alta", "media": "media", "informativa": "informativa"}
+_ESTADOS_CRUCE = {
+    "coincide": "coincide",
+    "no_coincide": "NO COINCIDE",
+    "pendiente": "pendiente de datos",
+    "revisar": "requiere revisión del auditor",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -61,21 +70,27 @@ def risk_suggestions(
     source_count: int,
     profile: sqlite3.Row | None = None,
     indicators: dict | None = None,
+    validacion: dict | None = None,
 ) -> list[str]:
-    """Genera lista de alertas preliminares basadas en los datos capturados."""
+    """Genera lista de alertas preliminares basadas en los datos capturados.
+
+    Las alertas del levantamiento (RUC no activo, contribuyente fantasma,
+    situación legal, balance) y los cruces que no coinciden provienen de
+    services/validaciones.py (validacion); aquí solo se redactan.
+    """
     risks: list[str] = []
     legal_status = (data.get("legal_status") or "").lower()
     obligations = (data.get("tax_obligations") or "").lower()
     pasted = data.get("pasted_text") or ""
 
-    # Estado de Supercias si hay perfil
-    if profile:
-        sit_legal = (profile["situacion_legal"] or "").lower()
-        if any(term in sit_legal for term in _INACTIVE_STATES):
-            risks.append(
-                f"Estado societario Supercias: '{profile['situacion_legal']}'. "
-                "Requiere verificación antes de continuar la auditoría."
-            )
+    for alerta in (validacion or {}).get("alertas", []):
+        texto = f"[Alerta {_NIVELES[alerta['nivel']]}] {alerta['mensaje']}"
+        if alerta.get("tratamiento"):
+            texto += f" Tratamiento del auditor: {alerta['tratamiento']}"
+        risks.append(texto)
+    for cruce in (validacion or {}).get("cruces", []):
+        if cruce["estado"] == NO_COINCIDE:
+            risks.append(f"[Validación cruzada] {cruce['regla']}: no coincide. {cruce['detalle']}.")
 
     negated = any(term in obligations for term in _NEGATED_OBLIGATION_TERMS)
 
@@ -154,6 +169,13 @@ def _collect_pendientes(
 _SEP = "─" * 60
 
 
+class _CamposTolerantes(dict):
+    """Fila del expediente en la que un campo ausente vale None."""
+
+    def __missing__(self, key: str) -> None:
+        return None
+
+
 def _identificacion(row) -> str:
     identificacion = str(row_get(row, "identificacion") or "").strip()
     if not identificacion or identificacion in {"-", "—"}:
@@ -178,6 +200,7 @@ def generate_summary(
     indicators: dict | None = None,
     source_checks: list[sqlite3.Row] | None = None,
     sources: list[sqlite3.Row] | None = None,
+    alert_treatments: list[sqlite3.Row] | None = None,
 ) -> str:
     """
     Genera el resumen estructurado en 11 secciones.
@@ -185,7 +208,14 @@ def generate_summary(
     Compatible con la firma anterior (profile=None, etc. son opcionales).
     """
     signals = extract_signals(data.get("pasted_text") or "")
-    risks = risk_suggestions(audit, data, source_count, profile, indicators)
+    # Un campo ausente se lee como vacío ("Pendiente de confirmar"), no como
+    # error: el resumen se genera con lo que exista en el expediente.
+    profile = _CamposTolerantes(dict(profile)) if profile is not None else None
+    location = _CamposTolerantes(dict(location)) if location is not None else None
+    validacion = evaluar_levantamiento(
+        audit, profile, location, admins, shareholders, snapshot, alert_treatments,
+    )
+    risks = risk_suggestions(audit, data, source_count, profile, indicators, validacion)
     pendientes = _collect_pendientes(data, audit, profile, snapshot)
 
     company = audit["company_name"]
@@ -390,10 +420,15 @@ def generate_summary(
     sec9 = "\n".join(hallazgos)
 
     # ── Sección 10: Riesgos o alertas ────────────────────────────────────
+    cruces_lines = ["  Validaciones cruzadas:"] + [
+        f"    · {c['regla']}: {_ESTADOS_CRUCE[c['estado']]}. {c['detalle']}."
+        for c in validacion["cruces"]
+    ]
     if risks:
-        sec10 = "\n".join(f"  ⚠ {r}" for r in risks)
+        risk_lines = [f"  ⚠ {r}" for r in risks]
     else:
-        sec10 = "  Sin alertas preliminares automáticas con la información registrada."
+        risk_lines = ["  Sin alertas preliminares automáticas con la información registrada."]
+    sec10 = "\n".join(cruces_lines + [""] + risk_lines)
 
     # ── Sección 11: Pendientes de validación ─────────────────────────────
     if pendientes:

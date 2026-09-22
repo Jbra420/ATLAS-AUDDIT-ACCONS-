@@ -29,6 +29,7 @@ from services.trazabilidad import (
     BLOQUE_ADMINISTRADORES,
     BLOQUE_FINANCIERO,
     BLOQUE_UBICACION,
+    BLOQUE_VALIDACIONES,
     CAMPOS_PERFIL_SRI,
     CAMPOS_PERFIL_SUPERCIAS,
     CAMPOS_UBICACION,
@@ -222,6 +223,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         # SRI — alerta crítica del levantamiento (SI / NO).
         ("contribuyente_fantasma", "TEXT"),
         ("transacciones_inexistentes", "TEXT"),
+        # Código CIIU del SRI, para el cruce con el CIIU del Directorio.
+        ("ciiu_sri", "TEXT"),
     ]:
         if col not in cp_existing:
             conn.execute(f"ALTER TABLE company_profiles ADD COLUMN {col} {col_type}")
@@ -592,8 +595,8 @@ def apply_sri_research_result(
                 audit_id, ruc, razon_social, razon_social_sri, estado_contribuyente,
                 tipo_contribuyente, regimen, categoria, obligado_contabilidad, agente_retencion,
                 contribuyente_especial, fecha_inicio_actividades,
-                fecha_actualizacion, actividad_economica, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                fecha_actualizacion, actividad_economica, ciiu_sri, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(audit_id) DO UPDATE SET
                 ruc = excluded.ruc,
                 razon_social = CASE
@@ -615,6 +618,7 @@ def apply_sri_research_result(
                 fecha_inicio_actividades = excluded.fecha_inicio_actividades,
                 fecha_actualizacion = excluded.fecha_actualizacion,
                 actividad_economica = excluded.actividad_economica,
+                ciiu_sri = excluded.ciiu_sri,
                 updated_at = excluded.updated_at
             """,
             (
@@ -623,7 +627,7 @@ def apply_sri_research_result(
                 profile["regimen"], profile["categoria"], profile["obligado_contabilidad"],
                 profile["agente_retencion"], profile["contribuyente_especial"],
                 profile["fecha_inicio_actividades"], profile["fecha_actualizacion"],
-                profile["actividad_economica"], ts,
+                profile["actividad_economica"], profile["ciiu_sri"], ts,
             ),
         )
         conn.execute(
@@ -1298,6 +1302,9 @@ def _load_radar_context(conn: sqlite3.Connection, audit_id: int) -> dict[str, An
             "SELECT * FROM data_provenance WHERE audit_id = ? ORDER BY id", (audit_id,)
         )),
     }
+    context["alert_treatments"] = list(conn.execute(
+        "SELECT * FROM alert_treatments WHERE audit_id = ?", (audit_id,)
+    ))
     financial = _financial_context(conn, audit_id)
     context["snapshot"] = financial["snapshot"]
     context["financial"] = financial
@@ -1392,6 +1399,7 @@ def update_research(
             indicators=indicators,
             source_checks=source_checks,
             sources=sources,
+            alert_treatments=ctx["alert_treatments"],
         )
         ts = now_iso()
 
@@ -1539,6 +1547,7 @@ def refresh_summary(audit_id: int, db_path: Path | str = DB_PATH) -> str:
             indicators=indicators,
             source_checks=source_checks,
             sources=sources,
+            alert_treatments=ctx["alert_treatments"],
         )
         conn.execute(
             "UPDATE research_notes SET generated_summary = ?, updated_at = ? WHERE audit_id = ?",
@@ -1732,7 +1741,7 @@ PROFILE_FORM_FIELDS = (
     "razon_social_sri", "estado_contribuyente", "tipo_contribuyente", "regimen",
     "obligado_contabilidad", "agente_retencion", "contribuyente_especial",
     "fecha_inicio_actividades", "actividad_economica", "representante_legal_sri",
-    "contribuyente_fantasma", "transacciones_inexistentes",
+    "contribuyente_fantasma", "transacciones_inexistentes", "ciiu_sri",
     "razon_social_supercias", "expediente_supercias", "nacionalidad", "tipo_compania",
     "situacion_legal", "fecha_constitucion", "plazo_social", "oficina_control",
     "objeto_social", "representante_legal", "representante_cargo", "telefono",
@@ -2426,6 +2435,7 @@ def upsert_financial_snapshot(audit_id: int, data: dict, db_path: Path | str = D
 # ---------------------------------------------------------------------------
 
 FUENTE_AUDITOR_PARAMETRO = "Auditor — parámetro del levantamiento"
+FUENTE_AUDITOR_TRATAMIENTO = "Auditor — tratamiento de alerta crítica"
 
 
 def fuente_documentos_economicos(anio: int) -> str:
@@ -2614,6 +2624,56 @@ def _financial_context(conn: sqlite3.Connection, audit_id: int) -> dict[str, Any
 def get_financial_context(audit_id: int, db_path: Path | str = DB_PATH) -> dict[str, Any]:
     with connect(db_path) as conn:
         return _financial_context(conn, audit_id)
+
+
+# ---------------------------------------------------------------------------
+# Levantamiento — Tratamiento de alertas críticas
+# ---------------------------------------------------------------------------
+
+# Alertas cuyo tratamiento debe registrar el auditor antes del resumen.
+ALERTAS_CRITICAS = {"ALERTA_FANTASMA"}
+
+
+def register_alert_treatment(
+    audit_id: int,
+    codigo: str,
+    observacion: str,
+    *,
+    user_id: int | None = None,
+    db_path: Path | str = DB_PATH,
+) -> None:
+    """Registra (o reemplaza) la observación del auditor sobre una alerta
+    crítica. Cada versión queda en la trazabilidad."""
+    codigo = _text(codigo)
+    observacion = _text(observacion)
+    if codigo not in ALERTAS_CRITICAS:
+        raise ValueError("La alerta indicada no requiere tratamiento")
+    if len(observacion) < 15:
+        raise ValueError("Describa el tratamiento de la alerta (al menos 15 caracteres)")
+    if len(observacion) > 2000:
+        raise ValueError("El tratamiento excede la longitud permitida (2000 caracteres)")
+    with connect(db_path) as conn:
+        before = conn.execute(
+            "SELECT observacion FROM alert_treatments WHERE audit_id = ? AND codigo = ?", (audit_id, codigo),
+        ).fetchone()
+        conn.execute(
+            """
+            INSERT INTO alert_treatments (audit_id, codigo, observacion, registrado_por, registrado_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (audit_id, codigo) DO UPDATE SET
+                observacion = excluded.observacion,
+                registrado_por = excluded.registrado_por,
+                registrado_at = excluded.registrado_at
+            """,
+            (audit_id, codigo, observacion, user_id, now_iso()),
+        )
+        if not before or before["observacion"] != observacion:
+            _record_provenance(
+                conn, audit_id, BLOQUE_VALIDACIONES, codigo,
+                before["observacion"] if before else None, observacion,
+                FUENTE_AUDITOR_TRATAMIENTO, _today(), user_id,
+            )
+        _touch_audit(conn, audit_id)
 
 
 # ---------------------------------------------------------------------------

@@ -24,6 +24,88 @@ def _list_items(items: list[str]) -> str:
     return "".join(f"<li>{esc(item)}</li>" for item in items)
 
 
+_ESTADO_CRUCE = {
+    "coincide": ("badge-green", "Coincide"),
+    "no_coincide": ("badge-red", "No coincide"),
+    "pendiente": ("badge-gray", "Pendiente de datos"),
+    "revisar": ("badge-amber", "Revisar"),
+}
+_NIVEL_ALERTA = {
+    "critica": ("badge-red", "Crítica"),
+    "alta": ("badge-red", "Alta"),
+    "media": ("badge-amber", "Media"),
+    "informativa": ("badge-gray", "Informativa"),
+}
+
+
+def _render_alert(alerta: dict, read_only: bool, audit_id: int, csrf_token: str) -> str:
+    css, nivel = _NIVEL_ALERTA.get(alerta["nivel"], ("badge-gray", alerta["nivel"]))
+    treatment = ""
+    if alerta["nivel"] == "critica":
+        if alerta.get("tratamiento"):
+            treatment = f'<p class="validation-treatment"><strong>Tratamiento del auditor:</strong> {esc(alerta["tratamiento"])}</p>'
+        if not read_only:
+            label = "Actualizar tratamiento" if alerta.get("tratamiento") else "Registrar tratamiento (obligatorio para el resumen)"
+            treatment += f"""
+            <form method="post" action="/auditor/radar/alert-treatment" class="validation-treatment-form">
+              {csrf_input(csrf_token)}
+              <input type="hidden" name="audit_id" value="{audit_id}">
+              <input type="hidden" name="codigo" value="{esc(alerta['codigo'])}">
+              <label>{esc(label)}</label>
+              <textarea name="observacion" minlength="15" maxlength="2000" required>{esc(alerta.get("tratamiento") or "")}</textarea>
+              <button type="submit" class="btn btn-sm btn-primary">{SVG_SAVE} Guardar tratamiento</button>
+            </form>
+            """
+        elif not alerta.get("tratamiento"):
+            treatment = '<p class="validation-treatment">Tratamiento pendiente de registro por el auditor.</p>'
+    return f"""
+    <li class="validation-alert is-{esc(alerta['nivel'])}">
+      <div><span class="badge {css}">{nivel}</span>
+        <a href="{_tab_href(audit_id, alerta['tab'], read_only)}" onclick="return switchTab('{alerta['tab']}')">{esc(alerta['mensaje'])}</a>
+      </div>
+      {treatment}
+    </li>
+    """
+
+
+def _render_validations(validacion: dict | None, read_only: bool, audit_id: int, csrf_token: str) -> str:
+    """Paso 9 del flujo de consulta: validaciones cruzadas y alertas."""
+    if not validacion:
+        return ""
+    alertas = validacion.get("alertas", [])
+    alerts_html = (
+        "<ul class=\"validation-alerts\">"
+        + "".join(_render_alert(a, read_only, audit_id, csrf_token) for a in alertas)
+        + "</ul>"
+    ) if alertas else '<p class="validation-empty">Sin alertas automáticas con la información registrada.</p>'
+    rows = ""
+    for cruce in validacion.get("cruces", []):
+        css, estado = _ESTADO_CRUCE.get(cruce["estado"], ("badge-gray", cruce["estado"]))
+        rows += f"""
+        <tr>
+          <td>{esc(cruce['regla'])}</td>
+          <td><span class="badge {css}">{estado}</span></td>
+          <td>{esc(cruce['detalle'])}</td>
+          <td><a href="{_tab_href(audit_id, cruce['tab'], read_only)}" onclick="return switchTab('{cruce['tab']}')">Ver</a></td>
+        </tr>
+        """
+    return f"""
+    <section class="validation-panel">
+      <span class="dossier-eyebrow">Paso 9 — Sistema</span>
+      <h3>Validaciones cruzadas y alertas</h3>
+      <h4 class="fin-section-title">Alertas automáticas</h4>
+      {alerts_html}
+      <h4 class="fin-section-title">Validaciones cruzadas</h4>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Regla</th><th>Resultado</th><th>Detalle</th><th></th></tr></thead>
+          <tbody>{rows}</tbody>
+        </table>
+      </div>
+    </section>
+    """
+
+
 def _render_generation_status(readiness: dict, read_only: bool, audit_id: int) -> str:
     blockers = readiness.get("blockers", [])
     warnings = readiness.get("warnings", [])
@@ -186,6 +268,7 @@ def build(
     readiness: dict | None = None,
     read_only: bool = False,
     csrf_token: str = "",
+    validacion: dict | None = None,
 ) -> str:
     readiness = readiness or {
         "ready": True,
@@ -279,6 +362,7 @@ def build(
     )
 
     return f"""
+    {_render_validations(validacion, read_only, audit_id, csrf_token)}
     {_render_generation_status(readiness, read_only, audit_id)}
     {_render_dossier(audit_id, dossier)}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">

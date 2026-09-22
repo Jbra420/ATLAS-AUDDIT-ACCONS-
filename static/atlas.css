@@ -1185,6 +1185,34 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
 .fin-comparative td.num, .fin-comparative th { text-align: right; white-space: nowrap; }
 .fin-comparative td:first-child, .fin-comparative th:first-child { text-align: left; white-space: normal; }
 
+/* Paso 9: validaciones cruzadas y alertas */
+.validation-panel {
+  margin-bottom: 20px;
+  padding: 18px 20px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.validation-panel h3 { margin: 4px 0 4px; font-size: 16px; }
+.validation-panel table { width: 100%; font-size: 13px; }
+.validation-panel td { vertical-align: top; }
+.validation-alerts { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.validation-alert {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-size: 13px;
+}
+.validation-alert.is-critica { border-color: var(--red-200); background: var(--red-50); }
+.validation-alert .badge { margin-right: 6px; }
+.validation-treatment { margin: 8px 0 0; font-size: 13px; color: var(--ink-2); }
+.validation-treatment-form { display: grid; gap: 6px; margin-top: 8px; }
+.validation-treatment-form label { font-size: 12px; margin: 0; }
+.validation-treatment-form textarea { min-height: 70px; }
+.validation-treatment-form .btn { justify-self: end; }
+.validation-empty { font-size: 13px; color: var(--muted); margin: 0; }
+
 /* ── KPI Cards (indicadores financieros) ────────────────── */
 .kpi-grid {
   display: grid;

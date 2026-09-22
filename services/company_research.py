@@ -72,6 +72,7 @@ def build_sri_result(record: dict[str, str]) -> dict[str, dict[str, str]]:
             "fecha_inicio_actividades": _clean_date(record.get("start_date", "")),
             "fecha_actualizacion": _clean_date(record.get("update_date", "")),
             "actividad_economica": activity,
+            "ciiu_sri": (record.get("ciiu_code") or "").strip(),
         },
         "location": {
             "provincia": province,
