@@ -82,6 +82,15 @@ def _document_rows(docs: list[RowLike]) -> list[dict[str, str]]:
     return rows
 
 
+def _fiscal_year_label(snapshot: RowLike) -> str:
+    anio = _get(snapshot, "anio_fiscal", None)
+    if anio:
+        return f"{anio} (EEFF al {_get(snapshot, 'fecha_corte')})"
+    if snapshot:
+        return "Pendiente de confirmar (cifras sin año fiscal)"
+    return "Pendiente de confirmar"
+
+
 def build_dossier_model(
     audit: RowLike,
     research: RowLike,
@@ -155,6 +164,7 @@ def build_dossier_model(
         "evidence": source_rows[:10],
         "documents": _document_rows(docs)[:10],
         "financial": [
+            {"label": "Año fiscal", "value": _fiscal_year_label(snapshot)},
             {"label": "Activo total", "value": indicators.get("fmt_activo", _money(_get(snapshot, "activo_total")))},
             {"label": "Pasivo total", "value": indicators.get("fmt_pasivo", _money(_get(snapshot, "pasivo_total")))},
             {"label": "Patrimonio neto", "value": indicators.get("fmt_patrimonio", _money(_get(snapshot, "patrimonio_neto")))},

@@ -19,7 +19,9 @@ from database import (
     get_audit,
     init_db,
     load_demo_if_ruc_matches,
+    get_financial_context,
     get_financial_snapshot,
+    set_audit_fiscal_year,
 )
 from services.financial import compute_indicators
 
@@ -468,29 +470,43 @@ class TestTabFinancieroReadOnly(unittest.TestCase):
         load_demo_if_ruc_matches(self.audit_id, "0190377210001", self.db)
         snapshot = get_financial_snapshot(self.audit_id, self.db)
         self.indicators = compute_indicators(dict(snapshot) if snapshot else None)
+        # Mismos argumentos que usa page.py (Fase 4: año fiscal y RUC).
+        self.kwargs = {
+            "financial": get_financial_context(self.audit_id, self.db),
+            "ruc": "0190377210001",
+        }
 
     def test_read_only_suppresses_financial_form(self):
         """El formulario de datos financieros no debe aparecer para el jefe auditor."""
         from views.auditor.radar.tab_financiero import build
-        html = build(self.audit_id, self.indicators, read_only=True)
+        set_audit_fiscal_year(self.audit_id, 2025, db_path=self.db)
+        self.kwargs["financial"] = get_financial_context(self.audit_id, self.db)
+        html = build(self.audit_id, self.indicators, read_only=True, **self.kwargs)
+        self.assertNotIn("<form", html)
         self.assertNotIn('/auditor/radar/financial', html,
                          "read_only=True no debe mostrar el formulario de edición financiera")
 
     def test_auditor_mode_has_financial_form(self):
         """El auditor sí debe ver el formulario para ingresar datos financieros."""
         from views.auditor.radar.tab_financiero import build
-        html = build(self.audit_id, self.indicators, read_only=False)
-        self.assertIn('/auditor/radar/financial', html,
-                      "read_only=False debe mostrar el formulario financiero")
+        html = build(self.audit_id, self.indicators, read_only=False, **self.kwargs)
+        self.assertIn('/auditor/radar/financial-year', html,
+                      "Sin año fiscal, el auditor debe ver primero el paso del año fiscal")
+        set_audit_fiscal_year(self.audit_id, 2025, db_path=self.db)
+        self.kwargs["financial"] = get_financial_context(self.audit_id, self.db)
+        html = build(self.audit_id, self.indicators, read_only=False, **self.kwargs)
+        self.assertIn('action="/auditor/radar/financial"', html,
+                      "Con año fiscal, read_only=False debe mostrar el formulario de casilleros")
 
     def test_indicators_visible_in_both_modes(self):
         """Los indicadores calculados deben aparecer para ambos roles."""
         from views.auditor.radar.tab_financiero import build
-        html_ro = build(self.audit_id, self.indicators, read_only=True)
-        html_aw = build(self.audit_id, self.indicators, read_only=False)
+        html_ro = build(self.audit_id, self.indicators, read_only=True, **self.kwargs)
+        html_aw = build(self.audit_id, self.indicators, read_only=False, **self.kwargs)
         # Ambos deben mostrar la sección de indicadores
         for html in (html_ro, html_aw):
-            self.assertIn("financiero", html.lower())
+            self.assertIn("Indicadores calculados", html)
+            self.assertIn("67.8%", html)
 
 
 if __name__ == "__main__":

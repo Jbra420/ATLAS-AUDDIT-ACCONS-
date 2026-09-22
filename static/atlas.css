@@ -1163,6 +1163,28 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
 }
 .row-edit form label { font-size: 11px; margin: 0; }
 
+/* Información financiera por año fiscal */
+.fin-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin: 20px 0 12px;
+}
+.fin-year-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.fin-year-switch label { width: 100%; margin: 0; font-size: 12px; }
+.fin-year-switch input { max-width: 140px; }
+.fin-comparative { width: 100%; font-size: 13px; }
+.fin-comparative td.num, .fin-comparative th { text-align: right; white-space: nowrap; }
+.fin-comparative td:first-child, .fin-comparative th:first-child { text-align: left; white-space: normal; }
+
 /* ── KPI Cards (indicadores financieros) ────────────────── */
 .kpi-grid {
   display: grid;

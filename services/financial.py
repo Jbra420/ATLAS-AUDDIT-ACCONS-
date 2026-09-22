@@ -14,6 +14,7 @@ Indicadores calculados:
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 
 # ---------------------------------------------------------------------------
@@ -211,3 +212,95 @@ def indicators_summary_text(indicators: dict) -> str:
         f"  Patrimonio / Activo   : {indicators['fmt_patrimonio_activo']}",
     ]
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Levantamiento de información — casilleros por año fiscal
+# ---------------------------------------------------------------------------
+
+# (campo, etiqueta, casillero, admite negativos). Los casilleros son los del
+# formulario de Supercias indicados en el requisito; el de la utilidad antes
+# de participación e impuestos está por confirmar y no se muestra número.
+CASILLEROS = (
+    ("activo_total", "Total activo", "1", False),
+    ("pasivo_total", "Total pasivo", "2", False),
+    ("patrimonio_neto", "Patrimonio neto", "3", True),
+    ("ingresos_401", "Ingresos de actividades ordinarias", "401", False),
+    ("otros_ingresos_403", "Otros ingresos", "403", False),
+    ("costo_ventas_501", "Costo de ventas y producción", "501", False),
+    ("gastos_502", "Gastos", "502", False),
+    ("utilidad_antes_part_imp", "Utilidad antes de participación e impuestos", "", True),
+    ("utilidad_neta_707", "Ganancia (pérdida) neta del período", "707", True),
+)
+CAMPOS_FINANCIEROS = tuple(campo for campo, _l, _c, _n in CASILLEROS)
+ETIQUETAS_FINANCIERAS = {
+    campo: (f"{etiqueta} (casillero {casillero})" if casillero else f"{etiqueta} (casillero por confirmar)")
+    for campo, etiqueta, casillero, _n in CASILLEROS
+}
+
+
+def _num(row: Any, key: str) -> float | None:
+    try:
+        value = row[key]
+    except (KeyError, IndexError, TypeError):
+        return None
+    return float(value) if value is not None else None
+
+
+def _sum_or_none(*values: float | None) -> float | None:
+    present = [v for v in values if v is not None]
+    return sum(present) if present else None
+
+
+def filas_comparativo(row: Any) -> list[tuple[str, float | None, bool]]:
+    """Filas del estado financiero de un año en el orden del requisito:
+    (etiqueta, valor, es_total_calculado). Los totales de ingresos y gastos
+    se calculan; los demás valores son los casilleros registrados."""
+    v = {campo: _num(row, campo) for campo in CAMPOS_FINANCIEROS}
+    return [
+        (ETIQUETAS_FINANCIERAS["activo_total"], v["activo_total"], False),
+        (ETIQUETAS_FINANCIERAS["pasivo_total"], v["pasivo_total"], False),
+        (ETIQUETAS_FINANCIERAS["patrimonio_neto"], v["patrimonio_neto"], False),
+        (ETIQUETAS_FINANCIERAS["ingresos_401"], v["ingresos_401"], False),
+        (ETIQUETAS_FINANCIERAS["otros_ingresos_403"], v["otros_ingresos_403"], False),
+        ("Total ingresos (401 + 403)", _sum_or_none(v["ingresos_401"], v["otros_ingresos_403"]), True),
+        (ETIQUETAS_FINANCIERAS["costo_ventas_501"], v["costo_ventas_501"], False),
+        (ETIQUETAS_FINANCIERAS["gastos_502"], v["gastos_502"], False),
+        ("Total gastos (501 + 502)", _sum_or_none(v["costo_ventas_501"], v["gastos_502"]), True),
+        (ETIQUETAS_FINANCIERAS["utilidad_antes_part_imp"], v["utilidad_antes_part_imp"], False),
+        (ETIQUETAS_FINANCIERAS["utilidad_neta_707"], v["utilidad_neta_707"], False),
+    ]
+
+
+def comparativo(estados: list[Any], anio_base: int | None, max_anios: int = 5) -> dict:
+    """Comparativo entre ejercicios de un mismo RUC.
+
+    estados son filas de financial_statements. anio_base es el año fiscal de
+    la auditoría; la variación se calcula contra el ejercicio anterior más
+    cercano que esté registrado. Si no hay dos ejercicios, no hay variación.
+    """
+    por_anio = {int(e["anio_fiscal"]): e for e in estados or []}
+    anios = sorted(por_anio, reverse=True)[:max_anios]
+    base = anio_base if anio_base in por_anio else (anios[0] if anios else None)
+    previo = max((a for a in por_anio if base is not None and a < base), default=None)
+
+    filas = []
+    columnas = {a: filas_comparativo(por_anio[a]) for a in anios}
+    base_rows = filas_comparativo(por_anio[base]) if base is not None else []
+    previo_rows = filas_comparativo(por_anio[previo]) if previo is not None else []
+    for i, (etiqueta, _v, calculado) in enumerate(filas_comparativo({})):
+        valores = [columnas[a][i][1] for a in anios]
+        variacion = variacion_pct = None
+        if base_rows and previo_rows:
+            actual, anterior = base_rows[i][1], previo_rows[i][1]
+            if actual is not None and anterior is not None:
+                variacion = actual - anterior
+                variacion_pct = _safe_div(variacion, abs(anterior))
+        filas.append({
+            "etiqueta": etiqueta,
+            "calculado": calculado,
+            "valores": valores,
+            "variacion": variacion,
+            "variacion_pct": variacion_pct,
+        })
+    return {"anios": anios, "base": base, "previo": previo, "filas": filas}

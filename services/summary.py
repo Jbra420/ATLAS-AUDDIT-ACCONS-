@@ -142,6 +142,8 @@ def _collect_pendientes(
         pendientes.append("Verificar historial de contratación pública en SERCOP.")
     if snapshot is None:
         pendientes.append("Registrar datos financieros desde documentos económicos.")
+    elif not row_get(snapshot, "anio_fiscal", None):
+        pendientes.append("Confirmar el año fiscal de las cifras financieras registradas.")
     return pendientes
 
 
@@ -317,11 +319,26 @@ def generate_summary(
     sec6 = "\n".join(sec6_lines)
 
     # ── Sección 7: Indicadores financieros ───────────────────────────────
-    if indicators and indicators.get("tiene_datos"):
-        from services.financial import indicators_summary_text
-        sec7 = indicators_summary_text(indicators)
+    anio_fiscal = row_get(snapshot, "anio_fiscal", None)
+    if anio_fiscal:
+        anio_line = f"  Año fiscal           : {anio_fiscal} (EEFF al {row_get(snapshot, 'fecha_corte')})"
+    elif snapshot:
+        anio_line = "  Año fiscal           : Pendiente de confirmar (cifras registradas sin año fiscal)."
     else:
-        sec7 = "  Sin datos financieros registrados. Pendiente de confirmar."
+        anio_line = "  Año fiscal           : Pendiente de confirmar."
+    if indicators and indicators.get("tiene_datos"):
+        from services.financial import filas_comparativo, indicators_summary_text
+        casilleros = [
+            f"  {etiqueta}: {'Pendiente de confirmar.' if valor is None else f'${valor:,.2f}'}"
+            for etiqueta, valor, _calculado in filas_comparativo(snapshot)
+        ]
+        indicadores = [
+            line for line in indicators_summary_text(indicators).splitlines()
+            if any(k in line for k in ("Razón endeudamiento", "Margen neto", "Patrimonio / Activo"))
+        ]
+        sec7 = "\n".join([anio_line, "", *casilleros, "", *indicadores])
+    else:
+        sec7 = anio_line + "\n  Sin datos financieros registrados. Pendiente de confirmar."
 
     # ── Sección 8: Fuentes consultadas ────────────────────────────────────
     fuentes_reg = f"  Fuentes registradas en la herramienta: {source_count}."

@@ -54,12 +54,13 @@ from database import (
     update_company_location_fields,
     update_company_profile_fields,
     update_shareholder,
-    upsert_financial_snapshot,
+    set_audit_fiscal_year,
+    upsert_financial_statement,
     user_from_session,
     validate_csrf_token,
 )
 from services.summary import generate_summary
-from services.financial import compute_indicators
+from services.financial import CAMPOS_FINANCIEROS, compute_indicators
 from services.company_search import build_source_map
 from services.company_research import research_company_by_ruc
 from services.dossier import build_dossier_model, build_dossier_text
@@ -677,17 +678,44 @@ class AtlasHandler(BaseHTTPRequestHandler):
                 )
                 return
             fin_data = {
-                "activo_total": form_value(form, "activo_total"),
-                "pasivo_total": form_value(form, "pasivo_total"),
-                "patrimonio_neto": form_value(form, "patrimonio_neto"),
-                "ingresos_401": form_value(form, "ingresos_401"),
-                "otros_ingresos_403": form_value(form, "otros_ingresos_403"),
-                "costo_ventas_501": form_value(form, "costo_ventas_501"),
-                "gastos_502": form_value(form, "gastos_502"),
-                "utilidad_neta_707": form_value(form, "utilidad_neta_707"),
+                k: form_value(form, k) for k in (*CAMPOS_FINANCIEROS, "fecha_junta_aprobacion")
             }
-            upsert_financial_snapshot(audit_id, fin_data)
-            self.redirect(f"/auditor/radar?audit_id={audit_id}&msg=Indicadores+guardados&tab=indicadores")
+            # Sin año fiscal explícito no se registran cifras (parámetro previo
+            # obligatorio del requisito).
+            anio = form_value(form, "anio_fiscal") or str(audit["anio_fiscal_eeff"] or "")
+            try:
+                if not anio:
+                    raise ValueError("Registre primero el año fiscal de los estados financieros")
+                upsert_financial_statement(
+                    audit_id, anio, fin_data,
+                    fecha_consulta=validar_fecha_consulta(form_value(form, "fecha_consulta")),
+                    user_id=current["id"],
+                )
+            except ValueError as exc:
+                self.redirect(f"/auditor/radar?audit_id={audit_id}&err={quote_plus(str(exc))}&tab=indicadores")
+                return
+            msg = quote_plus(f"Estados financieros {anio} guardados")
+            self.redirect(f"/auditor/radar?audit_id={audit_id}&msg={msg}&tab=indicadores")
+            return
+
+        if path == "/auditor/radar/financial-year":
+            current = self.require_auditor()
+            if not current:
+                return
+            audit_id = int(form_value(form, "audit_id", "0"))
+            if not get_audit(audit_id, current):
+                self.send_html(
+                    layout("Acceso denegado", current,
+                           '<div class="error-msg">Auditoría no disponible.</div>'), 403,
+                )
+                return
+            try:
+                anio = set_audit_fiscal_year(audit_id, form_value(form, "anio_fiscal"), user_id=current["id"])
+            except ValueError as exc:
+                self.redirect(f"/auditor/radar?audit_id={audit_id}&err={quote_plus(str(exc))}&tab=indicadores")
+                return
+            msg = quote_plus(f"Año fiscal {anio} registrado")
+            self.redirect(f"/auditor/radar?audit_id={audit_id}&msg={msg}&tab=indicadores")
             return
 
         if path == "/auditor/radar/profile":

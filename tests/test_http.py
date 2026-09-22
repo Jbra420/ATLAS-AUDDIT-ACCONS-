@@ -382,6 +382,53 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         self.assertEqual([h["fecha_consulta"] for h in history], ["2026-09-01", "2026-09-02"])
         self.assertTrue(all(h["registrado_por"] == auditor_id for h in history))
 
+    def test_financial_statements_require_fiscal_year_and_keep_each_year(self):
+        """Fase 4: sin año fiscal no se registran cifras; cada ejercicio se
+        guarda aparte y no se sobrescribe."""
+        ruc = "0190314014001"
+        with connect() as conn:
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+            previous = conn.execute(
+                "SELECT COUNT(*) FROM financial_statements WHERE ruc = ?", (ruc,)
+            ).fetchone()[0]
+        if previous:
+            self.skipTest("La base local ya tiene ejercicios de este RUC; la prueba no los modifica")
+        audit_id = create_company_audit(
+            f"Empresa financiero {time.time_ns()}", ruc, "Cuenca", "", "2025", auditor_id, admin_id,
+        )
+        with connect() as conn:
+            company_id = conn.execute("SELECT company_id FROM audits WHERE id = ?", (audit_id,)).fetchone()["company_id"]
+
+        def cleanup() -> None:
+            with connect() as conn:
+                conn.execute("DELETE FROM financial_statements WHERE ruc = ?", (ruc,))
+                conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+
+        self.addCleanup(cleanup)
+        page = f"/auditor/radar?audit_id={audit_id}&tab=indicadores"
+
+        def post(path: str, fields: dict) -> str:
+            status, location, _ = _post_raw(
+                path, {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), **fields}, self.cookie,
+            )
+            self.assertEqual(status, 303)
+            return location
+
+        self.assertIn("err=", post("/auditor/radar/financial", {"activo_total": "100"}))
+        self.assertIn("err=", post("/auditor/radar/financial-year", {"anio_fiscal": str(date.today().year + 1)}))
+        self.assertIn("msg=", post("/auditor/radar/financial-year", {"anio_fiscal": "2025"}))
+        self.assertIn("msg=", post("/auditor/radar/financial", {"anio_fiscal": "2025", "activo_total": "110"}))
+        self.assertIn("msg=", post("/auditor/radar/financial", {"anio_fiscal": "2024", "activo_total": "100"}))
+
+        with connect() as conn:
+            rows = dict(conn.execute(
+                "SELECT anio_fiscal, activo_total FROM financial_statements WHERE ruc = ?", (ruc,)
+            ).fetchall())
+        self.assertEqual(rows, {2025: 110.0, 2024: 100.0})
+        _, body = _get(page, self.cookie)
+        self.assertIn("Variación 2025 vs 2024", body)
+
     def test_saving_one_tab_does_not_erase_another(self):
         """Regresión: /auditor/radar/profile guardaba perfil y ubicación con lo
         que llegara en el formulario, así que guardar Ubicación vaciaba SRI y

@@ -199,3 +199,29 @@ CREATE TABLE IF NOT EXISTS data_provenance (
 
 CREATE INDEX IF NOT EXISTS idx_data_provenance_audit
 ON data_provenance(audit_id, bloque, campo, id);
+
+-- ── Levantamiento de información: estados financieros por año fiscal ──
+-- Una fila por cliente (RUC) y año fiscal. Un año nuevo nunca sobrescribe
+-- otro, y las auditorías del mismo RUC comparten sus ejercicios. Los totales
+-- de ingresos (401 + 403) y gastos (501 + 502) se calculan, no se guardan.
+CREATE TABLE IF NOT EXISTS financial_statements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ruc TEXT NOT NULL CHECK (length(ruc) = 13),
+    anio_fiscal INTEGER NOT NULL CHECK (anio_fiscal BETWEEN 1990 AND 2100),
+    fecha_corte TEXT NOT NULL,
+    activo_total REAL,
+    pasivo_total REAL,
+    patrimonio_neto REAL,
+    ingresos_401 REAL,
+    otros_ingresos_403 REAL,
+    costo_ventas_501 REAL,
+    gastos_502 REAL,
+    utilidad_antes_part_imp REAL,
+    utilidad_neta_707 REAL,
+    fecha_junta_aprobacion TEXT,
+    fuente TEXT,
+    fecha_consulta TEXT,
+    registrado_por INTEGER REFERENCES users(id),
+    updated_at TEXT NOT NULL,
+    UNIQUE (ruc, anio_fiscal)
+);

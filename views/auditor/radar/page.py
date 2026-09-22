@@ -301,9 +301,15 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
         audit_id, audit, shareholders, read_only=is_read_only, csrf_token=csrf_tok, sources=sources,
         provenance=provenance,
     )
+    fin_anio = form_value(query, "fin_anio")
     tab_financiero = build_financiero(
         audit_id, indicators, read_only=is_read_only, csrf_token=csrf_tok,
         anio_sugerido=anio_fiscal_sugerido(row_get(profile, "ultimo_anio_balance")),
+        financial=ctx["financial"],
+        ruc=ruc or "",
+        # Ejercicio a editar elegido en la pestaña; se ignora si no es un año válido.
+        anio_edicion=int(fin_anio) if fin_anio.isdigit() and 1990 <= int(fin_anio) <= 2100 else None,
+        provenance=provenance,
     )
     tab_documentos = build_documentos(
         audit_id, docs, other_checks, sources, read_only=is_read_only, csrf_token=csrf_tok,
