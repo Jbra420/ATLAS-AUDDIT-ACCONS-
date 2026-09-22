@@ -713,6 +713,12 @@ def apply_sri_research_result(
 # ---------------------------------------------------------------------------
 
 SUPERCIAS_CATALOG_PATH = BASE_DIR / "supercias_catalog.db"
+BALANCES_CATALOG_PATH = BASE_DIR / "supercias_balances.db"
+BALANCES_SOURCE_URL = (
+    "https://appscvsgen.supercias.gob.ec/consultaCompanias/societario/"
+    "estadosFinancierosPorRamo.jsf"
+)
+BALANCES_FIELDS = tuple(field for field, _label, code, _neg in CASILLEROS if code)
 
 
 def lookup_supercias_catalog(ruc: str) -> dict | None:
@@ -1400,6 +1406,7 @@ def update_research(
             source_checks=source_checks,
             sources=sources,
             alert_treatments=ctx["alert_treatments"],
+            provenance=ctx["provenance"],
         )
         ts = now_iso()
 
@@ -1548,6 +1555,7 @@ def refresh_summary(audit_id: int, db_path: Path | str = DB_PATH) -> str:
             source_checks=source_checks,
             sources=sources,
             alert_treatments=ctx["alert_treatments"],
+            provenance=ctx["provenance"],
         )
         conn.execute(
             "UPDATE research_notes SET generated_summary = ?, updated_at = ? WHERE audit_id = ?",
@@ -2560,7 +2568,10 @@ def upsert_financial_statement(
         for campo in columns:
             anterior = _format_amount(before[campo]) if before is not None else ""
             nuevo = _format_amount(after[campo])
-            if anterior != nuevo:
+            # Guardar una cifra importada sin cambiarla confirma su revisión
+            # contra el documento económico; el historial debe reflejarla.
+            confirmed_catalog = before is not None and before["fuente"] != fuente and bool(nuevo)
+            if anterior != nuevo or confirmed_catalog:
                 _record_provenance(
                     conn, audit_id, BLOQUE_FINANCIERO, f"{anio}.{campo}",
                     anterior or None, nuevo or None, fuente, fecha, user_id,
@@ -2582,6 +2593,125 @@ def list_financial_statements(ruc: str, db_path: Path | str = DB_PATH) -> list[s
         return list(conn.execute(
             "SELECT * FROM financial_statements WHERE ruc = ? ORDER BY anio_fiscal DESC", (_text(ruc),)
         ))
+
+
+def lookup_balances_catalog(
+    ruc: str, catalog_path: Path | str = BALANCES_CATALOG_PATH,
+) -> list[dict[str, Any]]:
+    """Lee ejercicios disponibles del reporte local de Supercias por RUC."""
+    path = Path(catalog_path)
+    if not path.exists():
+        return []
+    try:
+        with sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT b.*, i.archivo AS archivo_fuente, i.sha256 AS fuente_sha256,
+                          i.importado_at AS fuente_importada_at, i.url AS fuente_url
+                   FROM balances b JOIN importaciones i ON i.anio_fiscal = b.anio_fiscal
+                   WHERE b.ruc = ? ORDER BY b.anio_fiscal DESC""",
+                (_text(ruc),),
+            ).fetchall()
+            return [dict(row) for row in rows]
+    except sqlite3.Error:
+        import logging
+        logging.exception("No se pudo consultar el catalogo local de balances Supercias")
+        return []
+
+
+def apply_balances_catalog_result(
+    audit_id: int,
+    user_id: int,
+    rows: list[dict[str, Any]],
+    db_path: Path | str = DB_PATH,
+) -> int:
+    """Completa casilleros NULL sin pisar cifras revisadas por el auditor."""
+    if not rows:
+        return 0
+    ts = now_iso()
+    imported = 0
+    with connect(db_path) as conn:
+        ruc = _audit_ruc(conn, audit_id)
+        for record in rows:
+            year = _validar_anio_fiscal(record["anio_fiscal"])
+            if record["ruc"] != ruc:
+                raise ValueError("El RUC del balance no corresponde al expediente")
+            source = f"Supercias - Estados financieros por ramo (catalogo local, {year})"
+            consulted = str(record["fuente_importada_at"])[:10]
+            values = {field: record[field] for field in BALANCES_FIELDS}
+            before = conn.execute(
+                "SELECT * FROM financial_statements WHERE ruc = ? AND anio_fiscal = ?",
+                (ruc, year),
+            ).fetchone()
+            if before is None:
+                fields = ", ".join(BALANCES_FIELDS)
+                marks = ", ".join("?" for _ in BALANCES_FIELDS)
+                conn.execute(
+                    f"""INSERT INTO financial_statements (
+                            ruc, anio_fiscal, fecha_corte, {fields}, fuente,
+                            fecha_consulta, registrado_por, updated_at
+                        ) VALUES (?, ?, ?, {marks}, ?, ?, ?, ?)""",  # noqa: S608
+                    (ruc, year, f"{year}-12-31", *(values[f] for f in BALANCES_FIELDS),
+                     source, consulted, user_id, ts),
+                )
+            else:
+                missing = [field for field in BALANCES_FIELDS if before[field] is None]
+                if missing:
+                    updates = ", ".join(f"{field} = ?" for field in missing)
+                    conn.execute(
+                        f"""UPDATE financial_statements SET {updates},
+                                fuente = ?, fecha_consulta = ?, registrado_por = ?, updated_at = ?
+                            WHERE ruc = ? AND anio_fiscal = ?""",  # noqa: S608
+                        (*(values[field] for field in missing),
+                         "Origen mixto; ver trazabilidad por dato", consulted, user_id, ts, ruc, year),
+                    )
+            after = conn.execute(
+                "SELECT * FROM financial_statements WHERE ruc = ? AND anio_fiscal = ?",
+                (ruc, year),
+            ).fetchone()
+            traced = {
+                row["campo"] for row in conn.execute(
+                    "SELECT campo FROM data_provenance WHERE audit_id = ? AND bloque = ?",
+                    (audit_id, BLOQUE_FINANCIERO),
+                )
+            }
+            for field in BALANCES_FIELDS:
+                before_value = before[field] if before is not None else None
+                after_value = after[field]
+                key = f"{year}.{field}"
+                if after_value is None or (before_value == after_value and key in traced):
+                    continue
+                # Un valor anterior de otro expediente conserva su origen original.
+                field_source = source if before_value is None else (before["fuente"] or source)
+                field_date = consulted if before_value is None else (before["fecha_consulta"] or consulted)
+                _record_provenance(
+                    conn, audit_id, BLOQUE_FINANCIERO, key,
+                    _format_amount(before_value) or None, _format_amount(after_value),
+                    field_source, field_date, user_id,
+                )
+            title = f"Estados financieros por ramo Supercias ({year}, catalogo local)"
+            notes = (
+                f"Consulta por RUC {ruc}; ejercicio {year}; archivo {record['archivo_fuente']}; "
+                f"SHA-256 {record['fuente_sha256']}; importado {record['fuente_importada_at']}. "
+                "No sustituye el documento economico original ni su revision."
+            )
+            existing_source = conn.execute(
+                "SELECT id FROM sources WHERE audit_id = ? AND title = ?", (audit_id, title),
+            ).fetchone()
+            if existing_source is None:
+                conn.execute(
+                    """INSERT INTO sources (audit_id, title, url, source_type, notes, created_by, created_at)
+                       VALUES (?, ?, ?, 'Supercias', ?, ?, ?)""",
+                    (audit_id, title, record.get("fuente_url") or BALANCES_SOURCE_URL, notes, user_id, ts),
+                )
+            imported += 1
+        conn.execute(
+            """UPDATE audits
+               SET status = CASE WHEN status = 'pendiente' THEN 'en_investigacion' ELSE status END,
+                   updated_at = ? WHERE id = ?""",
+            (ts, audit_id),
+        )
+    return imported
 
 
 def _financial_context(conn: sqlite3.Connection, audit_id: int) -> dict[str, Any]:

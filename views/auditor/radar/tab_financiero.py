@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from services.financial import CASILLEROS, ETIQUETAS_FINANCIERAS, comparativo
+from services.financial import CASILLEROS, ETIQUETAS_FINANCIERAS, comparativo, formato_moneda
 from services.rowutil import row_get
 from services.trazabilidad import BLOQUE_FINANCIERO
 from ui.components import fecha_consulta_field, provenance_history
@@ -50,7 +50,7 @@ def _notice(css: str, html: str) -> str:
 
 
 def _money(value) -> str:
-    return "—" if value is None else f"${value:,.2f}"
+    return formato_moneda(value)
 
 
 def _history_labels(historial: list) -> dict[str, str]:
@@ -236,6 +236,22 @@ def build(
            if anio else "Registre el año fiscal y confírmelas contra los documentos económicos."),
     ) if origen == "sin_anio" else ""
 
+    catalog_notice = ""
+    catalog_years = [y for y in years if "Estados financieros por ramo" in (row_get(y, "fuente") or "")]
+    if catalog_years:
+        lista = ", ".join(str(y["anio_fiscal"]) for y in catalog_years)
+        catalog_notice = _notice(
+            "alert-info",
+            f"Cifras del reporte local de Supercias disponibles para {esc(lista)}. "
+            "Confirme el año fiscal y contraste los importes con los documentos económicos originales."
+        )
+    if origen == "anual" and snapshot and row_get(snapshot, "fuente"):
+        catalog_notice += (
+            f'<p style="font-size:12px;color:var(--muted);margin:0 0 12px;">'
+            f'Fuente de cifras: {esc(row_get(snapshot, "fuente"))}; '
+            f'consulta: {esc(row_get(snapshot, "fecha_consulta") or "sin fecha")}.</p>'
+        )
+
     fin_alerts_html = "".join(
         _notice(
             "alert-high" if a["tipo"] == "alto" else ("alert-medium" if a["tipo"] == "medio" else "alert-info"),
@@ -264,6 +280,7 @@ def build(
       {estado_badge}
     </div>
     {_year_step(audit_id, anio, anio_sugerido, ruc, read_only, csrf_token)}
+    {catalog_notice}
     {sin_anio_html}
     <div class="kpi-grid">
       {_kpi("blue",   "Total activo",     indicators["fmt_activo"],           "Casillero 1")}

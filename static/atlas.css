@@ -1212,6 +1212,73 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
 .validation-treatment-form textarea { min-height: 70px; }
 .validation-treatment-form .btn { justify-self: end; }
 .validation-empty { font-size: 13px; color: var(--muted); margin: 0; }
+.validation-alert a, .validation-panel td a {
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+.validation-panel td a { color: var(--accent-base); }
+.validation-alert a:hover, .validation-panel td a:hover { text-decoration: underline; }
+
+/* Flujo de consulta del levantamiento (9 pasos) */
+.flow-steps {
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+.flow-step {
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.flow-step-num {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 13px;
+  background: var(--line-2);
+  color: var(--muted);
+}
+.flow-step.step-complete .flow-step-num { background: var(--green-100); color: var(--green-700); }
+.flow-step.step-partial .flow-step-num { background: var(--amber-100); color: var(--amber-700); }
+.flow-step.step-alert { border-color: var(--red-200); }
+.flow-step.step-alert .flow-step-num { background: var(--red-100); color: var(--red-700); }
+.flow-step-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.flow-step-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.flow-step-source {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.flow-step .step-badge { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.flow-step .step-badge svg { width: 11px; height: 11px; }
+.step-badge.step-alert { background: var(--red-50); color: var(--red-700); }
+.flow-step-action { margin: 6px 0 2px; font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.flow-step-links { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: auto; }
+.flow-step-official {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--brand-navy);
+  text-decoration: none;
+}
+.flow-step-official svg { width: 12px; height: 12px; }
+.flow-step-official:hover { text-decoration: underline; }
 
 /* ── KPI Cards (indicadores financieros) ────────────────── */
 .kpi-grid {

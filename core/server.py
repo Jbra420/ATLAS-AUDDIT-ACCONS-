@@ -616,7 +616,16 @@ class AtlasHandler(BaseHTTPRequestHandler):
                         "Supercías: RUC no encontrado en el catálogo local "
                         "(¿está actualizado? use scripts/update_supercias_catalog.py) o el catálogo aún no fue importado."
                     )
-                msg = f"Búsqueda completada: {sri_msg} {supercias_msg} Revise los resultados y edítelos si es necesario."
+                years = outcome["financial_years"]
+                financial_msg = (
+                    f"{years} ejercicio(s) financiero(s) disponible(s) desde el reporte local de Supercías; "
+                    "confirme el año fiscal en Información financiera."
+                    if years else "Balances: sin cifras para este RUC en los archivos importados."
+                )
+                msg = (
+                    f"Búsqueda completada: {sri_msg} {supercias_msg} {financial_msg} "
+                    "Revise los resultados y edítelos si es necesario."
+                )
                 self.redirect(f"/auditor/radar?audit_id={audit_id}&msg={quote_plus(msg)}&tab=sri")
             except Exception as exc:
                 self.redirect(f"/auditor/radar?audit_id={audit_id}&err={quote_plus(str(exc))}&tab=sri")
@@ -954,6 +963,7 @@ class AtlasHandler(BaseHTTPRequestHandler):
                 source_checks=source_checks,
                 sources=sources,
                 alert_treatments=ctx["alert_treatments"],
+                provenance=ctx["provenance"],
             )
             with connect() as conn:
                 conn.execute(

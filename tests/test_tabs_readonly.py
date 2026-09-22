@@ -83,38 +83,29 @@ def _make_db() -> Path:
 
 
 class TestRadarWorkflowNavigation(unittest.TestCase):
+    """Flujo de consulta de 9 pasos (Fase 6), construido con la salida real
+    de build_source_map para no depender de un diccionario armado a mano."""
 
     def setUp(self):
-        self.source_map = {
-            "totals": {"percent": 10},
-            "cards": [
-                {
-                    "key": "sri", "status": "partial", "status_label": "En avance",
-                    "completed": 1, "total": 6,
-                },
-                {
-                    "key": "supercias", "status": "pending", "status_label": "Pendiente",
-                    "completed": 0, "total": 7,
-                },
-            ],
-            "readiness": {
-                **_blocked_readiness(),
-                "required_percent": 22,
-            },
-        }
+        from services.company_search import build_source_map
+        self.source_map = build_source_map(
+            {"ruc": "0190377210001"}, {}, None, None, [], [], [], None,
+            [{"fuente": "SRI", "estado": "consultada"}], [],
+        )
 
     def test_auditor_workflow_links_to_tabs_with_visible_anchor(self):
+        from providers.sri import SriProvider
         from views.auditor.radar.page import _render_source_map
-        html = _render_source_map(self.source_map, read_only=False, audit_id=42)
+        link = SriProvider().get_links("0190377210001", "X")[0]
+        html = _render_source_map(self.source_map, read_only=False, audit_id=42,
+                                  official_links={"SRI": link})
 
-        self.assertIn(
-            '/auditor/radar?audit_id=42&tab=sri#radar-tabs-main', html,
-        )
-        self.assertIn(
-            '/auditor/radar?audit_id=42&tab=supercias#radar-tabs-main', html,
-        )
+        self.assertEqual(html.count('<li class="flow-step '), 9)
+        for tab in ("sri", "supercias", "admins", "accionistas", "indicadores", "resumen"):
+            self.assertIn(f'/auditor/radar?audit_id=42&tab={tab}#radar-tabs-main', html)
         self.assertIn("onclick=\"return switchTab('sri')\"", html)
-        self.assertIn("Revisar pendientes", html)
+        self.assertIn(link.url, html)
+        self.assertIn("Estado de Resultados Integral", html)
 
     def test_admin_workflow_uses_read_only_route(self):
         from views.auditor.radar.page import _render_source_map

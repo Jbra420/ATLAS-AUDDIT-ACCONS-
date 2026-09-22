@@ -363,8 +363,8 @@ class TestViewsAndSummary(_AuditCase):
         audit = {"company_name": "GRUCANQUI", "ruc": REFERENCE_RUC, "period": "2025", "city": "", "activity_hint": ""}
         text = generate_summary(audit, {}, 0, profile=dict(ctx["profile"]), admins=ctx["admins"],
                                 shareholders=ctx["shareholders"])
-        self.assertIn("Objeto social        : Servicios de alojamiento", text)
-        self.assertIn("Contrib. fantasma    : NO", text)
+        self.assertRegex(text, r"Objeto social\s+: Servicios de alojamiento")
+        self.assertRegex(text, r"Contribuyente fantasma\s+: NO")
         self.assertIn(f"Presidente: Ana Torres — {CEDULA_VALIDA}", text)
         self.assertIn("Luis Perez — identificación pendiente de confirmar; 100 %", text)
 

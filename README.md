@@ -26,6 +26,47 @@ generar una ficha inicial de la empresa auditada.
   - generacion de resumen preliminar por parte del auditor.
 - Exportacion del resumen a TXT.
 
+## Levantamiento de información general del cliente
+
+El expediente sigue el requisito "Levantamiento de Información General del
+Cliente" (v1.0): 6 bloques de datos, 5 reglas generales y un flujo de consulta
+de 9 pasos que la pantalla del expediente muestra en ese orden.
+
+| Paso | Fuente | Qué se registra |
+| ---: | --- | --- |
+| 1 | SRI — Consulta de RUC | Bloque 1: identificación tributaria |
+| 2-3 | Supercias — Información general | Bloques 2 y 3: información societaria y ubicación |
+| 4 | Supercias — Administradores actuales | Bloque 4: gerente general y presidente, con identificación |
+| 5 | Supercias — Accionistas y Kárdex | Bloque 5: accionistas, participación y beneficiario final |
+| 6-8 | Supercias — Documentos económicos | Bloque 6: año fiscal y casilleros 1, 2, 3, 401, 403, 501, 502 y 707 |
+| 9 | Sistema | Validaciones cruzadas y alertas |
+
+- **Búsqueda automática:** "Iniciar búsqueda" completa lo que publican los
+  catálogos locales. Lo demás se captura a mano con una fecha de consulta.
+- **Trazabilidad:** cada dato registra su fuente y fecha de consulta en
+  `data_provenance`, un historial de solo inserción.
+- **Clave RUC:** la información financiera se guarda por RUC y año fiscal
+  (`financial_statements`). Un ejercicio nuevo no sobrescribe otro.
+- **Validaciones** (`services/validaciones.py`, única fuente de decisión):
+  - razón social SRI = Supercias;
+  - fecha de inicio = fecha de constitución;
+  - representante legal = gerente general;
+  - balance cuadrado (tolerancia USD 1,00);
+  - CIIU SRI = CIIU Supercias;
+  - actividad económica vs objeto social (revisión del auditor).
+- **Alertas:**
+  - RUC no activo;
+  - situación legal distinta de activa;
+  - balance descuadrado;
+  - contribuyente fantasma o transacciones inexistentes: alerta crítica, que
+    exige registrar su tratamiento.
+- **Resumen:** solo se genera cuando están completos todos los campos
+  obligatorios del requisito. Se presenta en el orden de los bloques, con la
+  fuente y fecha de cada uno.
+
+La documentación de cada fase está en
+`../atlas_documentacion/propuesta_levantamiento/`.
+
 ## Ejecucion local
 
 Desde esta carpeta:
@@ -91,6 +132,32 @@ el tab "Documentos", y luego transcribe la nómina en los formularios ya
 existentes. Atlas no extrae datos automáticamente del PDF — no hay parser,
 porque no existen todavía muestras reales del certificado para validar uno.
 
+## Estados financieros por ramo de Supercías
+
+Descargue del [portal de estados financieros por ramo](https://appscvsgen.supercias.gob.ec/consultaCompanias/societario/estadosFinancierosPorRamo.jsf)
+los TXT `balances_YYYY_*.txt` y `catalogo_YYYY_*.txt` para el ejercicio
+requerido. Coloque ambos archivos en una carpeta y ejecute:
+
+```bash
+python3 scripts/update_balances_catalog.py /ruta/estadosFinancieros_2025
+```
+
+El importador usa solo la biblioteca estándar de Python. Carga los casilleros
+1, 2, 3, 401, 403, 501, 502 y 707 por RUC y año en
+`supercias_balances.db` (excluida de Git). Guarda también el catálogo de
+cuentas, el nombre del archivo, su SHA-256 y la fecha de importación. Puede
+repetirse para reemplazar un ejercicio sin borrar los demás. Filas con RUC
+inválido se omiten y se cuentan; otros errores de formato cancelan la carga
+sin reemplazar el ejercicio anterior.
+
+Tras importar, el auditor debe pulsar **Iniciar búsqueda** de nuevo en el
+expediente para cargar las cifras disponibles. La búsqueda solo llena
+casilleros vacíos: conserva las correcciones manuales y registra fuente y
+fecha por dato. El año fiscal de la auditoría sigue requiriendo confirmación
+explícita. El jefe puede ver la información, pero no ejecutar la búsqueda ni
+editarla. Este reporte agregado no sustituye la revisión del documento
+económico original, las notas ni el acta de junta.
+
 ## Fuentes sugeridas para la busqueda
 
 La herramienta no intenta hacer scraping automatico porque las fuentes oficiales
@@ -109,8 +176,13 @@ guiar la consulta y guardar evidencia.
 - `core/router.py`: tabla declarativa de rutas GET.
 - `database.py`: SQLite, usuarios, sesiones, empresas, fuentes y resumen.
 - `schema.sql`: esquema de la base de datos.
-- `services/`: lógica de negocio pura (validación de RUC, mapa de fuentes,
-  indicadores financieros, resumen, ficha final), sin SQL.
+- `services/`: lógica de negocio pura, sin SQL. Incluye:
+  - validación de RUC e identificaciones;
+  - normalización de valores de los catálogos;
+  - trazabilidad;
+  - validaciones cruzadas y alertas (`validaciones.py`);
+  - flujo de 9 pasos (`flujo.py`);
+  - indicadores financieros, resumen y ficha final.
 - `providers/`: generan enlaces e instrucciones hacia fuentes oficiales
   externas (SRI, Supercías); nunca hacen scraping ni guardan credenciales.
 - `views/`: construcción de HTML por pantalla (`admin/`, `auditor/`,

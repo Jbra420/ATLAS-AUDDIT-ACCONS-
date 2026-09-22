@@ -14,7 +14,17 @@ from database import (
 )
 from services.financial import compute_indicators
 from services.company_search import build_source_map, find_source_check
+from providers.sri import SriProvider
+from providers.supercias import SuperciasProvider
 from services.dossier import build_dossier_model
+from services.flujo import (
+    COMPLETO,
+    CON_ALERTAS,
+    EN_AVANCE,
+    PENDIENTE_PASO,
+    casilleros_con_valor,
+    pasos_levantamiento,
+)
 from services.normalizacion import anio_fiscal_sugerido
 from services.rowutil import row_get
 from ui.components import ruc_banner_html
@@ -27,6 +37,7 @@ from ui.icons import (
     SVG_CLOCK,
     SVG_DOLLAR,
     SVG_DOWNLOAD,
+    SVG_EXTERNAL,
     SVG_FILE,
     SVG_INFO,
     SVG_MAP_PIN,
@@ -118,80 +129,61 @@ def _render_readiness_panel(readiness: dict, read_only: bool, audit_id: int) -> 
     """
 
 
-def _render_source_map(source_map: dict, read_only: bool, audit_id: int) -> str:
-    totals = source_map["totals"]
-    readiness = source_map["readiness"]
+_STEP_STYLE = {
+    COMPLETO: ("step-complete", SVG_CHECK),
+    EN_AVANCE: ("step-partial", SVG_CLOCK),
+    PENDIENTE_PASO: ("step-pending", SVG_ALERT),
+    CON_ALERTAS: ("step-alert", SVG_ALERT),
+}
 
-    # Identify individual card statuses (assuming only 2 cards: SRI and Supercias)
-    sri_card = next((c for c in source_map["cards"] if c["key"] == "sri"), None)
-    sup_card = next((c for c in source_map["cards"] if c["key"] == "supercias"), None)
 
-    def step_html(num: int, card: dict | None, tab_id: str, title: str, btn_txt: str) -> str:
-        if not card:
-            return ""
-        st = card["status"]  # 'complete', 'partial', 'pending'
-        icon = SVG_CHECK if st == 'complete' else (SVG_CLOCK if st == 'partial' else SVG_ALERT)
-        color_cls = f"step-{st}"
-
-        found = card["completed"]
-        tot = card["total"]
-
-        return f"""
-        <div class="step-item {color_cls}">
-          <div class="step-indicator">
-            <span class="step-num">{num}</span>
-            <span class="step-icon">{icon}</span>
-          </div>
-          <div class="step-content">
-            <div class="step-header">
-              <h4>{esc(title)}</h4>
-              <span class="step-badge {color_cls}">{esc(card["status_label"])}</span>
-            </div>
-            <p class="step-meta">{found} de {tot} datos validados</p>
-            <a class="btn-step-action" href="{_tab_href(audit_id, tab_id, read_only)}"
-               onclick="return switchTab('{tab_id}')">
-              {esc(btn_txt)} {SVG_ARROW_RIGHT}
-            </a>
-          </div>
-        </div>
-        """
-
-    # Generamos los 3 pasos: SRI, Supercias, Resumen
-    step1 = step_html(1, sri_card, "sri", "Validación SRI", "Ir a SRI")
-    step2 = step_html(2, sup_card, "supercias", "Societario (Supercias)", "Ir a Supercias")
-
-    # Paso 3 (Resumen) depende de que los otros 2 estén completos
-    is_ready = readiness["ready"]
-    s3_st = "complete" if is_ready else "pending"
-    s3_icon = SVG_CHECK if is_ready else SVG_RADAR
-    s3_label = "Listo para generar" if is_ready else "Faltan datos obligatorios"
-    s3_btn = "Abrir resumen" if is_ready else "Revisar pendientes"
-    first_pending_tab = (
-        readiness.get("blockers", [{}])[0].get("tab", "resumen")
-        if readiness.get("blockers") else "resumen"
+def _render_flow_step(paso: dict, link, read_only: bool, audit_id: int) -> str:
+    css, icon = _STEP_STYLE[paso["estado"]]
+    official = (
+        f'<a class="flow-step-official" href="{esc(link.url)}" target="_blank" rel="noopener">'
+        f'{SVG_EXTERNAL} Abrir {esc(paso["fuente"])}</a>'
+        if link and not read_only else ""
     )
-    s3_tab = "resumen" if is_ready else first_pending_tab
-
-    step3 = f"""
-        <div class="step-item step-{s3_st}">
-          <div class="step-indicator">
-            <span class="step-num">3</span>
-            <span class="step-icon">{s3_icon}</span>
-          </div>
-          <div class="step-content">
-            <div class="step-header">
-              <h4>Resumen Final</h4>
-              <span class="step-badge step-{s3_st}">{s3_label}</span>
-            </div>
-            <p class="step-meta">Generación del dossier automático</p>
-            <a class="btn-step-action" href="{_tab_href(audit_id, s3_tab, read_only)}"
-               onclick="return switchTab('{s3_tab}')">
-              {s3_btn} {SVG_ARROW_RIGHT}
-            </a>
-          </div>
+    action = "Ver" if read_only else "Ir al paso"
+    return f"""
+    <li class="flow-step {css}">
+      <span class="flow-step-num">{paso["numero"]}</span>
+      <div class="flow-step-body">
+        <div class="flow-step-head">
+          <span class="flow-step-source">{esc(paso["fuente"])}</span>
+          <span class="step-badge {css}">{icon} {esc(paso["etiqueta"])}</span>
         </div>
+        <p class="flow-step-action">{esc(paso["accion"])}</p>
+        <p class="step-meta">{esc(paso["detalle"])}</p>
+        <div class="flow-step-links">
+          <a class="btn-step-action" href="{_tab_href(audit_id, paso["tab"], read_only)}"
+             onclick="return switchTab('{paso["tab"]}')">{action} {SVG_ARROW_RIGHT}</a>
+          {official}
+        </div>
+      </div>
+    </li>
     """
 
+
+def _render_source_map(source_map: dict, read_only: bool, audit_id: int, snapshot=None,
+                       official_links: dict | None = None,
+                       documentos_economicos_consultados: bool = False) -> str:
+    """Flujo de consulta del requisito (9 pasos) y control previo del resumen."""
+    readiness = source_map["readiness"]
+    cards = {c["key"]: c for c in source_map["cards"]}
+    pasos = pasos_levantamiento(
+        source_map["validacion"],
+        fuente_sri_consultada="Fuente SRI consultada" not in cards["sri"]["missing"],
+        fuente_supercias_consultada="Fuente Supercias consultada" not in cards["supercias"]["missing"],
+        casilleros_registrados=casilleros_con_valor(snapshot),
+        documentos_economicos_consultados=documentos_economicos_consultados,
+    )
+    official_links = official_links or {}
+    steps_html = "".join(
+        _render_flow_step(p, official_links.get(p["fuente"]), read_only, audit_id) for p in pasos
+    )
+
+    is_ready = readiness["ready"]
     ready_icon = SVG_CHECK if is_ready else SVG_ALERT
     ready_color = "status-ready" if is_ready else "status-warning"
     ready_text = "Expediente listo" if is_ready else "Requiere atención"
@@ -200,8 +192,8 @@ def _render_source_map(source_map: dict, read_only: bool, audit_id: int) -> str:
     <section class="radar-workflow-stepper">
       <div class="workflow-header">
         <div class="workflow-titles">
-          <span class="workflow-eyebrow">Progreso de la Auditoría</span>
-          <h2>Flujo de validación del expediente</h2>
+          <span class="workflow-eyebrow">Levantamiento de información general del cliente</span>
+          <h2>Flujo de consulta</h2>
         </div>
         <div class="workflow-global-status {ready_color}">
           {ready_icon}
@@ -211,14 +203,9 @@ def _render_source_map(source_map: dict, read_only: bool, audit_id: int) -> str:
           </div>
         </div>
       </div>
-
-      <div class="stepper-container">
-        {step1}
-        <div class="step-connector"></div>
-        {step2}
-        <div class="step-connector"></div>
-        {step3}
-      </div>
+      <ol class="flow-steps">
+        {steps_html}
+      </ol>
       {_render_readiness_panel(readiness, read_only, audit_id)}
     </section>
     """
@@ -250,7 +237,15 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
         docs, snapshot, src_checks, sources,
         alert_treatments=ctx["alert_treatments"],
     )
-    source_map_panel = _render_source_map(source_map, is_read_only, audit_id)
+    official_links = {
+        "SRI": next(iter(SriProvider().get_links(audit["ruc"] or "", audit["company_name"])), None),
+        "Supercias": next(iter(SuperciasProvider().get_links(audit["ruc"] or "", audit["company_name"])), None),
+    }
+    economic_check = find_source_check(src_checks, ("documento",))
+    source_map_panel = _render_source_map(
+        source_map, is_read_only, audit_id, snapshot=snapshot, official_links=official_links,
+        documentos_economicos_consultados=bool(economic_check and economic_check["estado"] == "consultada"),
+    )
 
     # ── Indicadores financieros ───────────────────────────────────────────
     indicators = compute_indicators(dict(snapshot) if snapshot else None)

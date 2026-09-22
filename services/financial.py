@@ -36,7 +36,14 @@ def _fmt(value: float | None, decimals: int = 2, prefix: str = "") -> str:
     """Formatea un valor numérico para mostrar al usuario."""
     if value is None:
         return "—"
-    return f"{prefix}{value:,.{decimals}f}"
+    # El signo va antes del símbolo: "-$1,500.00", no "$-1,500.00".
+    signo = "-" if value < 0 else ""
+    return f"{signo}{prefix}{abs(value):,.{decimals}f}"
+
+
+def formato_moneda(value: float | None) -> str:
+    """Monto en dólares con separador de miles; "—" si no hay valor."""
+    return _fmt(value, prefix="$")
 
 
 def _pct(value: float | None) -> str:

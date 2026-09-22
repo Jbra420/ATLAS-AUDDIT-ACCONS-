@@ -233,8 +233,9 @@ class TestResearchCompanyByRucPartialResults(unittest.TestCase):
 
     def test_raises_only_when_neither_source_has_the_ruc(self):
         with patch("services.company_research.lookup_catastro", return_value=None), \
-             patch("services.company_research.lookup_supercias_catalog", return_value=None):
-            with self.assertRaisesRegex(ValueError, "ni en el catastro SRI local ni en el cat"):
+             patch("services.company_research.lookup_supercias_catalog", return_value=None), \
+             patch("services.company_research.lookup_balances_catalog", return_value=[]):
+            with self.assertRaisesRegex(ValueError, "no consta en los catálogos locales"):
                 research_company_by_ruc(self.audit_id, "0190314014001", self.auditor["id"], self.db)
 
 

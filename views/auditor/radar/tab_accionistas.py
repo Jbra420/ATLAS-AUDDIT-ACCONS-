@@ -2,6 +2,7 @@
 from __future__ import annotations
 from providers.supercias import SuperciasProvider
 from services.company_search import find_certificate_evidence
+from services.financial import formato_moneda
 from services.rowutil import row_get
 from services.trazabilidad import BLOQUE_ACCIONISTAS
 from ui.helpers import csrf_input, esc
@@ -75,7 +76,7 @@ def _participacion_text(row) -> str:
     if porcentaje is not None:
         partes.append(f"{float(porcentaje):g} %")
     if capital is not None:
-        partes.append(f"${float(capital):,.2f}")
+        partes.append(formato_moneda(float(capital)))
     return " · ".join(partes) or "—"
 
 

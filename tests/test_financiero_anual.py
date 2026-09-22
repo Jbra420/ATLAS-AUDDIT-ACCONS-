@@ -145,6 +145,20 @@ class TestFinancialContext(_FinancialCase):
         self.assertEqual(list_financial_statements(REFERENCE_RUC, self.db), [])
 
 
+class TestFormatoMoneda(unittest.TestCase):
+    def test_negative_sign_goes_before_the_symbol(self):
+        from services.financial import formato_moneda
+        self.assertEqual(formato_moneda(-1500.5), "-$1,500.50")
+        self.assertEqual(formato_moneda(1500.5), "$1,500.50")
+        self.assertEqual(formato_moneda(None), "—")
+
+    def test_comparative_shows_negative_variation(self):
+        estados = [{"anio_fiscal": 2025, "otros_ingresos_403": 0.0}, {"anio_fiscal": 2024, "otros_ingresos_403": 1.0}]
+        html = tab_financiero._comparative_table(estados, 2025)
+        self.assertIn("-$1.00", html)
+        self.assertNotIn("$-", html)
+
+
 class TestComparativo(unittest.TestCase):
     def test_variation_against_closest_previous_year(self):
         estados = [
@@ -225,7 +239,8 @@ class TestSummaryAndDocuments(_FinancialCase):
         self._save(2025, CIFRAS_2025)
         snapshot = get_audit_context(self.audit_id, self.db)["snapshot"]
         text = generate_summary(self.AUDIT, {}, 0, snapshot=snapshot, indicators=compute_indicators(snapshot))
-        self.assertIn("Año fiscal           : 2025 (EEFF al 2025-12-31)", text)
+        self.assertRegex(text, r"Año fiscal\s+: 2025 \(EEFF al 2025-12-31\)")
+        self.assertIn("6. INFORMACIÓN FINANCIERA", text)
         self.assertIn("Ingresos de actividades ordinarias (casillero 401): $1,862,784.91", text)
         self.assertIn("Total ingresos (401 + 403): $1,874,546.11", text)
         self.assertIn("Utilidad antes de participación e impuestos (casillero por confirmar): Pendiente", text)

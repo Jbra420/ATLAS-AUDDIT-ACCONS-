@@ -18,6 +18,7 @@ import re
 from datetime import date
 from typing import Any, Iterable
 
+from services.financial import formato_moneda
 from services.normalizacion import clasificar_situacion_legal, normalizar_texto
 from services.rowutil import row_get
 
@@ -261,8 +262,8 @@ def _cruces(profile, admins, snapshot) -> list[dict]:
     regla = "Activo = Pasivo + Patrimonio"
     if None not in (activo, pasivo, patrimonio):
         diferencia = activo - (pasivo + patrimonio)
-        detalle = (f"Activo: ${activo:,.2f} | Pasivo + Patrimonio: ${pasivo + patrimonio:,.2f} | "
-                   f"Diferencia: ${diferencia:,.2f}")
+        detalle = (f"Activo: {formato_moneda(activo)} | Pasivo + Patrimonio: {formato_moneda(pasivo + patrimonio)} | "
+                   f"Diferencia: {formato_moneda(diferencia)}")
         cruces.append(_cruce("CRUCE_BALANCE", regla,
                              COINCIDE if abs(diferencia) <= TOLERANCIA_BALANCE else NO_COINCIDE,
                              detalle, NIVEL_ALTA, "indicadores"))
@@ -321,7 +322,7 @@ def _alertas(profile, cruces: list[dict]) -> list[dict]:
     balance = next((c for c in cruces if c["codigo"] == "CRUCE_BALANCE"), None)
     if balance and balance["estado"] == NO_COINCIDE:
         alertas.append(_alerta("ALERTA_BALANCE", NIVEL_ALTA,
-                               f"El balance no cuadra (Activo ≠ Pasivo + Patrimonio). {balance['detalle']}.",
+                               f"El balance no cuadra (Activo ≠ Pasivo + Patrimonio). {balance['detalle']}",
                                "indicadores"))
     return alertas
 

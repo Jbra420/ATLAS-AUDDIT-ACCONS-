@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any, Union
 
+from services.financial import formato_moneda
 from services.rowutil import row_get as _get
 
 
@@ -37,7 +38,7 @@ def _money(value: Any) -> str:
     if value is None or value == "":
         return "Pendiente de confirmar"
     try:
-        return f"${float(value):,.2f}"
+        return formato_moneda(float(value))
     except (TypeError, ValueError):
         return str(value)
 
