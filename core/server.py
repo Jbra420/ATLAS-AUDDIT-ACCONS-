@@ -50,8 +50,10 @@ from database import (
     reactivate_user,
     reassign_audit,
     soft_delete_user,
+    update_administrator,
     update_company_location_fields,
     update_company_profile_fields,
+    update_shareholder,
     upsert_financial_snapshot,
     user_from_session,
     validate_csrf_token,
@@ -61,6 +63,8 @@ from services.financial import compute_indicators
 from services.company_search import build_source_map
 from services.company_research import research_company_by_ruc
 from services.dossier import build_dossier_model, build_dossier_text
+from services.identificacion import validar_identificacion
+from services.trazabilidad import validar_fecha_consulta
 from ui.layout import layout, set_css
 from ui.helpers import form_value, _now
 from core.router import GET_ROUTES
@@ -701,11 +705,20 @@ class AtlasHandler(BaseHTTPRequestHandler):
             # Cada pestaña envía solo sus campos; los ausentes no se tocan.
             profile_data = {k: form_value(form, k) for k in PROFILE_FORM_FIELDS if k in form}
             loc_data = {k: form_value(form, k) for k in LOCATION_FORM_FIELDS if k in form}
-            if profile_data:
-                update_company_profile_fields(audit_id, profile_data)
-            if loc_data:
-                update_company_location_fields(audit_id, loc_data)
-            tab = form_value(form, "return_tab", "sri")
+            tab = quote_plus(form_value(form, "return_tab", "sri"))
+            try:
+                fecha_consulta = validar_fecha_consulta(form_value(form, "fecha_consulta"))
+                if profile_data:
+                    update_company_profile_fields(
+                        audit_id, profile_data, user_id=current["id"], fecha_consulta=fecha_consulta,
+                    )
+                if loc_data:
+                    update_company_location_fields(
+                        audit_id, loc_data, user_id=current["id"], fecha_consulta=fecha_consulta,
+                    )
+            except ValueError as exc:
+                self.redirect(f"/auditor/radar?audit_id={audit_id}&err={quote_plus(str(exc))}&tab={tab}")
+                return
             self.redirect(f"/auditor/radar?audit_id={audit_id}&msg=Datos+guardados&tab={tab}")
             return
 
@@ -721,21 +734,44 @@ class AtlasHandler(BaseHTTPRequestHandler):
                 )
                 return
             try:
-                if form_value(form, "action", "add") == "delete":
+                action = form_value(form, "action", "add")
+                if action == "delete":
                     delete_administrator(
                         audit_id,
                         int(form_value(form, "administrator_id", "0")),
+                        user_id=current["id"],
                     )
                     msg = "Administrador eliminado"
                 else:
-                    add_administrator(
-                        audit_id,
-                        form_value(form, "identificacion"),
-                        form_value(form, "nombre"),
-                        form_value(form, "nacionalidad"),
-                        form_value(form, "cargo"),
-                    )
-                    msg = "Administrador registrado"
+                    fecha_consulta = validar_fecha_consulta(form_value(form, "fecha_consulta"))
+                    tipo = form_value(form, "tipo_identificacion")
+                    identificacion = form_value(form, "identificacion")
+                    warning = validar_identificacion(identificacion, tipo, ("cedula", "pasaporte"))[2]
+                    if action == "update":
+                        update_administrator(
+                            audit_id,
+                            int(form_value(form, "administrator_id", "0")),
+                            tipo_identificacion=tipo,
+                            identificacion=identificacion,
+                            nacionalidad=form_value(form, "nacionalidad"),
+                            fecha_consulta=fecha_consulta,
+                            user_id=current["id"],
+                        )
+                        msg = "Administrador actualizado"
+                    else:
+                        add_administrator(
+                            audit_id,
+                            identificacion,
+                            form_value(form, "nombre"),
+                            form_value(form, "nacionalidad"),
+                            form_value(form, "cargo"),
+                            tipo_identificacion=tipo,
+                            fecha_consulta=fecha_consulta,
+                            user_id=current["id"],
+                        )
+                        msg = "Administrador registrado"
+                    if warning:
+                        msg = f"{msg}. Advertencia: {warning}"
                 self.redirect(f"/auditor/radar?audit_id={audit_id}&msg={quote_plus(msg)}&tab=admins")
             except Exception as exc:
                 self.redirect(f"/auditor/radar?audit_id={audit_id}&err={quote_plus(str(exc))}&tab=admins")
@@ -753,20 +789,46 @@ class AtlasHandler(BaseHTTPRequestHandler):
                 )
                 return
             try:
-                if form_value(form, "action", "add") == "delete":
+                action = form_value(form, "action", "add")
+                if action == "delete":
                     delete_shareholder(
                         audit_id,
                         int(form_value(form, "shareholder_id", "0")),
+                        user_id=current["id"],
                     )
                     msg = "Accionista eliminado"
                 else:
-                    add_shareholder(
-                        audit_id,
-                        form_value(form, "numero"),
-                        form_value(form, "identificacion"),
-                        form_value(form, "nombre"),
-                    )
-                    msg = "Accionista registrado"
+                    fecha_consulta = validar_fecha_consulta(form_value(form, "fecha_consulta"))
+                    tipo = form_value(form, "tipo_identificacion")
+                    identificacion = form_value(form, "identificacion")
+                    warning = validar_identificacion(identificacion, tipo, ("cedula", "ruc", "pasaporte"))[2]
+                    details = {
+                        "tipo_identificacion": tipo,
+                        "participacion_porcentaje": form_value(form, "participacion_porcentaje"),
+                        "capital": form_value(form, "capital"),
+                        "beneficiario_final": form_value(form, "beneficiario_final"),
+                        "fecha_consulta": fecha_consulta,
+                        "user_id": current["id"],
+                    }
+                    if action == "update":
+                        update_shareholder(
+                            audit_id,
+                            int(form_value(form, "shareholder_id", "0")),
+                            identificacion=identificacion,
+                            **details,
+                        )
+                        msg = "Accionista actualizado"
+                    else:
+                        add_shareholder(
+                            audit_id,
+                            form_value(form, "numero"),
+                            identificacion,
+                            form_value(form, "nombre"),
+                            **details,
+                        )
+                        msg = "Accionista registrado"
+                    if warning:
+                        msg = f"{msg}. Advertencia: {warning}"
                 self.redirect(f"/auditor/radar?audit_id={audit_id}&msg={quote_plus(msg)}&tab=accionistas")
             except Exception as exc:
                 self.redirect(f"/auditor/radar?audit_id={audit_id}&err={quote_plus(str(exc))}&tab=accionistas")

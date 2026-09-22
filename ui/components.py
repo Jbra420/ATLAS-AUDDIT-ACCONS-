@@ -4,7 +4,10 @@ Depende de ui/icons y ui/helpers únicamente. Nunca importa de views/.
 """
 from __future__ import annotations
 
+from datetime import date
+
 from database import AUDIT_STATUSES
+from services.identificacion import TIPOS_IDENTIFICACION
 from services.ruc_validator import validate_ruc
 from services.rowutil import row_get
 from ui.helpers import csrf_input, esc
@@ -42,23 +45,97 @@ def avatar_initials(name: str) -> str:
     return name[:2].upper() if name else "?"
 
 
+def identificacion_select(current: str, permitidos: tuple[str, ...] = ("cedula", "pasaporte")) -> str:
+    """Selector del tipo de identificación de administradores y accionistas."""
+    options = "".join(
+        f'<option value="{tipo}"{" selected" if current == tipo else ""}>{TIPOS_IDENTIFICACION[tipo]}</option>'
+        for tipo in permitidos
+    )
+    return f'<select name="tipo_identificacion">{options}</select>'
+
+
+def identificacion_text(row) -> str:
+    """"Cédula 0102030405", o "Pendiente" si la identificación no se registró."""
+    identificacion = (row_get(row, "identificacion") or "").strip()
+    if not identificacion or identificacion in {"-", "—"}:
+        return "Pendiente"
+    tipo = TIPOS_IDENTIFICACION.get(row_get(row, "tipo_identificacion") or "", "")
+    return f"{tipo} {identificacion}".strip()
+
+
+def fuente_text(row) -> str:
+    """"Fuente · fecha de consulta" de un registro de persona."""
+    partes = ((row_get(row, "fuente") or "").strip(), (row_get(row, "fecha_consulta") or "").strip())
+    return " · ".join(p for p in partes if p) or "Sin fuente registrada"
+
+
 def people_avatar(name: str) -> str:
     """Avatar circular con iniciales para filas de tablas de personas (admins, accionistas)."""
     initials = "".join(p[0] for p in (name or "").strip().split()[:2]).upper()
     return f'<span class="people-avatar">{esc(initials)}</span>'
 
 
-def info_card(label: str, value: str, css_extra: str = "") -> str:
-    """Tarjeta de dato de solo lectura usada en los tabs del Radar Empresarial (SRI, Supercias, etc.)."""
+def info_card(label: str, value: str, css_extra: str = "", trace: str = "") -> str:
+    """Tarjeta de dato de solo lectura usada en los tabs del Radar Empresarial (SRI, Supercias, etc.).
+
+    trace es el texto "fuente · fecha de consulta" del dato (ver
+    services/trazabilidad.etiqueta_traza); se omite si está vacío.
+    """
     v = value.strip() if value else ""
     val_cls = "info-card-value" if v else "info-card-value pending"
     val_text = esc(v) if v else "Pendiente de confirmar"
+    trace_html = f'<div class="info-card-trace">{esc(trace)}</div>' if trace and v else ""
     return (
         f'<div class="info-card {css_extra}">'
         f'<div class="info-card-label">{esc(label)}</div>'
         f'<div class="{val_cls}">{val_text}</div>'
+        f'{trace_html}'
         f'</div>'
     )
+
+
+def fecha_consulta_field(css_col: str = "col-4") -> str:
+    """Campo "Fecha de consulta" de los formularios de captura: fecha en que el
+    auditor revisó la fuente oficial. Por defecto hoy; no admite fechas futuras
+    (el servidor lo vuelve a validar)."""
+    today = date.today().isoformat()
+    return (
+        f'<div class="{css_col}"><label>Fecha de consulta de la fuente *</label>'
+        f'<input type="date" name="fecha_consulta" value="{today}" max="{today}" required></div>'
+    )
+
+
+def provenance_history(rows: list, labels: dict[str, str], title: str = "Historial del dato") -> str:
+    """Historial de trazabilidad de un bloque, del cambio más reciente al más antiguo.
+
+    rows son filas de data_provenance ya filtradas por bloque; labels traduce
+    el nombre técnico del campo a su etiqueta visible.
+    """
+    if not rows:
+        return ""
+    body = "".join(
+        "<tr>"
+        f'<td style="white-space:nowrap;">{esc(row_get(r, "fecha_consulta"))}</td>'
+        f'<td>{esc(labels.get(row_get(r, "campo"), "Registro"))}</td>'
+        f'<td class="trace-old">{esc(row_get(r, "valor_anterior") or "—")}</td>'
+        f'<td>{esc(row_get(r, "valor_nuevo") or "Eliminado")}</td>'
+        f'<td>{esc(row_get(r, "fuente"))}</td>'
+        f'<td style="white-space:nowrap;">{esc(row_get(r, "registrado_at"))}</td>'
+        "</tr>"
+        for r in reversed(list(rows)[-50:])
+    )
+    return f"""
+    <details class="trace-history">
+      <summary>{esc(title)} ({len(rows)} cambio(s))</summary>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Fecha de consulta</th><th>Dato</th><th>Valor anterior</th>
+          <th>Valor nuevo</th><th>Fuente</th><th>Registrado</th></tr></thead>
+          <tbody>{body}</tbody>
+        </table>
+      </div>
+    </details>
+    """
 
 
 def source_check_control(

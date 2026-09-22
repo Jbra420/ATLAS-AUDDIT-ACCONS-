@@ -179,3 +179,23 @@ CREATE TABLE IF NOT EXISTS source_checks (
     consultada_por INTEGER REFERENCES users(id),
     consultada_at TEXT
 );
+
+-- ── Levantamiento de información: trazabilidad por dato ────────────────
+-- Historial de solo inserción (los triggers de _migrate() impiden editar o
+-- borrar filas). Cada fila registra un cambio de un dato del expediente con
+-- su fuente, la fecha en que se consultó esa fuente y quién lo registró.
+CREATE TABLE IF NOT EXISTS data_provenance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+    bloque TEXT NOT NULL,
+    campo TEXT NOT NULL,
+    valor_anterior TEXT,
+    valor_nuevo TEXT,
+    fuente TEXT NOT NULL,
+    fecha_consulta TEXT NOT NULL,
+    registrado_por INTEGER REFERENCES users(id),
+    registrado_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_data_provenance_audit
+ON data_provenance(audit_id, bloque, campo, id);

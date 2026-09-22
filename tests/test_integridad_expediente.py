@@ -237,7 +237,10 @@ class TestFormsSendOnlyTheirFields(unittest.TestCase):
 
     def _field_names(self, html: str) -> set[str]:
         import re
-        return set(re.findall(r'name="([a-z_0-9]+)"', html)) - {"_csrf", "audit_id", "return_tab"}
+        # Campos de control del formulario, no datos del perfil. fecha_consulta
+        # es la fecha en que se revisó la fuente (trazabilidad, Fase 3).
+        control = {"_csrf", "audit_id", "return_tab", "fecha_consulta"}
+        return set(re.findall(r'name="([a-z_0-9]+)"', html)) - control
 
     def test_sri_form_has_no_supercias_fields(self):
         html = tab_sri.build(1, self.AUDIT, self.PROFILE, None, csrf_token="t")

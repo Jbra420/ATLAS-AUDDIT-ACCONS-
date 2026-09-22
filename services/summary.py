@@ -152,6 +152,13 @@ def _collect_pendientes(
 _SEP = "─" * 60
 
 
+def _identificacion(row) -> str:
+    identificacion = str(row_get(row, "identificacion") or "").strip()
+    if not identificacion or identificacion in {"-", "—"}:
+        return "identificación pendiente de confirmar"
+    return identificacion
+
+
 def _val(v: str | None, fallback: str = "Pendiente de confirmar.") -> str:
     s = (v or "").strip()
     return s if s else fallback
@@ -219,6 +226,8 @@ def generate_summary(
             f"  Obligado contab.     : {_val(profile['obligado_contabilidad'])}",
             f"  Agente de retención  : {_val(profile['agente_retencion'])}",
             f"  Contribuyente esp.   : {_val(profile['contribuyente_especial'])}",
+            f"  Contrib. fantasma    : {_val(row_get(profile, 'contribuyente_fantasma'))}",
+            f"  Transacc. inexist.   : {_val(row_get(profile, 'transacciones_inexistentes'))}",
             f"  Fecha inicio act.    : {_val(profile['fecha_inicio_actividades'])}",
             f"  Última actualización : {_val(profile['fecha_actualizacion'])}",
             f"  Representante legal  : {_val(row_get(profile, 'representante_legal_sri'))}",
@@ -238,6 +247,7 @@ def generate_summary(
             f"  Tipo compañía        : {_val(con_valor_oficial(clasificar_tipo_compania(profile['tipo_compania']), profile['tipo_compania']))}",
             f"  Fecha constitución   : {_val(profile['fecha_constitucion'])}",
             f"  Oficina control      : {_val(profile['oficina_control'])}",
+            f"  Objeto social        : {_val(row_get(profile, 'objeto_social'))}",
             f"  Expediente           : {_val(profile['expediente_supercias'])}",
             f"  Plazo social         : {_val(row_get(profile, 'plazo_social'))}",
             f"  Representante legal  : {_val(row_get(profile, 'representante_legal'))}",
@@ -270,6 +280,7 @@ def generate_summary(
             f"  Provincia            : {_val(location['provincia'])}",
             f"  Ciudad               : {_val(location['ciudad'])}",
             f"  Dirección            : {_val(full_addr)}",
+            f"  Referencia           : {_val(row_get(location, 'referencia'))}",
         ]
     else:
         sec5_lines = [
@@ -283,13 +294,24 @@ def generate_summary(
     if admins:
         sec6_lines.append("  Administradores:")
         for a in admins:
-            sec6_lines.append(f"    · {a['cargo']}: {a['nombre']}")
+            sec6_lines.append(
+                f"    · {a['cargo']}: {a['nombre']} — {_identificacion(a)}"
+            )
     else:
         sec6_lines.append("  Administradores: Pendiente de confirmar.")
     if shareholders:
         sec6_lines.append("  Accionistas:")
         for s in shareholders:
-            sec6_lines.append(f"    · {s['nombre']}")
+            detalle = [_identificacion(s)]
+            porcentaje = row_get(s, "participacion_porcentaje", None)
+            capital = row_get(s, "capital", None)
+            if porcentaje is not None:
+                detalle.append(f"{float(porcentaje):g} %")
+            if capital is not None:
+                detalle.append(f"capital ${float(capital):,.2f}")
+            if row_get(s, "beneficiario_final"):
+                detalle.append(f"beneficiario final: {row_get(s, 'beneficiario_final')}")
+            sec6_lines.append(f"    · {s['nombre']} — {'; '.join(detalle)}")
     else:
         sec6_lines.append("  Accionistas: Pendiente de confirmar.")
     sec6 = "\n".join(sec6_lines)

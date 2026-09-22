@@ -1122,6 +1122,46 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
 }
 .info-card-value.pending { color: var(--muted-2); font-style: italic; font-weight: 400; }
 .info-card.full-width { grid-column: 1 / -1; }
+.info-card-trace {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.3;
+}
+
+/* Trazabilidad por dato: historial desplegable de cada bloque */
+.trace-history { margin-top: 16px; }
+.trace-history > summary {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-base);
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+.trace-history table { width: 100%; font-size: 12px; }
+.trace-history td, .trace-history th { vertical-align: top; }
+.trace-history .trace-old { color: var(--muted); }
+.location-field .info-card-trace { display: block; }
+
+/* Completar datos de una persona ya registrada (administradores, accionistas) */
+.row-edit { display: inline-block; margin-right: 6px; vertical-align: middle; }
+.row-edit > summary {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-base);
+  cursor: pointer;
+}
+.row-edit form {
+  display: grid;
+  gap: 6px;
+  min-width: 240px;
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.row-edit form label { font-size: 11px; margin: 0; }
 
 /* ── KPI Cards (indicadores financieros) ────────────────── */
 .kpi-grid {

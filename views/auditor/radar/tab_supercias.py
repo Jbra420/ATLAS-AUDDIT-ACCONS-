@@ -5,7 +5,40 @@ from ui.icons import SVG_EXTERNAL, SVG_SAVE
 from providers.supercias import SuperciasProvider
 from services.normalizacion import clasificar_situacion_legal, clasificar_tipo_compania, con_valor_oficial
 from services.rowutil import row_get
-from ui.components import info_card as _ic, source_check_control
+from services.trazabilidad import BLOQUE_SUPERCIAS, etiqueta_traza, ultimo_por_campo
+from ui.components import (
+    fecha_consulta_field,
+    info_card as _ic,
+    provenance_history,
+    source_check_control,
+)
+
+# (campo, etiqueta, clase CSS) — bloque 2 del levantamiento y datos del Directorio.
+CAMPOS = (
+    ("razon_social_supercias", "Razón social (Supercias)", "full-width"),
+    ("expediente_supercias", "Expediente Supercias", ""),
+    ("fecha_constitucion", "Fecha constitución", ""),
+    ("tipo_compania", "Tipo de compañía", ""),
+    ("situacion_legal", "Situación legal", ""),
+    ("plazo_social", "Plazo social", ""),
+    ("oficina_control", "Oficina de control", ""),
+    ("nacionalidad", "Nacionalidad", ""),
+    ("representante_legal", "Representante legal", ""),
+    ("representante_cargo", "Cargo del representante", ""),
+    ("telefono", "Teléfono", ""),
+    ("capital_suscrito", "Capital suscrito", ""),
+    ("ciiu_nivel1", "CIIU nivel 1", ""),
+    ("ciiu_nivel6", "CIIU nivel 6", ""),
+    ("ultimo_anio_balance", "Último año de balance", ""),
+    ("objeto_social", "Objeto social", "full-width"),
+)
+ETIQUETAS = {campo: etiqueta for campo, etiqueta, _css in CAMPOS}
+
+# Campos que se muestran como "categoría (texto oficial)".
+_CLASIFICADORES = {
+    "tipo_compania": clasificar_tipo_compania,
+    "situacion_legal": clasificar_situacion_legal,
+}
 
 def _pval(profile, key):
     return str(row_get(profile, key, "")).strip()
@@ -13,6 +46,7 @@ def _pval(profile, key):
 def build(
     audit_id, audit, profile, research,
     read_only: bool = False, csrf_token: str = "", source_check: object | None = None,
+    provenance: list | None = None,
 ):
     ruc = audit["ruc"] or ""
     company_name = audit["company_name"]
@@ -59,6 +93,7 @@ def build(
           <div class="col-6"><label>CIIU nivel 6</label><input name="ciiu_nivel6" value="{esc(pv('ciiu_nivel6'))}"></div>
           <div class="col-6"><label>Último año de balance</label><input name="ultimo_anio_balance" value="{esc(pv('ultimo_anio_balance'))}"></div>
           <div class="col-12"><label>Objeto social</label><textarea name="objeto_social" style="min-height:60px;">{esc(pv('objeto_social'))}</textarea></div>
+          {fecha_consulta_field()}
         </div>
         <div class="actions" style="justify-content:flex-end;margin-top:12px;">
           <button type="submit" class="btn btn-primary btn-sm">{SVG_SAVE} Guardar Supercias</button>
@@ -66,28 +101,25 @@ def build(
       </form>
     </details>
     """
+    historial = [r for r in provenance or [] if row_get(r, "bloque") == BLOQUE_SUPERCIAS]
+    trazas = ultimo_por_campo(historial)
+
+    def _valor(campo: str) -> str:
+        clasificar = _CLASIFICADORES.get(campo)
+        return con_valor_oficial(clasificar(pv(campo)), pv(campo)) if clasificar else pv(campo)
+
+    cards = "".join(
+        _ic(etiqueta, _valor(campo), css, trace=etiqueta_traza(trazas.get((BLOQUE_SUPERCIAS, campo))))
+        for campo, etiqueta, css in CAMPOS
+    )
     return f"""
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <h3 style="margin:0;font-size:15px;">Estado societario — Supercias</h3>
       <div style="display:flex;align-items:center;gap:8px;">{fuente_badge}{check_html}</div>
     </div>
     <div class="info-grid">
-      {_ic("Razón social (Supercias)", pv("razon_social_supercias"), "full-width")}
-      {_ic("Situación legal", con_valor_oficial(clasificar_situacion_legal(pv("situacion_legal")), pv("situacion_legal")))}
-      {_ic("Tipo de compañía", con_valor_oficial(clasificar_tipo_compania(pv("tipo_compania")), pv("tipo_compania")))}
-      {_ic("Nacionalidad", pv("nacionalidad"))}
-      {_ic("Fecha constitución", pv("fecha_constitucion"))}
-      {_ic("Expediente Supercias", pv("expediente_supercias"))}
-      {_ic("Oficina de control", pv("oficina_control"))}
-      {_ic("Plazo social", pv("plazo_social"))}
-      {_ic("Representante legal", pv("representante_legal"))}
-      {_ic("Cargo del representante", pv("representante_cargo"))}
-      {_ic("Teléfono", pv("telefono"))}
-      {_ic("Capital suscrito", pv("capital_suscrito"))}
-      {_ic("CIIU nivel 1", pv("ciiu_nivel1"))}
-      {_ic("CIIU nivel 6", pv("ciiu_nivel6"))}
-      {_ic("Último año de balance", pv("ultimo_anio_balance"))}
-      {_ic("Objeto social", pv("objeto_social"), "full-width")}
+      {cards}
     </div>
     {edit_block}
+    {provenance_history(historial, ETIQUETAS, "Historial de datos Supercias")}
     """

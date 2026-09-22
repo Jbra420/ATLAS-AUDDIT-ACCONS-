@@ -22,6 +22,7 @@ import re
 import socket
 import time
 import unittest
+from datetime import date, timedelta
 from urllib.request import urlopen, Request
 from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
@@ -323,6 +324,63 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         )
         self.assertEqual(status, 303)
         self.assertIn("msg=Resumen+generado", location)
+
+    def test_administrator_capture_validates_and_records_source(self):
+        """Fase 3: la identificación se valida en el servidor, la fecha de
+        consulta no puede ser futura y cada cambio queda en la trazabilidad."""
+        with connect() as conn:
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+        audit_id = create_company_audit(
+            f"Empresa trazabilidad {time.time_ns()}", "", "Cuenca", "", "2025", auditor_id, admin_id,
+        )
+        with connect() as conn:
+            company_id = conn.execute("SELECT company_id FROM audits WHERE id = ?", (audit_id,)).fetchone()["company_id"]
+
+        def cleanup_company() -> None:
+            with connect() as conn:
+                conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+
+        self.addCleanup(cleanup_company)
+        page = f"/auditor/radar?audit_id={audit_id}&tab=admins"
+
+        def post(fields: dict) -> str:
+            status, location, _ = _post_raw(
+                "/auditor/radar/administrator",
+                {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), **fields},
+                self.cookie,
+            )
+            self.assertEqual(status, 303)
+            return location
+
+        base = {"action": "add", "nombre": "Ana Torres", "cargo": "Presidente", "tipo_identificacion": "cedula"}
+        self.assertIn("err=", post({**base, "identificacion": "12345"}))
+        tomorrow = (date.today() + timedelta(days=1)).isoformat()
+        self.assertIn("err=", post({**base, "identificacion": "0102030400", "fecha_consulta": tomorrow}))
+        with connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM company_administrators WHERE audit_id = ?", (audit_id,)
+            ).fetchone()[0]
+        self.assertEqual(count, 0, "Una entrada rechazada no debe guardarse")
+
+        self.assertIn("msg=", post({**base, "identificacion": "", "fecha_consulta": "2026-09-01"}))
+        with connect() as conn:
+            admin = conn.execute(
+                "SELECT * FROM company_administrators WHERE audit_id = ?", (audit_id,)
+            ).fetchone()
+        self.assertIn("msg=", post({
+            "action": "update", "administrator_id": str(admin["id"]), "tipo_identificacion": "cedula",
+            "identificacion": "0102030400", "nacionalidad": "Ecuatoriana", "fecha_consulta": "2026-09-02",
+        }))
+        with connect() as conn:
+            admin = conn.execute("SELECT * FROM company_administrators WHERE id = ?", (admin["id"],)).fetchone()
+            history = conn.execute(
+                "SELECT registrado_por, fecha_consulta FROM data_provenance WHERE audit_id = ? ORDER BY id",
+                (audit_id,),
+            ).fetchall()
+        self.assertEqual(admin["identificacion"], "0102030400")
+        self.assertEqual([h["fecha_consulta"] for h in history], ["2026-09-01", "2026-09-02"])
+        self.assertTrue(all(h["registrado_por"] == auditor_id for h in history))
 
     def test_saving_one_tab_does_not_erase_another(self):
         """Regresión: /auditor/radar/profile guardaba perfil y ubicación con lo

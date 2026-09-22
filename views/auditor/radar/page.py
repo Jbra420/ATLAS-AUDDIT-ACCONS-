@@ -242,6 +242,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     admins, shareholders = ctx["admins"], ctx["shareholders"]
     docs, snapshot = ctx["docs"], ctx["snapshot"]
     src_checks, sources = ctx["source_checks"], ctx["sources"]
+    provenance = ctx["provenance"]
     is_read_only = user["role"] == "admin"
     readonly_class = "readonly-mode" if is_read_only else ""
     source_map = build_source_map(
@@ -283,18 +284,22 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
 
     tab_sri = build_sri(
         audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok,
-        source_check=sri_check,
+        source_check=sri_check, provenance=provenance,
     )
     tab_supercias = build_supercias(
         audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok,
-        source_check=supercias_check,
+        source_check=supercias_check, provenance=provenance,
     )
-    tab_ubicacion = build_ubicacion(audit_id, audit, location, read_only=is_read_only, csrf_token=csrf_tok)
+    tab_ubicacion = build_ubicacion(
+        audit_id, audit, location, read_only=is_read_only, csrf_token=csrf_tok, provenance=provenance,
+    )
     tab_admins = build_admins(
         audit_id, audit, admins, read_only=is_read_only, csrf_token=csrf_tok, sources=sources,
+        provenance=provenance,
     )
     tab_accionistas = build_accionistas(
         audit_id, audit, shareholders, read_only=is_read_only, csrf_token=csrf_tok, sources=sources,
+        provenance=provenance,
     )
     tab_financiero = build_financiero(
         audit_id, indicators, read_only=is_read_only, csrf_token=csrf_tok,

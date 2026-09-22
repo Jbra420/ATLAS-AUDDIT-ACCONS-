@@ -21,7 +21,23 @@ from typing import Any
 from urllib.parse import urlparse
 
 from seed_data import DEMO_RUC, seed_defaults, seed_demo_radar
+from services.identificacion import validar_identificacion
 from services.normalizacion import normalizar_texto
+from services.trazabilidad import (
+    BLOQUE_ACCIONISTAS,
+    BLOQUE_ADMINISTRADORES,
+    BLOQUE_UBICACION,
+    CAMPOS_PERFIL_SRI,
+    CAMPOS_PERFIL_SUPERCIAS,
+    CAMPOS_UBICACION,
+    FUENTE_CATASTRO_SRI,
+    FUENTE_DIRECTORIO_SUPERCIAS,
+    FUENTE_MANUAL_POR_BLOQUE,
+    FUENTE_SUPERCIAS_ACCIONISTAS,
+    FUENTE_SUPERCIAS_ADMINISTRADORES,
+    FUENTE_SUPERCIAS_UBICACION,
+    bloque_de_campo_perfil,
+)
 from services.ruc_validator import format_ruc, validate_ruc
 from services.summary import generate_summary
 
@@ -200,10 +216,55 @@ def _migrate(conn: sqlite3.Connection) -> None:
         ("razon_social_sri", "TEXT"),
         ("razon_social_supercias", "TEXT"),
         ("representante_legal_sri", "TEXT"),
+        # SRI — alerta crítica del levantamiento (SI / NO).
+        ("contribuyente_fantasma", "TEXT"),
+        ("transacciones_inexistentes", "TEXT"),
     ]:
         if col not in cp_existing:
             conn.execute(f"ALTER TABLE company_profiles ADD COLUMN {col} {col_type}")
     _backfill_source_names(conn)
+
+    # Administradores y accionistas: tipo de identificación, datos del
+    # levantamiento y fuente/fecha de consulta de cada registro.
+    people_columns = {
+        "company_administrators": [
+            ("tipo_identificacion", "TEXT"),
+            ("fuente", "TEXT"),
+            ("fecha_consulta", "TEXT"),
+        ],
+        "company_shareholders": [
+            ("tipo_identificacion", "TEXT"),
+            ("participacion_porcentaje", "REAL"),
+            ("capital", "REAL"),
+            ("beneficiario_final", "TEXT"),
+            ("fuente", "TEXT"),
+            ("fecha_consulta", "TEXT"),
+        ],
+    }
+    for table, columns in people_columns.items():
+        existing_cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for col, col_type in columns:
+            if col not in existing_cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+
+    # Trazabilidad de solo inserción. El borrado solo se permite en cascada,
+    # cuando se elimina el expediente completo.
+    conn.executescript(
+        """
+        CREATE TRIGGER IF NOT EXISTS prevent_data_provenance_update
+        BEFORE UPDATE ON data_provenance
+        BEGIN
+            SELECT RAISE(ABORT, 'data_provenance is append-only');
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS prevent_data_provenance_delete
+        BEFORE DELETE ON data_provenance
+        WHEN EXISTS (SELECT 1 FROM audits WHERE id = OLD.audit_id)
+        BEGIN
+            SELECT RAISE(ABORT, 'data_provenance is append-only');
+        END;
+        """
+    )
 
     # sessions: agregar csrf_token si la BD fue creada antes de esta versión
     sess_existing = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
@@ -487,6 +548,8 @@ def apply_sri_research_result(
         ).fetchone()
         if audit is None:
             raise ValueError("Auditoría no encontrada")
+        profile_before = _fetch_row(conn, "company_profiles", audit_id)
+        location_before = _fetch_row(conn, "company_locations", audit_id)
 
         conn.execute(
             """
@@ -575,6 +638,11 @@ def apply_sri_research_result(
                 research["sri_info"], user_id, ts,
             ),
         )
+        _record_catalog_changes(
+            conn, audit_id, profile_before, location_before,
+            FUENTE_CATASTRO_SRI, user_id,
+        )
+
         conn.execute(
             """
             UPDATE source_checks
@@ -684,6 +752,8 @@ def apply_supercias_research_result(
         ).fetchone()
         if audit is None:
             raise ValueError("Auditoría no encontrada")
+        profile_before = _fetch_row(conn, "company_profiles", audit_id)
+        location_before = _fetch_row(conn, "company_locations", audit_id)
 
         profile_cols = [
             "expediente_supercias", "razon_social", "razon_social_supercias", "situacion_legal",
@@ -727,7 +797,12 @@ def apply_supercias_research_result(
             (audit_id, *(location[c] for c in loc_cols), ts),
         )
 
-        _register_directory_administrators(conn, audit_id, result.get("administradores", []))
+        corte = (catalogo.get("fecha_actualizacion") or "").strip()
+        fuente = f"{FUENTE_DIRECTORIO_SUPERCIAS}, corte {corte}" if corte else FUENTE_DIRECTORIO_SUPERCIAS
+        _record_catalog_changes(conn, audit_id, profile_before, location_before, fuente, user_id)
+        _register_directory_administrators(
+            conn, audit_id, result.get("administradores", []), fuente, user_id,
+        )
 
         conn.execute(
             """
@@ -786,10 +861,36 @@ def apply_supercias_research_result(
         )
 
 
+def _record_catalog_changes(
+    conn: sqlite3.Connection,
+    audit_id: int,
+    profile_before: sqlite3.Row | None,
+    location_before: sqlite3.Row | None,
+    fuente: str,
+    user_id: int | None,
+) -> None:
+    """Registra los campos que cambió una consulta a un catálogo local. La
+    fecha de consulta es la de la búsqueda; el corte del catálogo va en la
+    fuente."""
+    fecha = _today()
+    _record_row_changes(
+        conn, audit_id, profile_before, _fetch_row(conn, "company_profiles", audit_id),
+        CAMPOS_PERFIL_SRI + CAMPOS_PERFIL_SUPERCIAS, bloque_de_campo_perfil,
+        lambda _campo: fuente, fecha, user_id,
+    )
+    _record_row_changes(
+        conn, audit_id, location_before, _fetch_row(conn, "company_locations", audit_id),
+        CAMPOS_UBICACION, lambda _campo: BLOQUE_UBICACION,
+        lambda _campo: fuente, fecha, user_id,
+    )
+
+
 def _register_directory_administrators(
     conn: sqlite3.Connection,
     audit_id: int,
     administradores: list[dict[str, str]],
+    fuente: str = FUENTE_DIRECTORIO_SUPERCIAS,
+    user_id: int | None = None,
 ) -> None:
     """Registra en la nómina los administradores que publica el Directorio.
 
@@ -811,12 +912,18 @@ def _register_directory_administrators(
         key = (normalizar_texto(nombre), normalizar_texto(cargo))
         if not nombre or not cargo or key in existing:
             continue
-        conn.execute(
+        fecha = _today()
+        cur = conn.execute(
             """
-            INSERT INTO company_administrators (audit_id, identificacion, nombre, nacionalidad, cargo)
-            VALUES (?, '', ?, '', ?)
+            INSERT INTO company_administrators
+                (audit_id, identificacion, nombre, nacionalidad, cargo, fuente, fecha_consulta)
+            VALUES (?, '', ?, '', ?, ?, ?)
             """,
-            (audit_id, nombre, cargo),
+            (audit_id, nombre, cargo, fuente, fecha),
+        )
+        _record_provenance(
+            conn, audit_id, BLOQUE_ADMINISTRADORES, f"registro:{cur.lastrowid}",
+            None, _person_summary(nombre, cargo), fuente, fecha, user_id,
         )
         existing.add(key)
 
@@ -1161,6 +1268,9 @@ def _load_radar_context(conn: sqlite3.Connection, audit_id: int) -> dict[str, An
         )),
         "sources": list(conn.execute(
             "SELECT * FROM sources WHERE audit_id = ? ORDER BY created_at DESC, id DESC", (audit_id,)
+        )),
+        "provenance": list(conn.execute(
+            "SELECT * FROM data_provenance WHERE audit_id = ? ORDER BY id", (audit_id,)
         )),
     }
 
@@ -1593,6 +1703,7 @@ PROFILE_FORM_FIELDS = (
     "razon_social_sri", "estado_contribuyente", "tipo_contribuyente", "regimen",
     "obligado_contabilidad", "agente_retencion", "contribuyente_especial",
     "fecha_inicio_actividades", "actividad_economica", "representante_legal_sri",
+    "contribuyente_fantasma", "transacciones_inexistentes",
     "razon_social_supercias", "expediente_supercias", "nacionalidad", "tipo_compania",
     "situacion_legal", "fecha_constitucion", "plazo_social", "oficina_control",
     "objeto_social", "representante_legal", "representante_cargo", "telefono",
@@ -1602,6 +1713,100 @@ PROFILE_FORM_FIELDS = (
 LOCATION_FORM_FIELDS = (
     "provincia", "canton", "ciudad", "calle", "numero", "interseccion", "barrio", "referencia",
 )
+
+# Campos de lista cerrada: el servidor rechaza cualquier otro valor.
+PROFILE_CLOSED_VALUES = {
+    "contribuyente_fantasma": {"", "SI", "NO"},
+    "transacciones_inexistentes": {"", "SI", "NO"},
+}
+
+
+# ---------------------------------------------------------------------------
+# Trazabilidad por dato
+# ---------------------------------------------------------------------------
+
+def _record_provenance(
+    conn: sqlite3.Connection,
+    audit_id: int,
+    bloque: str,
+    campo: str,
+    anterior: Any,
+    nuevo: Any,
+    fuente: str,
+    fecha_consulta: str,
+    user_id: int | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO data_provenance (
+            audit_id, bloque, campo, valor_anterior, valor_nuevo,
+            fuente, fecha_consulta, registrado_por, registrado_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (audit_id, bloque, campo, anterior, nuevo, fuente, fecha_consulta, user_id, now_iso()),
+    )
+
+
+def _text(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def _record_row_changes(
+    conn: sqlite3.Connection,
+    audit_id: int,
+    before: sqlite3.Row | None,
+    after: sqlite3.Row | None,
+    campos: tuple[str, ...],
+    bloque_de: Any,
+    fuente_de: Any,
+    fecha_consulta: str,
+    user_id: int | None,
+) -> None:
+    """Registra en data_provenance cada campo de campos cuyo valor cambió.
+
+    También registra un valor que no cambió pero nunca tuvo trazabilidad (datos
+    capturados antes de la Fase 3): así, volver a consultar la fuente le da su
+    primera fuente y fecha en lugar de dejarlo sin rastro para siempre.
+
+    bloque_de y fuente_de reciben el nombre del campo y devuelven su bloque y
+    su fuente; un bloque vacío significa que el campo no se historiza.
+    """
+    if after is None:
+        return
+    traced = {
+        (row["bloque"], row["campo"])
+        for row in conn.execute(
+            "SELECT DISTINCT bloque, campo FROM data_provenance WHERE audit_id = ?", (audit_id,)
+        )
+    }
+    for campo in campos:
+        anterior = _text(before[campo]) if before is not None else ""
+        nuevo = _text(after[campo])
+        bloque = bloque_de(campo)
+        untraced = bool(nuevo) and (bloque, campo) not in traced
+        if bloque and (anterior != nuevo or untraced):
+            _record_provenance(
+                conn, audit_id, bloque, campo, anterior or None, nuevo or None,
+                fuente_de(campo), fecha_consulta, user_id,
+            )
+
+
+def _fetch_row(conn: sqlite3.Connection, table: str, audit_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        f"SELECT * FROM {table} WHERE audit_id = ?", (audit_id,)  # noqa: S608
+    ).fetchone()
+
+
+def list_provenance(audit_id: int, db_path: Path | str = DB_PATH) -> list[sqlite3.Row]:
+    """Historial de trazabilidad del expediente en orden cronológico."""
+    with connect(db_path) as conn:
+        return list(conn.execute(
+            "SELECT * FROM data_provenance WHERE audit_id = ? ORDER BY id", (audit_id,)
+        ))
+
+
+def _today() -> str:
+    return datetime.now().date().isoformat()
 
 
 def _update_fields(
@@ -1632,16 +1837,55 @@ def _update_fields(
     )
 
 
-def update_company_profile_fields(audit_id: int, data: dict, db_path: Path | str = DB_PATH) -> None:
-    """Guarda en el perfil solo los campos enviados por el formulario."""
+def update_company_profile_fields(
+    audit_id: int,
+    data: dict,
+    db_path: Path | str = DB_PATH,
+    *,
+    user_id: int | None = None,
+    fecha_consulta: str | None = None,
+) -> None:
+    """Guarda en el perfil solo los campos enviados por el formulario y
+    registra cada cambio con la fuente de su bloque (SRI o Supercias)."""
+    for campo, permitidos in PROFILE_CLOSED_VALUES.items():
+        if campo in data and _text(data[campo]).upper() not in permitidos:
+            raise ValueError(f"Valor no permitido para {campo}: use SI o NO")
+        if campo in data:
+            data = {**data, campo: _text(data[campo]).upper()}
+    fecha = fecha_consulta or _today()
     with connect(db_path) as conn:
+        before = _fetch_row(conn, "company_profiles", audit_id)
         _update_fields(conn, "company_profiles", audit_id, data, PROFILE_FORM_FIELDS)
+        after = _fetch_row(conn, "company_profiles", audit_id)
+        _record_row_changes(
+            conn, audit_id, before, after, PROFILE_FORM_FIELDS,
+            bloque_de_campo_perfil,
+            lambda campo: FUENTE_MANUAL_POR_BLOQUE[bloque_de_campo_perfil(campo)],
+            fecha, user_id,
+        )
 
 
-def update_company_location_fields(audit_id: int, data: dict, db_path: Path | str = DB_PATH) -> None:
-    """Guarda en la ubicación solo los campos enviados por el formulario."""
+def update_company_location_fields(
+    audit_id: int,
+    data: dict,
+    db_path: Path | str = DB_PATH,
+    *,
+    user_id: int | None = None,
+    fecha_consulta: str | None = None,
+) -> None:
+    """Guarda en la ubicación solo los campos enviados por el formulario y
+    registra cada cambio con la fuente del bloque Ubicación."""
+    fecha = fecha_consulta or _today()
     with connect(db_path) as conn:
+        before = _fetch_row(conn, "company_locations", audit_id)
         _update_fields(conn, "company_locations", audit_id, data, LOCATION_FORM_FIELDS)
+        after = _fetch_row(conn, "company_locations", audit_id)
+        _record_row_changes(
+            conn, audit_id, before, after, LOCATION_FORM_FIELDS,
+            lambda _campo: BLOQUE_UBICACION,
+            lambda _campo: FUENTE_SUPERCIAS_UBICACION,
+            fecha, user_id,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1702,6 +1946,21 @@ def list_shareholders(audit_id: int, db_path: Path | str = DB_PATH) -> list[sqli
         ))
 
 
+def _person_summary(*parts: Any) -> str:
+    """Texto de un registro de persona para el historial: "NOMBRE | CARGO | ID"."""
+    return " | ".join(_text(p) for p in parts if _text(p))
+
+
+def _touch_audit(conn: sqlite3.Connection, audit_id: int) -> None:
+    conn.execute("UPDATE audits SET updated_at = ? WHERE id = ?", (now_iso(), audit_id))
+
+
+def _administrator_summary(row: sqlite3.Row) -> str:
+    return _person_summary(
+        row["nombre"], row["cargo"], row["tipo_identificacion"], row["identificacion"], row["nacionalidad"],
+    )
+
+
 def add_administrator(
     audit_id: int,
     identificacion: str,
@@ -1709,8 +1968,16 @@ def add_administrator(
     nacionalidad: str,
     cargo: str,
     db_path: Path | str = DB_PATH,
+    *,
+    tipo_identificacion: str = "",
+    fecha_consulta: str | None = None,
+    user_id: int | None = None,
 ) -> int:
-    identificacion = identificacion.strip()
+    """Registra un administrador transcrito desde "Administradores actuales".
+
+    La identificación es opcional al guardar (su falta se exige antes del
+    resumen), pero si se ingresa debe cumplir el formato de su tipo.
+    """
     nombre = nombre.strip()
     nacionalidad = nacionalidad.strip()
     cargo = cargo.strip()
@@ -1718,8 +1985,12 @@ def add_administrator(
         raise ValueError("Nombre y cargo del administrador son obligatorios")
     if len(nombre) > 160 or len(cargo) > 120:
         raise ValueError("Nombre o cargo excede la longitud permitida")
-    if len(identificacion) > 32 or len(nacionalidad) > 80:
+    if len(identificacion.strip()) > 32 or len(nacionalidad) > 80:
         raise ValueError("Identificacion o nacionalidad excede la longitud permitida")
+    tipo, identificacion, _warning = validar_identificacion(
+        identificacion, tipo_identificacion, ("cedula", "pasaporte"),
+    )
+    fecha = fecha_consulta or _today()
 
     with connect(db_path) as conn:
         # Misma regla que _register_directory_administrators: sin distinguir
@@ -1736,28 +2007,162 @@ def add_administrator(
         cur = conn.execute(
             """
             INSERT INTO company_administrators
-                (audit_id, identificacion, nombre, nacionalidad, cargo)
-            VALUES (?, ?, ?, ?, ?)
+                (audit_id, tipo_identificacion, identificacion, nombre, nacionalidad, cargo,
+                 fuente, fecha_consulta)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (audit_id, identificacion, nombre, nacionalidad, cargo),
+            (audit_id, tipo, identificacion, nombre, nacionalidad, cargo,
+             FUENTE_SUPERCIAS_ADMINISTRADORES, fecha),
         )
-        conn.execute("UPDATE audits SET updated_at = ? WHERE id = ?", (now_iso(), audit_id))
+        row = conn.execute("SELECT * FROM company_administrators WHERE id = ?", (cur.lastrowid,)).fetchone()
+        _record_provenance(
+            conn, audit_id, BLOQUE_ADMINISTRADORES, f"registro:{cur.lastrowid}",
+            None, _administrator_summary(row), FUENTE_SUPERCIAS_ADMINISTRADORES, fecha, user_id,
+        )
+        _touch_audit(conn, audit_id)
         return int(cur.lastrowid)
+
+
+def update_administrator(
+    audit_id: int,
+    administrator_id: int,
+    *,
+    tipo_identificacion: str,
+    identificacion: str,
+    nacionalidad: str,
+    fecha_consulta: str | None = None,
+    user_id: int | None = None,
+    db_path: Path | str = DB_PATH,
+) -> None:
+    """Completa la identificación y la nacionalidad de un administrador ya
+    registrado (p. ej. el que trajo el Directorio sin cédula). Nombre y cargo
+    no se editan: si están mal, el registro se elimina y se vuelve a crear."""
+    nacionalidad = nacionalidad.strip()
+    if len(nacionalidad) > 80 or len(identificacion.strip()) > 32:
+        raise ValueError("Identificacion o nacionalidad excede la longitud permitida")
+    tipo, identificacion, _warning = validar_identificacion(
+        identificacion, tipo_identificacion, ("cedula", "pasaporte"),
+    )
+    fecha = fecha_consulta or _today()
+    with connect(db_path) as conn:
+        before = conn.execute(
+            "SELECT * FROM company_administrators WHERE id = ? AND audit_id = ?",
+            (administrator_id, audit_id),
+        ).fetchone()
+        if before is None:
+            raise ValueError("Administrador no encontrado en este expediente")
+        conn.execute(
+            """
+            UPDATE company_administrators
+            SET tipo_identificacion = ?, identificacion = ?, nacionalidad = ?,
+                fuente = ?, fecha_consulta = ?
+            WHERE id = ? AND audit_id = ?
+            """,
+            (tipo, identificacion, nacionalidad, FUENTE_SUPERCIAS_ADMINISTRADORES, fecha,
+             administrator_id, audit_id),
+        )
+        after = conn.execute(
+            "SELECT * FROM company_administrators WHERE id = ?", (administrator_id,)
+        ).fetchone()
+        if _administrator_summary(before) != _administrator_summary(after):
+            _record_provenance(
+                conn, audit_id, BLOQUE_ADMINISTRADORES, f"registro:{administrator_id}",
+                _administrator_summary(before), _administrator_summary(after),
+                FUENTE_SUPERCIAS_ADMINISTRADORES, fecha, user_id,
+            )
+        _touch_audit(conn, audit_id)
 
 
 def delete_administrator(
     audit_id: int,
     administrator_id: int,
     db_path: Path | str = DB_PATH,
+    *,
+    user_id: int | None = None,
 ) -> None:
     with connect(db_path) as conn:
-        cur = conn.execute(
+        row = conn.execute(
+            "SELECT * FROM company_administrators WHERE id = ? AND audit_id = ?",
+            (administrator_id, audit_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Administrador no encontrado en este expediente")
+        conn.execute(
             "DELETE FROM company_administrators WHERE id = ? AND audit_id = ?",
             (administrator_id, audit_id),
         )
-        if cur.rowcount != 1:
-            raise ValueError("Administrador no encontrado en este expediente")
-        conn.execute("UPDATE audits SET updated_at = ? WHERE id = ?", (now_iso(), audit_id))
+        # La eliminación queda en el historial: el registro deja de existir,
+        # pero no el rastro de que existió y de quién lo quitó.
+        _record_provenance(
+            conn, audit_id, BLOQUE_ADMINISTRADORES, f"registro:{administrator_id}",
+            _administrator_summary(row), None,
+            row["fuente"] or FUENTE_SUPERCIAS_ADMINISTRADORES, _today(), user_id,
+        )
+        _touch_audit(conn, audit_id)
+
+
+def _optional_number(
+    value: Any, label: str, minimum: float, maximum: float | None = None,
+) -> float | None:
+    """Número opcional del formulario (acepta coma decimal). Vacío -> None."""
+    text = _text(value).replace(" ", "")
+    if not text:
+        return None
+    if "," in text and "." not in text:
+        text = text.replace(",", ".")
+    try:
+        number = float(text)
+    except ValueError as exc:
+        raise ValueError(f"{label} debe ser un número") from exc
+    if number < minimum or (maximum is not None and number > maximum):
+        rango = f"entre {minimum:g} y {maximum:g}" if maximum is not None else f"mayor o igual a {minimum:g}"
+        raise ValueError(f"{label} debe estar {rango}")
+    return number
+
+
+def _shareholder_summary(row: sqlite3.Row) -> str:
+    participacion = row["participacion_porcentaje"]
+    capital = row["capital"]
+    return _person_summary(
+        row["nombre"], row["tipo_identificacion"], row["identificacion"],
+        f"{participacion:g} %" if participacion is not None else "",
+        f"capital {capital:,.2f}" if capital is not None else "",
+        f"beneficiario final: {row['beneficiario_final']}" if _text(row["beneficiario_final"]) else "",
+    )
+
+
+def _validate_shareholder_details(
+    identificacion: str,
+    tipo_identificacion: str,
+    participacion_porcentaje: Any,
+    capital: Any,
+    beneficiario_final: str,
+) -> tuple[str, str, float | None, float | None, str]:
+    beneficiario_final = _text(beneficiario_final)
+    if len(identificacion.strip()) > 32 or len(beneficiario_final) > 160:
+        raise ValueError("Identificacion o beneficiario final excede la longitud permitida")
+    tipo, identificacion, _warning = validar_identificacion(
+        identificacion, tipo_identificacion, ("cedula", "ruc", "pasaporte"),
+    )
+    participacion = _optional_number(participacion_porcentaje, "El porcentaje de participacion", 0, 100)
+    capital_value = _optional_number(capital, "El capital de participacion", 0)
+    return tipo, identificacion, participacion, capital_value, beneficiario_final
+
+
+def _shareholder_duplicate(
+    existing: list[sqlite3.Row], nombre: str, identificacion: str, exclude_id: int | None = None,
+) -> bool:
+    normalized_name = normalizar_texto(nombre)
+    normalized_id = identificacion.casefold()
+    for row in existing:
+        if exclude_id is not None and row["id"] == exclude_id:
+            continue
+        same_id = bool(normalized_id and normalized_id not in {"-", "--", "—"}) and (
+            (row["identificacion"] or "").strip().casefold() == normalized_id
+        )
+        if same_id or normalizar_texto(row["nombre"]) == normalized_name:
+            return True
+    return False
 
 
 def add_shareholder(
@@ -1766,13 +2171,22 @@ def add_shareholder(
     identificacion: str,
     nombre: str,
     db_path: Path | str = DB_PATH,
+    *,
+    tipo_identificacion: str = "",
+    participacion_porcentaje: Any = "",
+    capital: Any = "",
+    beneficiario_final: str = "",
+    fecha_consulta: str | None = None,
+    user_id: int | None = None,
 ) -> int:
-    identificacion = identificacion.strip()
     nombre = nombre.strip()
     if not nombre:
         raise ValueError("El nombre del accionista es obligatorio")
-    if len(nombre) > 160 or len(identificacion) > 32:
+    if len(nombre) > 160:
         raise ValueError("Nombre o identificacion excede la longitud permitida")
+    tipo, identificacion, participacion, capital_value, beneficiario_final = _validate_shareholder_details(
+        identificacion, tipo_identificacion, participacion_porcentaje, capital, beneficiario_final,
+    )
 
     raw_number = str(numero or "").strip()
     if raw_number:
@@ -1784,50 +2198,119 @@ def add_shareholder(
             raise ValueError("El numero del accionista debe ser un entero positivo")
     else:
         position = 0
+    fecha = fecha_consulta or _today()
 
     with connect(db_path) as conn:
         existing = list(conn.execute(
             "SELECT id, numero, identificacion, nombre FROM company_shareholders WHERE audit_id = ?",
             (audit_id,),
         ))
-        normalized_name = nombre.casefold()
-        normalized_id = identificacion.casefold()
-        for row in existing:
-            same_id = bool(normalized_id and normalized_id not in {"-", "--", "—"}) and (
-                (row["identificacion"] or "").strip().casefold() == normalized_id
-            )
-            same_name = (row["nombre"] or "").strip().casefold() == normalized_name
-            if same_id or same_name:
-                raise ValueError("El accionista ya esta registrado")
-            if position and row["numero"] == position:
-                raise ValueError("El numero de accionista ya esta en uso")
+        if _shareholder_duplicate(existing, nombre, identificacion):
+            raise ValueError("El accionista ya esta registrado")
+        if position and any(row["numero"] == position for row in existing):
+            raise ValueError("El numero de accionista ya esta en uso")
         if not position:
             position = max((int(row["numero"] or 0) for row in existing), default=0) + 1
 
         cur = conn.execute(
             """
-            INSERT INTO company_shareholders (audit_id, numero, identificacion, nombre)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO company_shareholders (
+                audit_id, numero, tipo_identificacion, identificacion, nombre,
+                participacion_porcentaje, capital, beneficiario_final, fuente, fecha_consulta
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (audit_id, position, identificacion, nombre),
+            (audit_id, position, tipo, identificacion, nombre, participacion, capital_value,
+             beneficiario_final, FUENTE_SUPERCIAS_ACCIONISTAS, fecha),
         )
-        conn.execute("UPDATE audits SET updated_at = ? WHERE id = ?", (now_iso(), audit_id))
+        row = conn.execute("SELECT * FROM company_shareholders WHERE id = ?", (cur.lastrowid,)).fetchone()
+        _record_provenance(
+            conn, audit_id, BLOQUE_ACCIONISTAS, f"registro:{cur.lastrowid}",
+            None, _shareholder_summary(row), FUENTE_SUPERCIAS_ACCIONISTAS, fecha, user_id,
+        )
+        _touch_audit(conn, audit_id)
         return int(cur.lastrowid)
+
+
+def update_shareholder(
+    audit_id: int,
+    shareholder_id: int,
+    *,
+    tipo_identificacion: str,
+    identificacion: str,
+    participacion_porcentaje: Any = "",
+    capital: Any = "",
+    beneficiario_final: str = "",
+    fecha_consulta: str | None = None,
+    user_id: int | None = None,
+    db_path: Path | str = DB_PATH,
+) -> None:
+    """Completa identificación, participación y beneficiario final de un
+    accionista ya registrado. El nombre no se edita."""
+    tipo, identificacion, participacion, capital_value, beneficiario_final = _validate_shareholder_details(
+        identificacion, tipo_identificacion, participacion_porcentaje, capital, beneficiario_final,
+    )
+    fecha = fecha_consulta or _today()
+    with connect(db_path) as conn:
+        before = conn.execute(
+            "SELECT * FROM company_shareholders WHERE id = ? AND audit_id = ?",
+            (shareholder_id, audit_id),
+        ).fetchone()
+        if before is None:
+            raise ValueError("Accionista no encontrado en este expediente")
+        existing = list(conn.execute(
+            "SELECT id, numero, identificacion, nombre FROM company_shareholders WHERE audit_id = ?",
+            (audit_id,),
+        ))
+        if identificacion and any(
+            row["id"] != shareholder_id
+            and (row["identificacion"] or "").strip().casefold() == identificacion.casefold()
+            for row in existing
+        ):
+            raise ValueError("Otro accionista ya tiene esa identificacion")
+        conn.execute(
+            """
+            UPDATE company_shareholders
+            SET tipo_identificacion = ?, identificacion = ?, participacion_porcentaje = ?,
+                capital = ?, beneficiario_final = ?, fuente = ?, fecha_consulta = ?
+            WHERE id = ? AND audit_id = ?
+            """,
+            (tipo, identificacion, participacion, capital_value, beneficiario_final,
+             FUENTE_SUPERCIAS_ACCIONISTAS, fecha, shareholder_id, audit_id),
+        )
+        after = conn.execute("SELECT * FROM company_shareholders WHERE id = ?", (shareholder_id,)).fetchone()
+        if _shareholder_summary(before) != _shareholder_summary(after):
+            _record_provenance(
+                conn, audit_id, BLOQUE_ACCIONISTAS, f"registro:{shareholder_id}",
+                _shareholder_summary(before), _shareholder_summary(after),
+                FUENTE_SUPERCIAS_ACCIONISTAS, fecha, user_id,
+            )
+        _touch_audit(conn, audit_id)
 
 
 def delete_shareholder(
     audit_id: int,
     shareholder_id: int,
     db_path: Path | str = DB_PATH,
+    *,
+    user_id: int | None = None,
 ) -> None:
     with connect(db_path) as conn:
-        cur = conn.execute(
+        row = conn.execute(
+            "SELECT * FROM company_shareholders WHERE id = ? AND audit_id = ?",
+            (shareholder_id, audit_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Accionista no encontrado en este expediente")
+        conn.execute(
             "DELETE FROM company_shareholders WHERE id = ? AND audit_id = ?",
             (shareholder_id, audit_id),
         )
-        if cur.rowcount != 1:
-            raise ValueError("Accionista no encontrado en este expediente")
-        conn.execute("UPDATE audits SET updated_at = ? WHERE id = ?", (now_iso(), audit_id))
+        _record_provenance(
+            conn, audit_id, BLOQUE_ACCIONISTAS, f"registro:{shareholder_id}",
+            _shareholder_summary(row), None,
+            row["fuente"] or FUENTE_SUPERCIAS_ACCIONISTAS, _today(), user_id,
+        )
+        _touch_audit(conn, audit_id)
 
 
 # ---------------------------------------------------------------------------
