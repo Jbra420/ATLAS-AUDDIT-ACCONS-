@@ -23,6 +23,8 @@ from __future__ import annotations
 import re
 import sqlite3
 
+from services.rowutil import row_get
+
 
 # ---------------------------------------------------------------------------
 # Señales automáticas
@@ -209,6 +211,7 @@ def generate_summary(
     # ── Sección 2: Estado tributario SRI ──────────────────────────────────
     if profile:
         sec2_lines = [
+            f"  Razón social         : {_val(row_get(profile, 'razon_social_sri'))}",
             f"  Estado contribuyente : {_val(profile['estado_contribuyente'])}",
             f"  Tipo contribuyente   : {_val(profile['tipo_contribuyente'])}",
             f"  Régimen              : {_val(profile['regimen'])}",
@@ -217,7 +220,7 @@ def generate_summary(
             f"  Contribuyente esp.   : {_val(profile['contribuyente_especial'])}",
             f"  Fecha inicio act.    : {_val(profile['fecha_inicio_actividades'])}",
             f"  Última actualización : {_val(profile['fecha_actualizacion'])}",
-            f"  Representante legal  : {_val(profile['representante_legal'])}",
+            f"  Representante legal  : {_val(row_get(profile, 'representante_legal_sri'))}",
         ]
     else:
         sec2_lines = [
@@ -229,11 +232,14 @@ def generate_summary(
     # ── Sección 3: Estado societario Supercias ────────────────────────────
     if profile:
         sec3_lines = [
+            f"  Razón social         : {_val(row_get(profile, 'razon_social_supercias'))}",
             f"  Situación legal      : {_val(profile['situacion_legal'])}",
             f"  Tipo compañía        : {_val(profile['tipo_compania'])}",
             f"  Fecha constitución   : {_val(profile['fecha_constitucion'])}",
             f"  Oficina control      : {_val(profile['oficina_control'])}",
             f"  Expediente           : {_val(profile['expediente_supercias'])}",
+            f"  Plazo social         : {_val(row_get(profile, 'plazo_social'))}",
+            f"  Representante legal  : {_val(row_get(profile, 'representante_legal'))}",
         ]
     else:
         sec3_lines = [

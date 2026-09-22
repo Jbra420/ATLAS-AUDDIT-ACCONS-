@@ -26,7 +26,7 @@ from urllib.request import urlopen, Request
 from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
 
-from database import connect, create_company_audit
+from database import connect, create_company_audit, load_demo_if_ruc_matches
 from seed_data import DEMO_RUC
 
 SERVER_HOST = "127.0.0.1"
@@ -274,6 +274,9 @@ class TestHTTPAuditorFlow(unittest.TestCase):
             f"Empresa flujo HTTP {time.time_ns()}", DEMO_RUC, "Cuenca",
             "Servicios de alojamiento", "2026", auditor_id, admin_id,
         )
+        # Crear el expediente ya no carga datos demo; la prueba los carga de
+        # forma explícita para tener administradores y accionistas.
+        load_demo_if_ruc_matches(audit_id, DEMO_RUC)
         with connect() as conn:
             company_id = conn.execute(
                 "SELECT company_id FROM audits WHERE id = ?", (audit_id,)
@@ -320,6 +323,49 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         )
         self.assertEqual(status, 303)
         self.assertIn("msg=Resumen+generado", location)
+
+    def test_saving_one_tab_does_not_erase_another(self):
+        """Regresión: /auditor/radar/profile guardaba perfil y ubicación con lo
+        que llegara en el formulario, así que guardar Ubicación vaciaba SRI y
+        Supercias, y guardar SRI vaciaba la ubicación."""
+        with connect() as conn:
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+        audit_id = create_company_audit(
+            f"Empresa guardado parcial {time.time_ns()}", "", "Cuenca", "", "2025", auditor_id, admin_id,
+        )
+        with connect() as conn:
+            company_id = conn.execute("SELECT company_id FROM audits WHERE id = ?", (audit_id,)).fetchone()["company_id"]
+
+        def cleanup_company() -> None:
+            with connect() as conn:
+                conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+
+        self.addCleanup(cleanup_company)
+
+        page = f"/auditor/radar?audit_id={audit_id}&tab=sri"
+        forms = [
+            {"return_tab": "sri", "estado_contribuyente": "ACTIVO", "regimen": "GENERAL"},
+            {"return_tab": "supercias", "situacion_legal": "ACTIVA", "plazo_social": "2061-08-24"},
+            {"return_tab": "ubicacion", "calle": "AV. DEL ESTADIO", "numero": "S/N"},
+        ]
+        for fields in forms:
+            status, _, _ = _post_raw(
+                "/auditor/radar/profile",
+                {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), **fields},
+                self.cookie,
+            )
+            self.assertEqual(status, 303)
+
+        with connect() as conn:
+            profile = conn.execute("SELECT * FROM company_profiles WHERE audit_id = ?", (audit_id,)).fetchone()
+            location = conn.execute("SELECT * FROM company_locations WHERE audit_id = ?", (audit_id,)).fetchone()
+        self.assertEqual(profile["estado_contribuyente"], "ACTIVO")
+        self.assertEqual(profile["regimen"], "GENERAL")
+        self.assertEqual(profile["situacion_legal"], "ACTIVA")
+        self.assertEqual(profile["plazo_social"], "2061-08-24")
+        self.assertEqual(location["calle"], "AV. DEL ESTADIO")
+        self.assertEqual(location["numero"], "S/N")
 
 
 @unittest.skipUnless(_server_available(), "Servidor Atlas no disponible en localhost:8765 — inicia con: python3 app.py")

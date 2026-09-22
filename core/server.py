@@ -19,6 +19,8 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 
 from database import (
     DB_PATH,
+    LOCATION_FORM_FIELDS,
+    PROFILE_FORM_FIELDS,
     add_administrator,
     add_shareholder,
     add_source,
@@ -48,8 +50,8 @@ from database import (
     reactivate_user,
     reassign_audit,
     soft_delete_user,
-    upsert_company_profile,
-    upsert_company_location,
+    update_company_location_fields,
+    update_company_profile_fields,
     upsert_financial_snapshot,
     user_from_session,
     validate_csrf_token,
@@ -696,26 +698,13 @@ class AtlasHandler(BaseHTTPRequestHandler):
                            '<div class="error-msg">Auditoría no disponible.</div>'), 403,
                 )
                 return
-            profile_data = {
-                k: form_value(form, k)
-                for k in [
-                    "ruc", "razon_social", "estado_contribuyente", "tipo_contribuyente",
-                    "regimen", "categoria", "obligado_contabilidad", "agente_retencion",
-                    "contribuyente_especial", "fecha_inicio_actividades", "fecha_actualizacion",
-                    "actividad_economica", "representante_legal", "expediente_supercias",
-                    "nacionalidad", "tipo_compania", "situacion_legal", "fecha_constitucion",
-                    "plazo_social", "oficina_control", "objeto_social",
-                    "telefono", "representante_cargo", "capital_suscrito",
-                    "ciiu_nivel1", "ciiu_nivel6", "ultimo_anio_balance",
-                ]
-            }
-            loc_data = {
-                k: form_value(form, k)
-                for k in ["provincia", "canton", "ciudad", "calle", "numero",
-                          "interseccion", "barrio", "referencia"]
-            }
-            upsert_company_profile(audit_id, profile_data)
-            upsert_company_location(audit_id, loc_data)
+            # Cada pestaña envía solo sus campos; los ausentes no se tocan.
+            profile_data = {k: form_value(form, k) for k in PROFILE_FORM_FIELDS if k in form}
+            loc_data = {k: form_value(form, k) for k in LOCATION_FORM_FIELDS if k in form}
+            if profile_data:
+                update_company_profile_fields(audit_id, profile_data)
+            if loc_data:
+                update_company_location_fields(audit_id, loc_data)
             tab = form_value(form, "return_tab", "sri")
             self.redirect(f"/auditor/radar?audit_id={audit_id}&msg=Datos+guardados&tab={tab}")
             return

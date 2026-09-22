@@ -51,6 +51,7 @@ def build_sri_result(record: dict[str, str]) -> dict[str, dict[str, str]]:
         "profile": {
             "ruc": ruc,
             "razon_social": name,
+            "razon_social_sri": name,
             "estado_contribuyente": (record.get("taxpayer_status") or "").strip(),
             "tipo_contribuyente": (record.get("taxpayer_type") or "").strip(),
             "categoria": (record.get("taxpayer_class") or "").strip(),

@@ -194,9 +194,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         ("ultimo_anio_balance", "TEXT"),
         ("supercias_fuente", "TEXT"),
         ("supercias_catalogo_fecha", "TEXT"),
+        # Datos por fuente: las validaciones cruzadas comparan SRI contra
+        # Supercias, así que cada fuente conserva su propio valor.
+        ("razon_social_sri", "TEXT"),
+        ("razon_social_supercias", "TEXT"),
+        ("representante_legal_sri", "TEXT"),
     ]:
         if col not in cp_existing:
             conn.execute(f"ALTER TABLE company_profiles ADD COLUMN {col} {col_type}")
+    _backfill_source_names(conn)
 
     # sessions: agregar csrf_token si la BD fue creada antes de esta versión
     sess_existing = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
@@ -214,6 +220,51 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
         """
     )
+
+
+def _backfill_source_names(conn: sqlite3.Connection) -> None:
+    """Completa razon_social_sri / razon_social_supercias en expedientes que ya
+    fueron consultados antes de existir esas columnas.
+
+    Solo usa el catálogo que efectivamente se consultó en ese expediente
+    (evidencia 'Catastro RUC SRI (base local)' o supercias_fuente =
+    'catalogo_local'), para no atribuir a un expediente datos de una fuente
+    que el auditor nunca consultó. Si el RUC ya no consta en el catálogo, el
+    campo queda vacío (pendiente de confirmar).
+    """
+    rows = list(conn.execute(
+        """
+        SELECT p.audit_id, p.ruc, p.razon_social_sri, p.razon_social_supercias,
+               p.supercias_fuente,
+               EXISTS (
+                   SELECT 1 FROM sources s
+                   WHERE s.audit_id = p.audit_id AND s.source_type = 'SRI'
+                     AND s.title = 'Catastro RUC SRI (base local)'
+               ) AS sri_consultado
+        FROM company_profiles p
+        WHERE TRIM(COALESCE(p.ruc, '')) <> ''
+          AND (TRIM(COALESCE(p.razon_social_sri, '')) = ''
+               OR TRIM(COALESCE(p.razon_social_supercias, '')) = '')
+        """
+    ))
+    for row in rows:
+        ruc = row["ruc"].strip()
+        if row["sri_consultado"] and not (row["razon_social_sri"] or "").strip():
+            record = lookup_catastro(ruc)
+            name = ((record or {}).get("name") or "").strip()
+            if name:
+                conn.execute(
+                    "UPDATE company_profiles SET razon_social_sri = ? WHERE audit_id = ?",
+                    (name, row["audit_id"]),
+                )
+        if row["supercias_fuente"] == "catalogo_local" and not (row["razon_social_supercias"] or "").strip():
+            record = lookup_supercias_catalog(ruc)
+            name = ((record or {}).get("razon_social") or "").strip()
+            if name:
+                conn.execute(
+                    "UPDATE company_profiles SET razon_social_supercias = ? WHERE audit_id = ?",
+                    (name, row["audit_id"]),
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -450,17 +501,18 @@ def apply_sri_research_result(
         conn.execute(
             """
             INSERT INTO company_profiles (
-                audit_id, ruc, razon_social, estado_contribuyente, tipo_contribuyente,
-                categoria, obligado_contabilidad, agente_retencion,
+                audit_id, ruc, razon_social, razon_social_sri, estado_contribuyente,
+                tipo_contribuyente, categoria, obligado_contabilidad, agente_retencion,
                 contribuyente_especial, fecha_inicio_actividades,
                 fecha_actualizacion, actividad_economica, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(audit_id) DO UPDATE SET
                 ruc = excluded.ruc,
                 razon_social = CASE
                     WHEN TRIM(COALESCE(company_profiles.razon_social, '')) = '' THEN excluded.razon_social
                     ELSE company_profiles.razon_social
                 END,
+                razon_social_sri = excluded.razon_social_sri,
                 estado_contribuyente = excluded.estado_contribuyente,
                 tipo_contribuyente = excluded.tipo_contribuyente,
                 categoria = excluded.categoria,
@@ -473,7 +525,7 @@ def apply_sri_research_result(
                 updated_at = excluded.updated_at
             """,
             (
-                audit_id, profile["ruc"], profile["razon_social"],
+                audit_id, profile["ruc"], profile["razon_social"], profile["razon_social_sri"],
                 profile["estado_contribuyente"], profile["tipo_contribuyente"],
                 profile["categoria"], profile["obligado_contabilidad"],
                 profile["agente_retencion"], profile["contribuyente_especial"],
@@ -628,7 +680,7 @@ def apply_supercias_research_result(
             raise ValueError("Auditoría no encontrada")
 
         profile_cols = [
-            "expediente_supercias", "razon_social", "situacion_legal",
+            "expediente_supercias", "razon_social", "razon_social_supercias", "situacion_legal",
             "fecha_constitucion", "tipo_compania", "nacionalidad",
             "representante_legal", "representante_cargo", "capital_suscrito",
             "ciiu_nivel1", "ciiu_nivel6", "ultimo_anio_balance", "telefono",
@@ -860,29 +912,28 @@ def create_company_audit(
             """,
             (audit_id, int(assigned_auditor_id), created_by, ts),
         )
-        # Si el RUC coincide con el demo, cargar datos automáticamente
-        if ruc.strip() == DEMO_RUC:
-            seed_demo_radar(conn, audit_id)
-        else:
-            # Crear documentos económicos en blanco
-            for nombre in DEFAULT_ECONOMIC_DOCUMENTS:
-                conn.execute(
-                    "INSERT INTO economic_documents (audit_id, nombre, fecha, estado) VALUES (?, ?, ?, 'pendiente')",
-                    (audit_id, nombre, period),
-                )
-            # Crear source checks en blanco
-            fuentes = [
-                ("SRI — Consulta de RUC", "Verificar estado tributario, tipo y actividad económica"),
-                ("Supercias — Portal societario", "Confirmar estado societario, administradores y capital"),
-                ("Supercias — Documentos económicos", "Obtener estados financieros y nómina de accionistas"),
-                ("SERCOP", "Verificar historial de contratos públicos e inhabilitaciones"),
-                ("Búsqueda web general", "Noticias, referencias, sanciones o información complementaria"),
-            ]
-            for fuente, uso in fuentes:
-                conn.execute(
-                    "INSERT INTO source_checks (audit_id, fuente, uso, estado) VALUES (?, ?, ?, 'pendiente')",
-                    (audit_id, fuente, uso),
-                )
+        # Un expediente nuevo siempre inicia en blanco, aunque el RUC coincida
+        # con el demo: ese RUC corresponde a un cliente real y el expediente no
+        # puede contener datos que no provengan de una fuente o del auditor.
+        # Los datos demo solo se cargan de forma explícita (seed_defaults y
+        # load_demo_if_ruc_matches).
+        for nombre in DEFAULT_ECONOMIC_DOCUMENTS:
+            conn.execute(
+                "INSERT INTO economic_documents (audit_id, nombre, fecha, estado) VALUES (?, ?, ?, 'pendiente')",
+                (audit_id, nombre, period),
+            )
+        fuentes = [
+            ("SRI — Consulta de RUC", "Verificar estado tributario, tipo y actividad económica"),
+            ("Supercias — Portal societario", "Confirmar estado societario, administradores y capital"),
+            ("Supercias — Documentos económicos", "Obtener estados financieros y nómina de accionistas"),
+            ("SERCOP", "Verificar historial de contratos públicos e inhabilitaciones"),
+            ("Búsqueda web general", "Noticias, referencias, sanciones o información complementaria"),
+        ]
+        for fuente, uso in fuentes:
+            conn.execute(
+                "INSERT INTO source_checks (audit_id, fuente, uso, estado) VALUES (?, ?, ?, 'pendiente')",
+                (audit_id, fuente, uso),
+            )
         return audit_id
 
 
@@ -1491,6 +1542,63 @@ def upsert_company_profile(audit_id: int, data: dict, db_path: Path | str = DB_P
                 ts,
             ),
         )
+
+
+# Campos que los formularios de las pestañas SRI y Supercias pueden editar.
+# ruc no está: el RUC del expediente solo cambia por register_audit_ruc().
+PROFILE_FORM_FIELDS = (
+    "razon_social_sri", "estado_contribuyente", "tipo_contribuyente", "regimen",
+    "obligado_contabilidad", "agente_retencion", "contribuyente_especial",
+    "fecha_inicio_actividades", "actividad_economica", "representante_legal_sri",
+    "razon_social_supercias", "expediente_supercias", "nacionalidad", "tipo_compania",
+    "situacion_legal", "fecha_constitucion", "plazo_social", "oficina_control",
+    "objeto_social", "representante_legal", "representante_cargo", "telefono",
+    "capital_suscrito", "ciiu_nivel1", "ciiu_nivel6", "ultimo_anio_balance",
+)
+
+LOCATION_FORM_FIELDS = (
+    "provincia", "canton", "ciudad", "calle", "numero", "interseccion", "barrio", "referencia",
+)
+
+
+def _update_fields(
+    conn: sqlite3.Connection,
+    table: str,
+    audit_id: int,
+    data: dict,
+    allowed: tuple[str, ...],
+) -> None:
+    """Actualiza solo las columnas presentes en data que estén en allowed.
+
+    Las columnas ausentes conservan su valor: guardar una pestaña no debe
+    vaciar los datos de otra. table y allowed son constantes del módulo,
+    nunca entrada del usuario.
+    """
+    fields = [k for k in allowed if k in data]
+    ts = now_iso()
+    conn.execute(
+        f"INSERT OR IGNORE INTO {table} (audit_id, updated_at) VALUES (?, ?)",  # noqa: S608
+        (audit_id, ts),
+    )
+    if not fields:
+        return
+    assignments = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(
+        f"UPDATE {table} SET {assignments}, updated_at = ? WHERE audit_id = ?",  # noqa: S608
+        (*(str(data[k]).strip() for k in fields), ts, audit_id),
+    )
+
+
+def update_company_profile_fields(audit_id: int, data: dict, db_path: Path | str = DB_PATH) -> None:
+    """Guarda en el perfil solo los campos enviados por el formulario."""
+    with connect(db_path) as conn:
+        _update_fields(conn, "company_profiles", audit_id, data, PROFILE_FORM_FIELDS)
+
+
+def update_company_location_fields(audit_id: int, data: dict, db_path: Path | str = DB_PATH) -> None:
+    """Guarda en la ubicación solo los campos enviados por el formulario."""
+    with connect(db_path) as conn:
+        _update_fields(conn, "company_locations", audit_id, data, LOCATION_FORM_FIELDS)
 
 
 # ---------------------------------------------------------------------------

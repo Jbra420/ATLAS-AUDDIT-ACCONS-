@@ -30,6 +30,7 @@ def build_supercias_result(record: dict[str, str]) -> dict[str, dict[str, str]]:
     profile = {
         "expediente_supercias": (record.get("expediente") or "").strip(),
         "razon_social": (record.get("razon_social") or "").strip(),
+        "razon_social_supercias": (record.get("razon_social") or "").strip(),
         "situacion_legal": (record.get("situacion_legal") or "").strip(),
         "fecha_constitucion": _clean_date(record.get("fecha_constitucion", "")),
         "tipo_compania": (record.get("tipo_compania") or "").strip(),

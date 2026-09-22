@@ -32,7 +32,6 @@ def build(
             f'Catálogo local{f" · corte {esc(fecha_cat)}" if fecha_cat else ""}</span>'
         )
 
-    sri_pass = "".join(f'<input type="hidden" name="{k}" value="{esc(pv(k))}">' for k in ["ruc","razon_social","estado_contribuyente","tipo_contribuyente","regimen","categoria","obligado_contabilidad","agente_retencion","contribuyente_especial","fecha_inicio_actividades","fecha_actualizacion","actividad_economica","plazo_social"])
     edit_block = "" if read_only else f"""
     <div class="external-links-row">{links_html}</div>
     <hr class="section-divider">
@@ -43,12 +42,14 @@ def build(
         <input type="hidden" name="audit_id" value="{audit_id}">
         <input type="hidden" name="return_tab" value="supercias">
         <div class="grid">
+          <div class="col-12"><label>Razón social (Supercias)</label><input name="razon_social_supercias" value="{esc(pv('razon_social_supercias'))}"></div>
           <div class="col-6"><label>Situación legal</label><input name="situacion_legal" value="{esc(pv('situacion_legal'))}"></div>
           <div class="col-6"><label>Tipo de compañía</label><input name="tipo_compania" value="{esc(pv('tipo_compania'))}"></div>
           <div class="col-6"><label>Nacionalidad</label><input name="nacionalidad" value="{esc(pv('nacionalidad'))}"></div>
           <div class="col-6"><label>Fecha constitución</label><input name="fecha_constitucion" value="{esc(pv('fecha_constitucion'))}"></div>
           <div class="col-6"><label>Expediente Supercias</label><input name="expediente_supercias" value="{esc(pv('expediente_supercias'))}"></div>
           <div class="col-6"><label>Oficina de control</label><input name="oficina_control" value="{esc(pv('oficina_control'))}"></div>
+          <div class="col-6"><label>Plazo social</label><input name="plazo_social" value="{esc(pv('plazo_social'))}" placeholder="AAAA-MM-DD"></div>
           <div class="col-6"><label>Representante legal</label><input name="representante_legal" value="{esc(pv('representante_legal'))}"></div>
           <div class="col-6"><label>Cargo del representante</label><input name="representante_cargo" value="{esc(pv('representante_cargo'))}"></div>
           <div class="col-6"><label>Teléfono</label><input name="telefono" value="{esc(pv('telefono'))}"></div>
@@ -57,7 +58,6 @@ def build(
           <div class="col-6"><label>CIIU nivel 6</label><input name="ciiu_nivel6" value="{esc(pv('ciiu_nivel6'))}"></div>
           <div class="col-6"><label>Último año de balance</label><input name="ultimo_anio_balance" value="{esc(pv('ultimo_anio_balance'))}"></div>
           <div class="col-12"><label>Objeto social</label><textarea name="objeto_social" style="min-height:60px;">{esc(pv('objeto_social'))}</textarea></div>
-          {sri_pass}
         </div>
         <div class="actions" style="justify-content:flex-end;margin-top:12px;">
           <button type="submit" class="btn btn-primary btn-sm">{SVG_SAVE} Guardar Supercias</button>
@@ -71,6 +71,7 @@ def build(
       <div style="display:flex;align-items:center;gap:8px;">{fuente_badge}{check_html}</div>
     </div>
     <div class="info-grid">
+      {_ic("Razón social (Supercias)", pv("razon_social_supercias"), "full-width")}
       {_ic("Situación legal", pv("situacion_legal"))}
       {_ic("Tipo de compañía", pv("tipo_compania"))}
       {_ic("Nacionalidad", pv("nacionalidad"))}
