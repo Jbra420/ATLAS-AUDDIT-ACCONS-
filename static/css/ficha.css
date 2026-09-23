@@ -6,7 +6,7 @@
 .dossier-panel {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
+  background: linear-gradient(180deg, var(--panel) 0%, var(--bg) 100%);
   padding: 18px;
   margin-bottom: 18px;
 }
@@ -43,7 +43,7 @@
   margin-bottom: 14px;
 }
 .dossier-metric {
-  background: #FFFFFF;
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 12px;
@@ -74,7 +74,7 @@
   gap: 12px;
 }
 .dossier-section {
-  background: #FFFFFF;
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 14px;

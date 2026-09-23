@@ -91,10 +91,10 @@
   margin-bottom: 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: #FFFFFF;
+  background: var(--panel);
   overflow: hidden;
 }
-.summary-readiness.is-blocked { border-color: #FDE68A; }
+.summary-readiness.is-blocked { border-color: var(--amber-200); }
 .summary-readiness.is-ready { border-color: var(--green-100); }
 .summary-readiness-head {
   display: flex;
@@ -136,14 +136,14 @@
   gap: 10px;
   margin-bottom: 10px;
   padding: 10px 12px;
-  border: 1px solid #FDE68A;
+  border: 1px solid var(--amber-200);
   border-radius: var(--radius-sm);
   background: var(--amber-50);
-  color: #92400E;
+  color: var(--amber-800);
   font-size: 12px;
 }
 .summary-historical-note strong { white-space: nowrap; }
-.summary-historical-note span { color: #78350F; }
+.summary-historical-note span { color: var(--amber-900); }
 
 /* ── Resumen estructurado ────────────────────────────────── */
 .summary-box-v3 {

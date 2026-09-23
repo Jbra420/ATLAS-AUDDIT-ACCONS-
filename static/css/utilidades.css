@@ -31,7 +31,7 @@
 body.has-auddit-bg {
   position: relative;
   overflow-x: hidden;
-  background-color: #f7f9fb;
+  background-color: var(--bg-auddit);
 }
 
 body.has-auddit-bg::after {

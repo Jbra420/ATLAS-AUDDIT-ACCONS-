@@ -260,14 +260,14 @@
 
 .btn-primary {
   background: var(--grad-primary);
-  color: #FFFFFF;
+  color: var(--white);
   border: none;
   box-shadow: 0 4px 12px rgba(139, 63, 192, 0.3);
 }
 
 .btn-primary:hover {
-  background: linear-gradient(135deg, #7530A8 0%, #0A2C4D 100%);
-  color: #FFFFFF;
+  background: linear-gradient(135deg, var(--accent-hover) 0%, var(--brand-navy-dark) 100%);
+  color: var(--white);
   box-shadow: 0 6px 15px rgba(139, 63, 192, 0.4);
   transform: translateY(-2px);
 }
@@ -309,7 +309,7 @@ input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--accent-base);
   box-shadow: 0 0 0 4px rgba(139, 63, 192, 0.15);
-  background: #FFFFFF;
+  background: var(--panel);
 }
 
 textarea { min-height: 100px; resize: vertical; line-height: 1.6; }

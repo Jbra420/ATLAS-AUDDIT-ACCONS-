@@ -24,6 +24,10 @@
   --accent-hover: #7530A8; /* Auddit Púrpura, oscuro */
   --accent-light: #F4EAFB; /* Auddit Púrpura, tinte claro */
   --brand-navy:   #0E3A63; /* Atlas/Auddit Azul marino */
+  --brand-navy-dark: #0A2C4D; /* Azul marino, oscuro (fin de degradados) */
+  --accent-soft:  #C9A6E8; /* Auddit Púrpura, claro sobre fondo oscuro */
+  --white:        #FFFFFF; /* Texto sobre fondos de color */
+  --bg-auddit:    #F7F9FB; /* Fondo de las pantallas con marca Auddit */
 
   /* Gradients */
   --grad-primary: linear-gradient(135deg, #8B3FC0 0%, #0E3A63 100%); /* Auddit Púrpura → Atlas Marino */
@@ -31,23 +35,53 @@
   --grad-warning: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
   --grad-danger:  linear-gradient(135deg, #EF4444 0%, #DC2626 100%);
 
-  /* Status colors */
-  --green-700:    #047857;
-  --green-500:    #10B981;
-  --green-100:    #D1FAE5;
+  /* Paletas de estado e información. Escala de 25 (más claro) a 900 (más
+     oscuro): 25-200 para fondos y bordes, 500-900 para texto e íconos. */
+  --green-25:     #F0FDF4;
   --green-50:     #ECFDF5;
-  --amber-700:    #B45309;
-  --amber-500:    #F59E0B;
-  --amber-100:    #FEF3C7;
+  --green-100:    #D1FAE5;
+  --green-200:    #A7F3D0;
+  --green-500:    #10B981;
+  --green-700:    #047857;
   --amber-50:     #FFFBEB;
-  --red-700:      #B91C1C;
-  --red-600:      #DC2626;
-  --red-500:      #EF4444;
-  --red-200:      #FECACA;
-  --red-100:      #FEE2E2;
+  --amber-100:    #FEF3C7;
+  --amber-200:    #FDE68A;
+  --amber-500:    #F59E0B;
+  --amber-600:    #D97706;
+  --amber-700:    #B45309;
+  --amber-800:    #92400E;
+  --amber-900:    #78350F;
+  --red-25:       #FFF5F5;
   --red-50:       #FEF2F2;
-  --gray-700:     #334155;
+  --red-100:      #FEE2E2;
+  --red-200:      #FECACA;
+  --red-500:      #EF4444;
+  --red-600:      #DC2626;
+  --red-700:      #B91C1C;
+  --rose-50:      #FFF1F2;
+  --rose-200:     #FECDD3;
+  --rose-600:     #E11D48;
+  --rose-800:     #9F1239;
+  --blue-50:      #EFF6FF;
+  --blue-100:     #DBEAFE;
+  --blue-200:     #BFDBFE;
+  --blue-600:     #2563EB;
+  --blue-700:     #1D4ED8;
+  --sky-50:       #F0F9FF;
+  --sky-100:      #E0F2FE;
+  --sky-200:      #BAE6FD;
+  --sky-700:      #0369A1;
+  --sky-900:      #0C4A6E;
+  --indigo-50:    #EEF2FF;
+  --indigo-100:   #E0E7FF;
+  --indigo-200:   #C7D2FE;
+  --indigo-800:   #3730A3;
+  --violet-50:    #FAF5FF;
+  --violet-100:   #EDE9FE;
+  --violet-200:   #DDD6FE;
+  --violet-700:   #6D28D9;
   --gray-100:     #F1F5F9;
+  --gray-700:     #334155;
   
   --primary:      var(--accent-base);
 

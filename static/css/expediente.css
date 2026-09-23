@@ -97,7 +97,7 @@
   border: 1px solid var(--accent-base);
   border-radius: 6px;
   background: var(--accent-base);
-  color: #fff;
+  color: var(--white);
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
@@ -195,7 +195,7 @@
 .radar-refresh-confirm:hover {
   border-color: var(--accent-base);
   background: var(--accent-base);
-  color: #fff;
+  color: var(--white);
 }
 .radar-refresh-confirm:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .radar-refresh-dialog button:focus-visible {
@@ -320,8 +320,8 @@
 
 /* ── Mapa de ubicación (card visual) ────────────────────── */
 .location-card {
-  background: linear-gradient(135deg, #F0F9FF 0%, #E0F2FE 100%);
-  border: 1px solid #BAE6FD;
+  background: linear-gradient(135deg, var(--sky-50) 0%, var(--sky-100) 100%);
+  border: 1px solid var(--sky-200);
   border-radius: var(--radius);
   padding: 20px 24px;
 }
@@ -331,8 +331,8 @@
   gap: 10px;
   margin-bottom: 16px;
 }
-.location-header svg { width: 22px; height: 22px; stroke: #0369A1; }
-.location-header h3 { margin: 0; font-size: 14px; color: #0C4A6E; font-weight: 700; }
+.location-header svg { width: 22px; height: 22px; stroke: var(--sky-700); }
+.location-header h3 { margin: 0; font-size: 14px; color: var(--sky-900); font-weight: 700; }
 .location-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -343,14 +343,14 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: #0369A1;
+  color: var(--sky-700);
   display: block;
   margin-bottom: 3px;
 }
 .location-field span {
   font-size: 13.5px;
   font-weight: 600;
-  color: #0C4A6E;
+  color: var(--sky-900);
 }
 .location-field span.pending { color: var(--muted); font-style: italic; font-weight: 400; }
 .location-full-addr {
@@ -359,14 +359,14 @@
   background: rgba(255,255,255,0.6);
   border-radius: var(--radius-sm);
   font-size: 13px;
-  color: #0C4A6E;
+  color: var(--sky-900);
   font-weight: 500;
-  border: 1px solid #BAE6FD;
+  border: 1px solid var(--sky-200);
   display: flex;
   align-items: flex-start;
   gap: 8px;
 }
-.location-full-addr svg { width: 15px; height: 15px; flex-shrink: 0; margin-top: 1px; stroke: #0369A1; }
+.location-full-addr svg { width: 15px; height: 15px; flex-shrink: 0; margin-top: 1px; stroke: var(--sky-700); }
 
 /* ── Panel de acciones flotante ──────────────────────────── */
 .radar-action-bar {
@@ -394,7 +394,7 @@
   font-size: 13px;
   color: rgba(148,163,184,0.9);
 }
-.radar-action-left svg { width: 16px; height: 16px; stroke: #C9A6E8; }
+.radar-action-left svg { width: 16px; height: 16px; stroke: var(--accent-soft); }
 .radar-action-right { display: flex; gap: 10px; }
 
 /* ── Links a fuentes externas ────────────────────────────── */
