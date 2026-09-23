@@ -56,8 +56,10 @@ def add_administrator(
     tipo_identificacion: str = "",
     fecha_consulta: str | None = None,
     user_id: int | None = None,
+    fuente: str = FUENTE_SUPERCIAS_ADMINISTRADORES,
 ) -> int:
-    """Registra un administrador transcrito desde "Administradores actuales".
+    """Registra un administrador transcrito desde "Administradores actuales"
+    o importado de un certificado adjunto (fuente).
 
     La identificación es opcional al guardar (su falta se exige antes del
     resumen), pero si se ingresa debe cumplir el formato de su tipo.
@@ -95,13 +97,12 @@ def add_administrator(
                  fuente, fecha_consulta)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (audit_id, tipo, identificacion, nombre, nacionalidad, cargo,
-             FUENTE_SUPERCIAS_ADMINISTRADORES, fecha),
+            (audit_id, tipo, identificacion, nombre, nacionalidad, cargo, fuente, fecha),
         )
         row = conn.execute("SELECT * FROM company_administrators WHERE id = ?", (cur.lastrowid,)).fetchone()
         _record_provenance(
             conn, audit_id, BLOQUE_ADMINISTRADORES, f"registro:{cur.lastrowid}",
-            None, _administrator_summary(row), FUENTE_SUPERCIAS_ADMINISTRADORES, fecha, user_id,
+            None, _administrator_summary(row), fuente, fecha, user_id,
         )
         _touch_audit(conn, audit_id)
         return int(cur.lastrowid)
@@ -243,6 +244,7 @@ def add_shareholder(
     beneficiario_final: str = "",
     fecha_consulta: str | None = None,
     user_id: int | None = None,
+    fuente: str = FUENTE_SUPERCIAS_ACCIONISTAS,
 ) -> int:
     nombre = nombre.strip()
     if not nombre:
@@ -285,12 +287,12 @@ def add_shareholder(
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (audit_id, position, tipo, identificacion, nombre, participacion, capital_value,
-             beneficiario_final, FUENTE_SUPERCIAS_ACCIONISTAS, fecha),
+             beneficiario_final, fuente, fecha),
         )
         row = conn.execute("SELECT * FROM company_shareholders WHERE id = ?", (cur.lastrowid,)).fetchone()
         _record_provenance(
             conn, audit_id, BLOQUE_ACCIONISTAS, f"registro:{cur.lastrowid}",
-            None, _shareholder_summary(row), FUENTE_SUPERCIAS_ACCIONISTAS, fecha, user_id,
+            None, _shareholder_summary(row), fuente, fecha, user_id,
         )
         _touch_audit(conn, audit_id)
         return int(cur.lastrowid)

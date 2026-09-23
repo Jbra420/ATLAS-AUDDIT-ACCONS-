@@ -6,9 +6,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
 import threading
 import time
+from email.parser import BytesParser
+from email.policy import HTTP
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -42,7 +45,39 @@ CSS_FILES = (
     "expediente", "financiero", "personas", "resumen", "ficha", "utilidades",
 )
 _CSS_CONTENT: str = ""
+# Cuerpo máximo de un POST: el certificado PDF (10 MB) más los campos del formulario.
+MAX_BODY_BYTES = 11 * 1024 * 1024
 _QUIET_MODE: bool = False  # Se activa con --quiet; suprime el log de peticiones HTTP
+
+
+class FormData(dict):
+    """Campos de un POST ({nombre: [valores]}, como parse_qs) y sus archivos
+    adjuntos en .files ({nombre: (nombre_de_archivo, contenido)})."""
+
+    def __init__(self, fields: dict[str, list[str]] | None = None,
+                 files: dict[str, tuple[str, bytes]] | None = None) -> None:
+        super().__init__(fields or {})
+        self.files = files or {}
+
+
+def parse_multipart(content_type: str, body: bytes) -> FormData:
+    """multipart/form-data -> FormData, con la biblioteca estándar (email)."""
+    message = BytesParser(policy=HTTP).parsebytes(
+        b"Content-Type: " + content_type.encode("latin-1") + b"\r\n\r\n" + body
+    )
+    form = FormData()
+    for part in message.iter_parts():
+        name = part.get_param("name", header="content-disposition")
+        if not name:
+            continue
+        payload = part.get_payload(decode=True) or b""
+        filename = part.get_filename()
+        if filename is None:
+            form.setdefault(name, []).append(payload.decode("utf-8", errors="replace"))
+        elif payload:
+            # Algunos navegadores envían la ruta completa (C:\\fakepath\\x.pdf).
+            form.files[name] = (re.split(r"[\\/]", filename)[-1], payload)
+    return form
 
 
 def load_css() -> None:
@@ -148,10 +183,12 @@ class AtlasHandler(BaseHTTPRequestHandler):
     def current_user(self) -> sqlite3.Row | None:
         return user_from_session(self.get_cookie_token())
 
-    def parse_post(self) -> dict[str, list[str]]:
-        length = int(self.headers.get("Content-Length", "0"))
-        raw = self.rfile.read(length).decode("utf-8")
-        return parse_qs(raw, keep_blank_values=True)
+    def parse_post(self) -> FormData:
+        body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        content_type = self.headers.get("Content-Type", "")
+        if content_type.startswith("multipart/form-data"):
+            return parse_multipart(content_type, body)
+        return FormData(parse_qs(body.decode("utf-8"), keep_blank_values=True))
 
     def require_user(self) -> sqlite3.Row | None:
         user = self.current_user()
@@ -321,6 +358,12 @@ class AtlasHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if int(self.headers.get("Content-Length", "0")) > MAX_BODY_BYTES:
+            # Sin leer el cuerpo: se cierra la conexión tras responder.
+            self.close_connection = True
+            self.send_html(layout("Archivo demasiado grande", self.current_user(),
+                                  '<div class="error-msg">El archivo supera el máximo de 10 MB.</div>'), 413)
+            return
         self._cached_form = self.parse_post()  # guardar para _reject_csrf
         form = self._cached_form
 

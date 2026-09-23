@@ -95,14 +95,14 @@ def info_card(label: str, value: str, css_extra: str = "", trace: str = "") -> s
     )
 
 
-def fecha_consulta_field(css_col: str = "col-4") -> str:
+def fecha_consulta_field(css_col: str = "col-4", value: str = "") -> str:
     """Campo "Fecha de consulta" de los formularios de captura: fecha en que el
     auditor revisó la fuente oficial. Por defecto hoy; no admite fechas futuras
     (el servidor lo vuelve a validar)."""
     today = date.today().isoformat()
     return (
         f'<div class="{css_col}"><label>Fecha de consulta de la fuente *</label>'
-        f'<input type="date" name="fecha_consulta" value="{today}" max="{today}" required></div>'
+        f'<input type="date" name="fecha_consulta" value="{esc(value or today)}" max="{today}" required></div>'
     )
 
 

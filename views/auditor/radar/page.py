@@ -196,11 +196,11 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     )
     tab_admins = build_admins(
         audit_id, audit, admins, read_only=is_read_only, csrf_token=csrf_tok, sources=sources,
-        provenance=provenance,
+        provenance=provenance, certificado=ctx["certificados"].get("administradores"),
     )
     tab_accionistas = build_accionistas(
         audit_id, audit, shareholders, read_only=is_read_only, csrf_token=csrf_tok, sources=sources,
-        provenance=provenance,
+        provenance=provenance, certificado=ctx["certificados"].get("accionistas"),
     )
     fin_anio = form_value(query, "fin_anio")
     tab_financiero = build_financiero(

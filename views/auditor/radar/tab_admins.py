@@ -1,9 +1,8 @@
 """Tab de captura y consulta de administradores de la empresa."""
 from __future__ import annotations
-from providers.supercias import SuperciasProvider
-from services.company_search import find_certificate_evidence
 from services.rowutil import row_get
 from services.trazabilidad import BLOQUE_ADMINISTRADORES
+from views.auditor.radar.certificado import assisted_panel as assisted_panel_html
 from ui.helpers import hidden_inputs, esc
 from ui.components import (
     fecha_consulta_field,
@@ -13,53 +12,7 @@ from ui.components import (
     people_avatar as _avatar,
     provenance_history,
 )
-from ui.icons import SVG_CHECK, SVG_CROSS, SVG_EXTERNAL, SVG_SAVE, SVG_TRASH
-
-
-def _assisted_flow_panel(audit_id: int, audit, sources: list) -> str:
-    """Recuerda que el Directorio local no trae la nómina completa y guía al
-    auditor a obtener el certificado oficial y registrarlo como evidencia
-    antes de transcribir administradores. No hay parser automático de PDF:
-    no existen aún muestras reales del certificado para validar uno
-    (ver propuesta técnica, sección 11 — Administradores y accionistas)."""
-    ruc = audit["ruc"] or ""
-    company_name = audit["company_name"]
-    evidence = find_certificate_evidence(sources, "administrador")
-    if evidence:
-        status_html = (
-            f'<span class="badge badge-green">{SVG_CHECK} Certificado registrado como evidencia</span>'
-        )
-    else:
-        status_html = '<span class="badge badge-gray">Certificado aún no registrado</span>'
-    link_html = "".join(
-        f'<a class="btn-ext-link" href="{esc(lnk.url)}" target="_blank" rel="noopener">'
-        f'{SVG_EXTERNAL} {esc(lnk.name)}</a>'
-        for lnk in SuperciasProvider().nomina_links(ruc, company_name)
-    )
-    docs_href = f"/auditor/radar?audit_id={audit_id}&tab=documentos#radar-tabs-main"
-    return f"""
-    <section class="people-editor">
-      <div class="people-editor-head">
-        <span class="workflow-eyebrow">Flujo asistido — certificado oficial</span>
-        <h4>Antes de registrar la nómina completa</h4>
-      </div>
-      <p style="font-size:13px;color:var(--muted);margin:0 0 12px;">
-        El Directorio de Compañías solo trae el representante legal actual, no la nómina
-        completa de administradores. Obtenga el certificado electrónico oficial (gratuito,
-        sin registro previo), regístrelo como evidencia y luego transcriba cada administrador
-        abajo. Atlas no extrae datos automáticamente del PDF: no hay muestras reales todavía
-        para construir un lector confiable.
-      </p>
-      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
-        {status_html}
-        {link_html}
-        <a class="btn-ext-link" href="{docs_href}" onclick="return switchTab('documentos')">
-          {SVG_EXTERNAL} Registrar certificado como evidencia
-        </a>
-      </div>
-    </section>
-    <hr class="section-divider">
-    """
+from ui.icons import SVG_CROSS, SVG_SAVE, SVG_TRASH
 
 
 def _complete_form(audit_id: int, a, csrf_token: str) -> str:
@@ -130,6 +83,7 @@ def build(
     csrf_token: str = "",
     sources: list | None = None,
     provenance: list | None = None,
+    certificado: dict | None = None,
 ) -> str:
     rows = "".join(
         f'<tr><td>{_avatar(a["nombre"])}{esc(a["nombre"])}</td>'
@@ -177,7 +131,9 @@ def build(
       </form>
     </section>
     """
-    assisted_panel = "" if read_only else _assisted_flow_panel(audit_id, audit, sources or [])
+    assisted_panel = "" if read_only else assisted_panel_html(
+        audit_id, audit, sources or [], "administradores", "admins", csrf_token, certificado,
+    )
     historial = [r for r in provenance or [] if row_get(r, "bloque") == BLOQUE_ADMINISTRADORES]
     return f"""
     {assisted_panel}

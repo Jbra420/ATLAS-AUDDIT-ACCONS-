@@ -120,6 +120,48 @@
   height: 15px;
 }
 
+/* ── Certificado de nómina: adjuntar y revisar lo extraído ─ */
+.cert-help { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+.cert-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
+.cert-upload {
+  padding: 14px 16px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.cert-upload label { margin-top: 0; }
+.cert-upload small { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
+.cert-upload-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.cert-upload-row input[type="file"] { flex: 1 1 260px; width: auto; background: var(--panel); }
+.cert-review {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--accent-light);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+.cert-review .people-editor-head p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.cert-warnings {
+  margin: 0 0 12px;
+  padding: 10px 12px 10px 28px;
+  border: 1px solid var(--amber-200);
+  border-radius: var(--radius-sm);
+  background: var(--amber-50);
+  color: var(--amber-800);
+  font-size: 13px;
+}
+.cert-review-table { width: 100%; font-size: 13px; }
+.cert-review-table td { padding: 6px 8px; vertical-align: middle; }
+.cert-review-table td:first-child { width: 1%; text-align: center; }
+.cert-review-table input[type="text"],
+.cert-review-table input[type="number"] { padding: 6px 8px; font-size: 13px; }
+.cert-review-table input[type="checkbox"] { width: auto; }
+/* Identificación | Nombre (la más ancha) | dos columnas cortas */
+.cert-review-table td:nth-child(2) input { min-width: 140px; }
+.cert-review-table td:nth-child(3) { width: 40%; }
+.cert-review-table td:nth-child(3) input { min-width: 240px; }
+.cert-review-table td:nth-child(n+4) input { min-width: 110px; }
+
 /* ── Admin Form Popover (Glassmorphism & Native Popover API) ── */
 .admin-popover {
   margin: auto;

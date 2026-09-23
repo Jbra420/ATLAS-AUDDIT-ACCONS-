@@ -4,7 +4,7 @@ database — Capa de persistencia de Atlas (sqlite3 puro, sin dependencias exter
 Es la única capa que escribe en SQLite. Cada módulo agrupa un tema y solo
 importa de los que están antes en este orden:
 
-    base → trazabilidad → usuarios, personas, perfil, financiero
+    base → trazabilidad → usuarios, personas, perfil, financiero, certificados
          → catalogos → expedientes → investigacion → esquema
 
 Este archivo re-exporta la API pública: el resto de la app importa siempre
@@ -71,6 +71,12 @@ from database.financiero import (
     get_financial_context,
     ALERTAS_CRITICAS,
     register_alert_treatment,
+)
+from database.certificados import (
+    ADJUNTOS_DIR,
+    close_certificate_import,
+    get_certificate_import,
+    save_certificate,
 )
 from database.catalogos import (
     SRI_CATASTRO_PATH,

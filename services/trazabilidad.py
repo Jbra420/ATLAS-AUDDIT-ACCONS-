@@ -25,6 +25,7 @@ FUENTE_SUPERCIAS_GENERAL = "Supercias — Información general"
 FUENTE_SUPERCIAS_UBICACION = "Supercias — Información general / Ubicación"
 FUENTE_SUPERCIAS_ADMINISTRADORES = "Supercias — Administradores actuales"
 FUENTE_SUPERCIAS_ACCIONISTAS = "Supercias — Accionistas / Kárdex"
+FUENTE_CERTIFICADO_SUPERCIAS = "Supercias — certificado de nómina (PDF adjunto)"
 
 # Catálogos locales usados por "Iniciar búsqueda".
 FUENTE_CATASTRO_SRI = "Catastro RUC SRI (base local)"

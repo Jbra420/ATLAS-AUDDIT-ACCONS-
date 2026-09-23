@@ -27,6 +27,7 @@ from database import (
     add_shareholder,
     add_source,
     append_research_source_note,
+    close_certificate_import,
     connect,
     create_company_audit,
     create_user,
@@ -34,6 +35,7 @@ from database import (
     delete_administrator,
     delete_shareholder,
     get_audit_context,
+    get_certificate_import,
     get_research,
     mark_document_pending,
     mark_document_reviewed,
@@ -44,6 +46,7 @@ from database import (
     reactivate_user,
     reassign_audit,
     refresh_summary,
+    save_certificate,
     register_alert_treatment,
     register_audit_ruc,
     set_audit_fiscal_year,
@@ -54,12 +57,13 @@ from database import (
     update_shareholder,
     upsert_financial_statement,
 )
+from services.certificados import TIPOS_CERTIFICADO, analizar_certificado, extraer_texto
 from services.financial import CAMPOS_FINANCIEROS, compute_indicators
 from services.company_search import source_map_from_context
 from services.company_research import research_company_by_ruc
 from services.dossier import build_dossier_model, build_dossier_text
 from services.identificacion import validar_identificacion
-from services.trazabilidad import validar_fecha_consulta
+from services.trazabilidad import FUENTE_CERTIFICADO_SUPERCIAS, validar_fecha_consulta
 from ui.helpers import form_value
 from views import auth_views
 from views.admin import dashboard as admin_dashboard
@@ -308,6 +312,62 @@ def _shareholder(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
     )
 
 
+def _upload_certificate(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
+    """Adjunta el certificado PDF de nómina: queda como evidencia y su
+    propuesta de filas espera la revisión del auditor."""
+    tipo = form_value(form, "tipo")
+    if tipo not in TIPOS_CERTIFICADO:
+        raise ValueError("Tipo de certificado no reconocido")
+    archivo = getattr(form, "files", {}).get("archivo")
+    if not archivo:
+        raise ValueError("Seleccione el certificado en PDF")
+    nombre, pdf = archivo
+    analisis = analizar_certificado(extraer_texto(pdf), tipo, audit["ruc"] or "")
+    save_certificate(audit["id"], tipo, nombre, pdf, analisis, user["id"])
+    filas = len(analisis["filas"])
+    if not filas:
+        return "Certificado registrado como evidencia. No se detectaron filas: registre la nómina manualmente."
+    return f"Certificado registrado como evidencia. {filas} fila(s) detectada(s): revíselas y confirme la importación."
+
+
+def _import_certificate(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
+    """Importa las filas que el auditor marcó (y corrigió) en la revisión."""
+    propuesta = get_certificate_import(audit["id"], _int(form, "import_id"))
+    if not propuesta or propuesta["estado"] != "pendiente":
+        raise ValueError("El certificado ya fue revisado o no existe")
+    indices = sorted({int(i) for i in form.get("incluir", []) if i.isdigit() and int(i) < len(propuesta["filas"])})
+    if not indices:
+        raise ValueError("Marque al menos una fila para importar")
+    fecha = validar_fecha_consulta(form_value(form, "fecha_consulta"))
+    importadas, omitidas = 0, []
+    for i in indices:
+        valor = lambda campo: form_value(form, f"{campo}_{i}")  # noqa: E731
+        comunes = dict(fecha_consulta=fecha, user_id=user["id"], fuente=FUENTE_CERTIFICADO_SUPERCIAS)
+        try:
+            if propuesta["tipo"] == "administradores":
+                add_administrator(
+                    audit["id"], valor("identificacion"), valor("nombre"), valor("nacionalidad"), valor("cargo"),
+                    **comunes,
+                )
+            else:
+                add_shareholder(
+                    audit["id"], "", valor("identificacion"), valor("nombre"),
+                    participacion_porcentaje=valor("participacion_porcentaje"), capital=valor("capital"),
+                    **comunes,
+                )
+            importadas += 1
+        except ValueError as exc:
+            omitidas.append(f"{valor('nombre') or f'fila {i + 1}'} ({exc})")
+    close_certificate_import(audit["id"], propuesta["id"], "importado")
+    msg = f"{importadas} registro(s) importado(s) del certificado"
+    return f"{msg}. Omitidos: {'; '.join(omitidas)}" if omitidas else msg
+
+
+def _discard_certificate(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
+    close_certificate_import(audit["id"], _int(form, "import_id"), "descartado")
+    return "Propuesta descartada. El certificado sigue registrado como evidencia"
+
+
 def _generate_summary(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
     # Con obligatorios pendientes solo se genera si el auditor lo confirmó en
     # el modal de la pestaña Resumen (confirmar_pendientes=1). El resumen deja
@@ -340,6 +400,9 @@ RADAR_POSTS = {
     "/auditor/radar/profile": ("sri", _save_profile),
     "/auditor/radar/administrator": ("admins", _administrator),
     "/auditor/radar/shareholder": ("accionistas", _shareholder),
+    "/auditor/radar/certificado": ("admins", _upload_certificate),
+    "/auditor/radar/certificado/importar": ("admins", _import_certificate),
+    "/auditor/radar/certificado/descartar": ("admins", _discard_certificate),
     "/auditor/radar/summary": ("resumen", _generate_summary),
 }
 

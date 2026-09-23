@@ -76,6 +76,7 @@ La documentación de cada fase está en
 Desde esta carpeta:
 
 ```bash
+python3 -m pip install -r requirements.txt   # pypdf, para leer los certificados PDF
 python3 app.py --port 8765
 ```
 
@@ -129,12 +130,23 @@ se completa con los datos del SRI y Supercías queda marcado como pendiente
 
 El Directorio de Compañías solo trae el representante legal actual, no la
 nómina completa de administradores ni los accionistas. Para esos dos campos,
-los tabs "Administradores" y "Accionistas" muestran un flujo asistido: el
-auditor obtiene el certificado electrónico oficial (gratuito, sin registro
-previo, en el propio portal de Supercías), lo registra como evidencia desde
-el tab "Documentos", y luego transcribe la nómina en los formularios ya
-existentes. Atlas no extrae datos automáticamente del PDF — no hay parser,
-porque no existen todavía muestras reales del certificado para validar uno.
+las pestañas "Administradores" y "Accionistas" muestran un flujo asistido:
+
+1. Enlaces al trámite del certificado y al portal de información de Supercías.
+2. El auditor adjunta el certificado en PDF. El archivo se guarda en
+   `adjuntos/<expediente>/<sha256>.pdf` (excluido de Git) y queda registrado
+   como evidencia.
+3. `services/certificados.py` extrae el texto (pypdf) y propone las filas:
+   identificación, nombre, cargo o capital y participación.
+4. Nada se importa sin revisión: el auditor corrige, desmarca y confirma.
+   Las filas importadas llevan la fuente "Supercias — certificado de nómina
+   (PDF adjunto)" y su fecha de consulta.
+
+El lector es heurístico: reconoce cada fila por su cédula (10 dígitos) o RUC
+(13). Un PDF escaneado, sin texto seleccionable, no se puede leer, y lo que no
+reconozca se registra a mano en el mismo formulario de siempre. Para
+calibrarlo con documentos reales, guarde muestras en `muestras_supercias/`
+(también excluida de Git).
 
 ## Estados financieros por ramo de Supercías
 

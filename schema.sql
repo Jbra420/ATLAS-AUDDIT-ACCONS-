@@ -226,6 +226,24 @@ CREATE TABLE IF NOT EXISTS financial_statements (
     UNIQUE (ruc, anio_fiscal)
 );
 
+-- ── Certificados de nómina adjuntos (administradores / accionistas) ──
+-- Cada PDF queda como evidencia con su SHA-256. filas_json es la propuesta
+-- del analizador: nada entra a la nómina hasta que el auditor la confirma.
+CREATE TABLE IF NOT EXISTS certificate_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+    tipo TEXT NOT NULL CHECK (tipo IN ('administradores', 'accionistas')),
+    archivo TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    ruta TEXT NOT NULL,
+    filas_json TEXT NOT NULL,
+    advertencias_json TEXT NOT NULL DEFAULT '[]',
+    fecha_certificado TEXT,
+    estado TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'importado', 'descartado')),
+    subido_por INTEGER REFERENCES users(id),
+    subido_at TEXT NOT NULL
+);
+
 -- ── Levantamiento de información: tratamiento de alertas críticas ────
 -- Una alerta crítica (p. ej. contribuyente fantasma) no bloquea el trabajo,
 -- pero el resumen exige que el auditor registre cómo la trató.

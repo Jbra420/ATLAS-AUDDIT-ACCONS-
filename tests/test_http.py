@@ -264,6 +264,68 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         match = re.search(rf'id="tab-{tab_id}"(.*?)id="tab-{next_tab_id}"', html, re.S)
         return match.group(1) if match else ""
 
+    def test_certificate_pdf_upload_review_and_import(self):
+        """El auditor adjunta el certificado PDF de administradores, revisa la
+        propuesta y la importa: las filas quedan con la fuente del certificado
+        y el PDF como evidencia."""
+        import http.client
+        from tests.test_certificados import _pdf_con_texto
+
+        with connect() as conn:
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+        audit_id = create_company_audit(
+            f"Empresa certificado {time.time_ns()}", "", "Cuenca", "", "2025", auditor_id, admin_id,
+        )
+        with connect() as conn:
+            company_id = conn.execute("SELECT company_id FROM audits WHERE id = ?", (audit_id,)).fetchone()["company_id"]
+
+        def cleanup_company() -> None:
+            with connect() as conn:
+                conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+
+        self.addCleanup(cleanup_company)
+
+        page = f"/auditor/radar?audit_id={audit_id}&tab=admins"
+        pdf = _pdf_con_texto([
+            "0102030405 TORRES VEGA ANA ECUADOR GERENTE GENERAL",
+            "0912345678 PEREZ LUIS ECUADOR PRESIDENTE",
+        ])
+        limite = "----atlastest"
+        campos = {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie),
+                  "tipo": "administradores", "return_tab": "admins"}
+        cuerpo = b"".join(
+            f"--{limite}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
+            for k, v in campos.items()
+        ) + (f"--{limite}\r\nContent-Disposition: form-data; name=\"archivo\"; filename=\"nomina.pdf\"\r\n"
+             "Content-Type: application/pdf\r\n\r\n").encode() + pdf + f"\r\n--{limite}--\r\n".encode()
+        conn = http.client.HTTPConnection(SERVER_HOST, SERVER_PORT, timeout=5)
+        conn.request("POST", "/auditor/radar/certificado", body=cuerpo, headers={
+            "Content-Type": f"multipart/form-data; boundary={limite}", "Cookie": self.cookie,
+        })
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 303)
+        self.assertIn("2+fila", resp.getheader("Location", ""))
+
+        _, body = _get(page, self.cookie)
+        admins_pane = self._pane_content(body, "admins", "accionistas")
+        self.assertIn("Certificado registrado como evidencia", admins_pane)
+        import_id = re.search(r'name="import_id" value="(\d+)"', admins_pane).group(1)
+
+        status, location, _ = _post_raw("/auditor/radar/certificado/importar", {
+            "audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), "import_id": import_id,
+            "return_tab": "admins", "incluir": "0", "fecha_consulta": "2026-09-01",
+            "identificacion_0": "0102030405", "nombre_0": "TORRES VEGA ANA",
+            "cargo_0": "GERENTE GENERAL", "nacionalidad_0": "ECUADOR",
+        }, self.cookie)
+        self.assertEqual(status, 303)
+        self.assertIn("1+registro", location)
+        with connect() as conn:
+            rows = list(conn.execute(
+                "SELECT nombre, cargo, fuente FROM company_administrators WHERE audit_id = ?", (audit_id,)))
+        self.assertEqual([(r["nombre"], r["cargo"]) for r in rows], [("TORRES VEGA ANA", "GERENTE GENERAL")])
+        self.assertEqual(rows[0]["fuente"], "Supercias — certificado de nómina (PDF adjunto)")
+
     def test_complete_audit_via_ui_forms_can_generate_summary(self):
         """Flujo feliz completo del levantamiento de información, exclusivamente
         vía las rutas y controles que la UI expone: marcar fuentes consultadas,
