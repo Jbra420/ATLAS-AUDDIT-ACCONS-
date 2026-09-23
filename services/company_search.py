@@ -234,3 +234,12 @@ def build_source_map(
             "required_percent": required_percent,
         },
     }
+
+
+def source_map_from_context(audit: RowLike, ctx: dict[str, Any]) -> dict[str, Any]:
+    """build_source_map() a partir del contexto de database.get_audit_context()."""
+    return build_source_map(
+        audit, ctx["research"], ctx["profile"], ctx["location"], ctx["admins"],
+        ctx["shareholders"], ctx["docs"], ctx["snapshot"], ctx["source_checks"],
+        ctx["sources"], alert_treatments=ctx["alert_treatments"],
+    )

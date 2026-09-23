@@ -1,13 +1,14 @@
 """views/auditor/radar/tab_supercias.py — Tab de estado societario (Supercias)."""
 from __future__ import annotations
-from ui.helpers import esc, csrf_input
-from ui.icons import SVG_EXTERNAL, SVG_SAVE
+from ui.helpers import esc
+from ui.icons import SVG_EXTERNAL
 from providers.supercias import SuperciasProvider
 from services.normalizacion import clasificar_situacion_legal, clasificar_tipo_compania, con_valor_oficial
 from services.rowutil import row_get
 from services.trazabilidad import BLOQUE_SUPERCIAS, etiqueta_traza, ultimo_por_campo
 from ui.components import (
-    fecha_consulta_field,
+    edit_panel,
+    form_field,
     info_card as _ic,
     provenance_history,
     source_check_control,
@@ -67,39 +68,17 @@ def build(
             f'Catálogo local{f" · corte {esc(fecha_cat)}" if fecha_cat else ""}</span>'
         )
 
+    edit_fields = "".join(
+        form_field(
+            campo, etiqueta, pv(campo), col="col-12" if css else "col-6",
+            placeholder="AAAA-MM-DD" if campo == "plazo_social" else "", textarea=campo == "objeto_social",
+        )
+        for campo, etiqueta, css in CAMPOS
+    )
     edit_block = "" if read_only else f"""
     <div class="external-links-row">{links_html}</div>
     <hr class="section-divider">
-    <details style="margin-top:0">
-      <summary style="font-size:13px;font-weight:600;color:var(--accent-base);cursor:pointer;margin-bottom:14px;">✎ Editar datos Supercias</summary>
-      <form method="post" action="/auditor/radar/profile">
-        {csrf_input(csrf_token)}
-        <input type="hidden" name="audit_id" value="{audit_id}">
-        <input type="hidden" name="return_tab" value="supercias">
-        <div class="grid">
-          <div class="col-12"><label>Razón social (Supercias)</label><input name="razon_social_supercias" value="{esc(pv('razon_social_supercias'))}"></div>
-          <div class="col-6"><label>Situación legal</label><input name="situacion_legal" value="{esc(pv('situacion_legal'))}"></div>
-          <div class="col-6"><label>Tipo de compañía</label><input name="tipo_compania" value="{esc(pv('tipo_compania'))}"></div>
-          <div class="col-6"><label>Nacionalidad</label><input name="nacionalidad" value="{esc(pv('nacionalidad'))}"></div>
-          <div class="col-6"><label>Fecha constitución</label><input name="fecha_constitucion" value="{esc(pv('fecha_constitucion'))}"></div>
-          <div class="col-6"><label>Expediente Supercias</label><input name="expediente_supercias" value="{esc(pv('expediente_supercias'))}"></div>
-          <div class="col-6"><label>Oficina de control</label><input name="oficina_control" value="{esc(pv('oficina_control'))}"></div>
-          <div class="col-6"><label>Plazo social</label><input name="plazo_social" value="{esc(pv('plazo_social'))}" placeholder="AAAA-MM-DD"></div>
-          <div class="col-6"><label>Representante legal</label><input name="representante_legal" value="{esc(pv('representante_legal'))}"></div>
-          <div class="col-6"><label>Cargo del representante</label><input name="representante_cargo" value="{esc(pv('representante_cargo'))}"></div>
-          <div class="col-6"><label>Teléfono</label><input name="telefono" value="{esc(pv('telefono'))}"></div>
-          <div class="col-6"><label>Capital suscrito</label><input name="capital_suscrito" value="{esc(pv('capital_suscrito'))}"></div>
-          <div class="col-6"><label>CIIU nivel 1</label><input name="ciiu_nivel1" value="{esc(pv('ciiu_nivel1'))}"></div>
-          <div class="col-6"><label>CIIU nivel 6</label><input name="ciiu_nivel6" value="{esc(pv('ciiu_nivel6'))}"></div>
-          <div class="col-6"><label>Último año de balance</label><input name="ultimo_anio_balance" value="{esc(pv('ultimo_anio_balance'))}"></div>
-          <div class="col-12"><label>Objeto social</label><textarea name="objeto_social" style="min-height:60px;">{esc(pv('objeto_social'))}</textarea></div>
-          {fecha_consulta_field()}
-        </div>
-        <div class="actions" style="justify-content:flex-end;margin-top:12px;">
-          <button type="submit" class="btn btn-primary btn-sm">{SVG_SAVE} Guardar Supercias</button>
-        </div>
-      </form>
-    </details>
+    {edit_panel("Editar datos Supercias", csrf_token, audit_id, "supercias", edit_fields, "Guardar Supercias")}
     """
     historial = [r for r in provenance or [] if row_get(r, "bloque") == BLOQUE_SUPERCIAS]
     trazas = ultimo_por_campo(historial)

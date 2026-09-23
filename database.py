@@ -1366,6 +1366,42 @@ def get_research(audit_id: int, db_path: Path | str = DB_PATH) -> sqlite3.Row:
         ).fetchone()
 
 
+def _fetch_audit(conn: sqlite3.Connection, audit_id: int) -> sqlite3.Row:
+    audit = conn.execute(
+        """
+        SELECT a.*, c.name AS company_name, c.ruc, c.city, c.activity_hint
+        FROM audits a
+        JOIN companies c ON c.id = a.company_id
+        WHERE a.id = ?
+        """,
+        (audit_id,),
+    ).fetchone()
+    if audit is None:
+        raise ValueError("Auditoría no encontrada")
+    return audit
+
+
+def _compose_summary(conn: sqlite3.Connection, audit: sqlite3.Row, data: dict[str, str]) -> str:
+    """Resumen preliminar del expediente con los datos de investigación 'data'."""
+    from services.financial import compute_indicators
+
+    ctx = _load_radar_context(conn, audit["id"])
+    profile, location, snapshot = ctx["profile"], ctx["location"], ctx["snapshot"]
+    return generate_summary(
+        audit, data, len(ctx["sources"]),
+        profile=dict(profile) if profile else None,
+        location=dict(location) if location else None,
+        admins=ctx["admins"],
+        shareholders=ctx["shareholders"],
+        snapshot=dict(snapshot) if snapshot else None,
+        indicators=compute_indicators(dict(snapshot)) if snapshot else {},
+        source_checks=ctx["source_checks"],
+        sources=ctx["sources"],
+        alert_treatments=ctx["alert_treatments"],
+        provenance=ctx["provenance"],
+    )
+
+
 def update_research(
     audit_id: int,
     user_id: int,
@@ -1374,40 +1410,8 @@ def update_research(
     db_path: Path | str = DB_PATH,
 ) -> str:
     with connect(db_path) as conn:
-        audit = conn.execute(
-            """
-            SELECT a.*, c.name AS company_name, c.ruc, c.city, c.activity_hint
-            FROM audits a
-            JOIN companies c ON c.id = a.company_id
-            WHERE a.id = ?
-            """,
-            (audit_id,),
-        ).fetchone()
-        if audit is None:
-            raise ValueError("Auditoría no encontrada")
-
-        ctx = _load_radar_context(conn, audit_id)
-        profile, location, snapshot = ctx["profile"], ctx["location"], ctx["snapshot"]
-        admins, shareholders = ctx["admins"], ctx["shareholders"]
-        source_checks, sources = ctx["source_checks"], ctx["sources"]
-        source_count = len(sources)
-
-        from services.financial import compute_indicators
-        indicators = compute_indicators(dict(snapshot)) if snapshot else {}
-
-        summary = generate_summary(
-            audit, data, source_count,
-            profile=dict(profile) if profile else None,
-            location=dict(location) if location else None,
-            admins=admins,
-            shareholders=shareholders,
-            snapshot=dict(snapshot) if snapshot else None,
-            indicators=indicators,
-            source_checks=source_checks,
-            sources=sources,
-            alert_treatments=ctx["alert_treatments"],
-            provenance=ctx["provenance"],
-        )
+        audit = _fetch_audit(conn, audit_id)
+        summary = _compose_summary(conn, audit, data)
         ts = now_iso()
 
         conn.execute(
@@ -1438,19 +1442,7 @@ def update_research(
             """,
             (
                 audit_id,
-                data.get("commercial_name", "").strip(),
-                data.get("economic_activity", "").strip(),
-                data.get("legal_status", "").strip(),
-                data.get("representative", "").strip(),
-                data.get("address", "").strip(),
-                data.get("tax_obligations", "").strip(),
-                data.get("public_contracting", "").strip(),
-                data.get("supercias_info", "").strip(),
-                data.get("sri_info", "").strip(),
-                data.get("sercop_info", "").strip(),
-                data.get("observations", "").strip(),
-                data.get("risk_flags", "").strip(),
-                data.get("pasted_text", "").strip(),
+                *(data.get(field, "").strip() for field in RESEARCH_FIELDS),
                 summary,
                 user_id,
                 ts,
@@ -1474,15 +1466,10 @@ def patch_research(
     """Actualiza solo los campos presentes en 'fields' en research_notes (PATCH semántico).
 
     A diferencia de update_research, NO toca columnas no incluidas en 'fields'.
-    Garantiza que la fila exista antes de intentar el UPDATE.
-    Columnas permitidas para evitar inyección SQL:
+    Garantiza que la fila exista antes de intentar el UPDATE. Solo acepta
+    columnas de RESEARCH_FIELDS, lo que evita inyección SQL en el SET.
     """
-    ALLOWED = {
-        "commercial_name", "economic_activity", "legal_status", "representative",
-        "address", "tax_obligations", "public_contracting", "supercias_info",
-        "sri_info", "sercop_info", "observations", "risk_flags", "pasted_text",
-    }
-    safe = {k: v.strip() for k, v in fields.items() if k in ALLOWED}
+    safe = {k: v.strip() for k, v in fields.items() if k in RESEARCH_FIELDS}
     if not safe:
         return
     ts = now_iso()
@@ -1503,60 +1490,20 @@ def patch_research(
 
 def refresh_summary(audit_id: int, db_path: Path | str = DB_PATH) -> str:
     with connect(db_path) as conn:
-        audit = conn.execute(
-            """
-            SELECT a.*, c.name AS company_name, c.ruc, c.city, c.activity_hint
-            FROM audits a
-            JOIN companies c ON c.id = a.company_id
-            WHERE a.id = ?
-            """,
-            (audit_id,),
-        ).fetchone()
-        if audit is None:
-            raise ValueError("Auditoría no encontrada")
+        audit = _fetch_audit(conn, audit_id)
         research = conn.execute(
             "SELECT * FROM research_notes WHERE audit_id = ?", (audit_id,)
         ).fetchone()
         if research is None:
-            return "No existe resumen generado."
-        data = {
-            "commercial_name": research["commercial_name"] or "",
-            "economic_activity": research["economic_activity"] or "",
-            "legal_status": research["legal_status"] or "",
-            "representative": research["representative"] or "",
-            "address": research["address"] or "",
-            "tax_obligations": research["tax_obligations"] or "",
-            "public_contracting": research["public_contracting"] or "",
-            "supercias_info": research["supercias_info"] or "",
-            "sri_info": research["sri_info"] or "",
-            "sercop_info": research["sercop_info"] or "",
-            "observations": research["observations"] or "",
-            "risk_flags": research["risk_flags"] or "",
-            "pasted_text": research["pasted_text"] or "",
-        }
-
-        ctx = _load_radar_context(conn, audit_id)
-        profile, location, snapshot = ctx["profile"], ctx["location"], ctx["snapshot"]
-        admins, shareholders = ctx["admins"], ctx["shareholders"]
-        source_checks, sources = ctx["source_checks"], ctx["sources"]
-        source_count = len(sources)
-
-        from services.financial import compute_indicators
-        indicators = compute_indicators(dict(snapshot)) if snapshot else {}
-
-        summary = generate_summary(
-            audit, data, source_count,
-            profile=dict(profile) if profile else None,
-            location=dict(location) if location else None,
-            admins=admins,
-            shareholders=shareholders,
-            snapshot=dict(snapshot) if snapshot else None,
-            indicators=indicators,
-            source_checks=source_checks,
-            sources=sources,
-            alert_treatments=ctx["alert_treatments"],
-            provenance=ctx["provenance"],
-        )
+            conn.execute(
+                "INSERT INTO research_notes (audit_id, updated_at) VALUES (?, ?)",
+                (audit_id, now_iso()),
+            )
+            research = conn.execute(
+                "SELECT * FROM research_notes WHERE audit_id = ?", (audit_id,)
+            ).fetchone()
+        data = {field: research[field] or "" for field in RESEARCH_FIELDS}
+        summary = _compose_summary(conn, audit, data)
         conn.execute(
             "UPDATE research_notes SET generated_summary = ?, updated_at = ? WHERE audit_id = ?",
             (summary, now_iso(), audit_id),
@@ -2717,10 +2664,12 @@ def apply_balances_catalog_result(
 def _financial_context(conn: sqlite3.Connection, audit_id: int) -> dict[str, Any]:
     """Financiero vigente de la auditoría.
 
-    - snapshot: cifras del año fiscal de la auditoría (origen "anual"). Si
-      aún no hay año o no hay cifras de ese año, las cifras registradas antes
-      de la Fase 4 sin año fiscal (origen "sin_anio"), para no perderlas de
-      vista; si tampoco existen, None.
+    - anio_fiscal: ejercicio que se muestra. Es el registrado en la auditoría
+      si tiene cifras; si no, el más reciente con cifras del RUC. Solo sin
+      ninguna cifra anual se conserva el registrado (o None).
+    - snapshot: cifras de ese ejercicio (origen "anual"). Si no hay cifras
+      anuales, las registradas antes de la Fase 4 sin año fiscal (origen
+      "sin_anio"), para no perderlas de vista; si tampoco existen, None.
     - legacy: esas cifras sin año, que el formulario ofrece para confirmar.
     - years: todos los ejercicios del RUC, del más reciente al más antiguo.
     """
@@ -2741,6 +2690,8 @@ def _financial_context(conn: sqlite3.Connection, audit_id: int) -> dict[str, Any
     ).fetchone()
     legacy = dict(legacy_row) if legacy_row else None
 
+    if years and anio not in {y["anio_fiscal"] for y in years}:
+        anio = years[0]["anio_fiscal"]
     current = next((dict(y) for y in years if anio is not None and y["anio_fiscal"] == anio), None)
     if current is not None:
         snapshot = {**current, "origen": "anual"}

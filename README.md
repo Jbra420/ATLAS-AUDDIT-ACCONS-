@@ -181,7 +181,6 @@ guiar la consulta y guardar evidencia.
   - normalización de valores de los catálogos;
   - trazabilidad;
   - validaciones cruzadas y alertas (`validaciones.py`);
-  - flujo de 9 pasos (`flujo.py`);
   - indicadores financieros, resumen y ficha final.
 - `providers/`: generan enlaces e instrucciones hacia fuentes oficiales
   externas (SRI, Supercías); nunca hacen scraping ni guardan credenciales.
@@ -197,3 +196,59 @@ guiar la consulta y guardar evidencia.
   scripts de arriba (ninguno de los tres se versiona en git).
 - `tests/`: pruebas unitarias (bases temporales) y de integración HTTP
   (`tests/test_http.py`, requiere el servidor corriendo en `localhost:8765`).
+
+## Arquitectura y convenciones
+
+Capas, de afuera hacia adentro. Cada una solo importa de las que están debajo:
+
+```text
+core/      HTTP: rutas, sesión, CSRF, rol → llama a database/ y services/
+views/     HTML por pantalla              → usa ui/, services/, database/ (solo lectura)
+ui/        componentes HTML sin estado     → nunca importa de views/
+services/  reglas de negocio puras, sin SQL
+database.py  SQL y persistencia (única capa que escribe en SQLite)
+```
+
+Excepciones conocidas: `services/company_research.py` orquesta la búsqueda
+automática y por eso usa `database`; `ui/components.py` lee
+`AUDIT_STATUSES` de `database`.
+
+**Agregar una ruta**
+
+- GET: una línea en `core/router.py` (`GET_ROUTES`).
+- POST del jefe: una función `(form, admin) -> mensaje` y una línea en
+  `ADMIN_POSTS` (`core/server.py`).
+- POST del auditor sobre un expediente: una función
+  `(form, audit, user) -> mensaje` y una línea en `RADAR_POSTS`. El
+  dispatcher ya valida CSRF, rol, acceso al expediente y redirige a la
+  pestaña. Para mostrar un error, basta con lanzar `ValueError`.
+- Exportación: una función `build(audit) -> str` y una línea en `EXPORTS`.
+
+**Reutilizar antes de escribir HTML**
+
+| Necesidad | Componente |
+| --- | --- |
+| CSRF + campos ocultos de un formulario | `ui.helpers.hidden_inputs(csrf_token, audit_id=…)` |
+| Campo etiquetado (input o textarea) | `ui.components.form_field` |
+| Formulario plegable "✎ Editar …" de un bloque | `ui.components.edit_panel` |
+| Fecha de consulta de la fuente | `ui.components.fecha_consulta_field` |
+| Dato de solo lectura con traza | `ui.components.info_card` |
+| Historial de un bloque | `ui.components.provenance_history` |
+| Lectura segura de filas | `services.rowutil.row_get` |
+| Mapa de fuentes y requisitos del expediente | `services.company_search.source_map_from_context` |
+
+Un bloque del levantamiento se define una sola vez como tupla `CAMPOS`
+`(campo, etiqueta, …)` en su pestaña. De ella salen las tarjetas, el
+formulario de edición y las etiquetas del historial.
+
+**Nomenclatura**
+
+- Términos del requisito de levantamiento en español, tal como aparecen en el
+  requisito: columnas, constantes y funciones de dominio (`razon_social_sri`,
+  `validar_fecha_consulta`, `CAMPOS`, `BLOQUE_SRI`).
+- Infraestructura genérica en inglés (`connect`, `get_audit`, `send_html`,
+  `hidden_inputs`).
+- Constantes en `MAYUSCULAS`; lo privado de un módulo con prefijo `_`.
+- Las vistas de pestaña se llaman `tab_<bloque>.py` y exponen `build(...)`.
+- No renombrar código existente solo por uniformidad: se aplica a código
+  nuevo o al que ya se está modificando.

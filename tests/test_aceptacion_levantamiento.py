@@ -1,13 +1,14 @@
 """Prueba de aceptación del levantamiento de información (Fase 6).
 
-Recorre los 9 pasos del flujo de consulta del requisito con el caso de
-referencia GRUCANQUI CIA. LTDA. (RUC 0190377210001):
+Recorre el levantamiento completo con el caso de referencia GRUCANQUI CIA.
+LTDA. (RUC 0190377210001) y comprueba los requisitos que evalúa
+services/validaciones (los mismos que muestra la pestaña Resumen):
 
-  - Pasos 1 a 3 con "Iniciar búsqueda" sobre los catálogos locales reales.
+  - "Iniciar búsqueda" sobre los catálogos locales reales (SRI y Supercias).
   - Los datos que ningún catálogo publica (objeto social, identificaciones,
     presidente y accionistas) son DATOS DE PRUEBA. Las cifras financieras
     de 2025 coinciden con el reporte local descargado para este RUC.
-  - Paso 9: validaciones cruzadas, alertas y resumen.
+  - Validaciones cruzadas, alertas y resumen.
 
 Se omite si los catálogos locales no están importados o no contienen el RUC.
 """
@@ -27,8 +28,6 @@ from database import (
     get_audit_context,
     init_db,
     list_administrators,
-    list_source_checks,
-    mark_source_checked,
     refresh_summary,
     register_alert_treatment,
     set_audit_fiscal_year,
@@ -39,7 +38,6 @@ from database import (
 )
 from services.company_research import research_company_by_ruc
 from services.company_search import build_source_map
-from services.flujo import COMPLETO, CON_ALERTAS, casilleros_con_valor, pasos_levantamiento
 
 REFERENCE_RUC = "0190377210001"
 CEDULA_PRUEBA = "0102030400"
@@ -78,68 +76,69 @@ class TestAceptacionGrucanqui(unittest.TestCase):
             ctx["docs"], ctx["snapshot"], ctx["source_checks"], ctx["sources"],
             alert_treatments=ctx["alert_treatments"],
         )
+        return source_map
+
+    @staticmethod
+    def _requisitos(source_map, *fuentes):
+        return [r for r in source_map["validacion"]["requisitos"] if r["source"] in fuentes]
+
+    @staticmethod
+    def _falta(source_map, card):
         cards = {c["key"]: c for c in source_map["cards"]}
-        pasos = pasos_levantamiento(
-            source_map["validacion"],
-            "Fuente SRI consultada" not in cards["sri"]["missing"],
-            "Fuente Supercias consultada" not in cards["supercias"]["missing"],
-            casilleros_con_valor(ctx["snapshot"]),
-            any(c["estado"] == "consultada" and "Documentos económicos" in c["fuente"]
-                for c in ctx["source_checks"]),
-        )
-        return source_map, {p["numero"]: p for p in pasos}
+        return cards[card]["missing"]
 
     def _completar_levantamiento(self):
-        # Paso 1 (manual): datos del SRI que el catastro no publica.
+        # SRI (manual): datos del SRI que el catastro no publica.
         update_company_profile_fields(self.audit_id, {
             "representante_legal_sri": "CANDO SUAREZ MARIA DANIELA",
             "contribuyente_fantasma": "NO", "transacciones_inexistentes": "NO",
         }, self.db, user_id=self.uid, fecha_consulta="2026-09-22")
-        # Paso 3 (manual): información general que el Directorio no publica.
+        # Supercias (manual): información general que el Directorio no publica.
         update_company_profile_fields(self.audit_id, {
             "objeto_social": "Prestación de servicios de alojamiento (dato de prueba)",
             "plazo_social": "2061-08-24", "oficina_control": "Cuenca",
         }, self.db, user_id=self.uid, fecha_consulta="2026-09-22")
         update_company_location_fields(self.audit_id, {"referencia": "Frente al estadio"}, self.db,
                                        user_id=self.uid, fecha_consulta="2026-09-22")
-        # Paso 4: completar la gerente general del Directorio y registrar al presidente.
+        # Administradores: completar la gerente general del Directorio y registrar al presidente.
         gerente = list_administrators(self.audit_id, self.db)[0]
         update_administrator(self.audit_id, gerente["id"], tipo_identificacion="cedula",
                              identificacion=CEDULA_PRUEBA, nacionalidad="Ecuatoriana",
                              fecha_consulta="2026-09-22", user_id=self.uid, db_path=self.db)
         add_administrator(self.audit_id, CEDULA_PRUEBA, "Presidente de prueba", "Ecuatoriana", "Presidente",
                           self.db, tipo_identificacion="cedula", fecha_consulta="2026-09-22", user_id=self.uid)
-        # Paso 5: accionistas.
+        # Accionistas.
         add_shareholder(self.audit_id, "", CEDULA_PRUEBA, "Accionista de prueba", self.db,
                         tipo_identificacion="cedula", participacion_porcentaje="100",
                         fecha_consulta="2026-09-22", user_id=self.uid)
-        # Pasos 6 a 8: documentos consultados, año fiscal y casilleros.
+        # Financiero: año fiscal y casilleros.
         set_audit_fiscal_year(self.audit_id, 2025, user_id=self.uid, db_path=self.db)
         upsert_financial_statement(self.audit_id, 2025, CIFRAS_PRUEBA_2025,
                                    fecha_consulta="2026-09-22", user_id=self.uid, db_path=self.db)
-        economic_check = next(c for c in list_source_checks(self.audit_id, self.db)
-                              if "Documentos económicos" in c["fuente"])
-        mark_source_checked(economic_check["id"], self.uid, "Documento revisado en prueba", self.db)
 
     def test_flujo_completo_hasta_el_resumen(self):
-        source_map, pasos = self._estado()
+        source_map = self._estado()
         self.assertFalse(source_map["readiness"]["ready"])
-        self.assertTrue(all(p["estado"] != COMPLETO for p in pasos.values()),
-                        "Un expediente nuevo no tiene pasos completos ni datos demo")
+        self.assertIn("Fuente Supercias consultada", self._falta(source_map, "supercias"))
+        self.assertFalse(any(r["ok"] for r in self._requisitos(
+            source_map, "Supercias", "Administradores", "Accionistas", "Financiero")),
+            "Un expediente nuevo no tiene requisitos cumplidos ni datos demo")
 
-        # Pasos 1 a 3: búsqueda automática en los catálogos locales.
+        # Búsqueda automática en los catálogos locales.
         research_company_by_ruc(self.audit_id, REFERENCE_RUC, self.uid, self.db)
-        source_map, pasos = self._estado()
-        self.assertEqual(pasos[2]["estado"], COMPLETO)
+        source_map = self._estado()
+        self.assertNotIn("Fuente Supercias consultada", self._falta(source_map, "supercias"))
         self.assertFalse(source_map["readiness"]["ready"])
         pendientes = {b["label"] for b in source_map["readiness"]["blockers"]}
         self.assertIn("Objeto social", pendientes)
         self.assertIn("Presidente registrado", pendientes)
 
         self._completar_levantamiento()
-        source_map, pasos = self._estado()
+        source_map = self._estado()
         self.assertTrue(source_map["readiness"]["ready"], source_map["readiness"]["blockers"])
-        self.assertEqual({n: p["estado"] for n, p in pasos.items()}, {n: COMPLETO for n in range(1, 10)})
+        incumplidos = [r["label"] for r in source_map["validacion"]["requisitos"] if not r["ok"]]
+        self.assertEqual(incumplidos, [])
+        self.assertEqual(source_map["validacion"]["alertas"], [])
         cruces = {c["codigo"]: c["estado"] for c in source_map["validacion"]["cruces"]}
         self.assertEqual(cruces, {
             "CRUCE_RAZON_SOCIAL": "coincide", "CRUCE_FECHAS": "coincide", "CRUCE_REPRESENTANTE": "coincide",
@@ -165,18 +164,17 @@ class TestAceptacionGrucanqui(unittest.TestCase):
 
         upsert_financial_statement(self.audit_id, 2025, {**CIFRAS_PRUEBA_2025, "activo_total": "3200000"},
                                    user_id=self.uid, db_path=self.db)
-        source_map, pasos = self._estado()
+        source_map = self._estado()
         self.assertIn("ALERTA_BALANCE", {a["codigo"] for a in source_map["validacion"]["alertas"]})
         self.assertTrue(source_map["readiness"]["ready"], "Una alerta alta no bloquea el resumen")
-        self.assertEqual(pasos[9]["estado"], CON_ALERTAS)
 
         update_company_profile_fields(self.audit_id, {"contribuyente_fantasma": "SI"}, self.db, user_id=self.uid)
-        source_map, _ = self._estado()
+        source_map = self._estado()
         self.assertFalse(source_map["readiness"]["ready"])
         register_alert_treatment(self.audit_id, "ALERTA_FANTASMA",
                                  "Se solicitó al cliente la resolución del SRI (prueba).",
                                  user_id=self.uid, db_path=self.db)
-        source_map, _ = self._estado()
+        source_map = self._estado()
         self.assertTrue(source_map["readiness"]["ready"])
         self.assertIn("Tratamiento del auditor: Se solicitó al cliente", refresh_summary(self.audit_id, self.db))
 

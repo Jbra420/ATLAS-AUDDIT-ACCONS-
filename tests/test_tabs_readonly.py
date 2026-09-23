@@ -37,8 +37,6 @@ def _sample_dossier() -> dict:
             "partial_sources": 2,
             "pending_sources": 2,
             "evidence_count": 1,
-            "reviewed_docs": 3,
-            "total_docs": 8,
             "risk_count": 1,
             "pending_count": 2,
         },
@@ -80,39 +78,6 @@ def _make_db() -> Path:
     db_path = Path(tmp) / "test_tabs.db"
     init_db(db_path)
     return db_path
-
-
-class TestRadarWorkflowNavigation(unittest.TestCase):
-    """Flujo de consulta de 9 pasos (Fase 6), construido con la salida real
-    de build_source_map para no depender de un diccionario armado a mano."""
-
-    def setUp(self):
-        from services.company_search import build_source_map
-        self.source_map = build_source_map(
-            {"ruc": "0190377210001"}, {}, None, None, [], [], [], None,
-            [{"fuente": "SRI", "estado": "consultada"}], [],
-        )
-
-    def test_auditor_workflow_links_to_tabs_with_visible_anchor(self):
-        from providers.sri import SriProvider
-        from views.auditor.radar.page import _render_source_map
-        link = SriProvider().get_links("0190377210001", "X")[0]
-        html = _render_source_map(self.source_map, read_only=False, audit_id=42,
-                                  official_links={"SRI": link})
-
-        self.assertEqual(html.count('<li class="flow-step '), 9)
-        for tab in ("sri", "supercias", "admins", "accionistas", "indicadores", "resumen"):
-            self.assertIn(f'/auditor/radar?audit_id=42&tab={tab}#radar-tabs-main', html)
-        self.assertIn("onclick=\"return switchTab('sri')\"", html)
-        self.assertIn(link.url, html)
-        self.assertIn("Estado de Resultados Integral", html)
-
-    def test_admin_workflow_uses_read_only_route(self):
-        from views.auditor.radar.page import _render_source_map
-        html = _render_source_map(self.source_map, read_only=True, audit_id=42)
-
-        self.assertIn('/admin/audit?audit_id=42&tab=sri#radar-tabs-main', html)
-        self.assertNotIn('/auditor/radar?audit_id=42', html)
 
 
 class TestTabSriSourceCheckReadOnly(unittest.TestCase):
@@ -172,7 +137,7 @@ class TestTabSuperciasSourceCheckReadOnly(unittest.TestCase):
 
 
 class TestTabDocumentosReadOnly(unittest.TestCase):
-    """tab_documentos: checklist de documentos, fuentes restantes y bitácora de evidencia."""
+    """tab_documentos: solo la bitácora de evidencia."""
 
     def setUp(self):
         self.db = _make_db()
@@ -182,35 +147,27 @@ class TestTabDocumentosReadOnly(unittest.TestCase):
             "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
             "Consultoría", "2026", self.auditor["id"], self.admin["id"], self.db,
         )
-        self.docs = [{"id": 1, "nombre": "RUC", "fecha": "2026", "estado": "pendiente"}]
-        self.checks = [{"id": 4, "fuente": "SERCOP", "uso": "Verificar contratos", "estado": "pendiente"}]
-        self.sources = []
+        self.sources = [{"title": "Consulta SERCOP", "source_type": "SERCOP", "notes": "Sin contratos"}]
 
     def test_read_only_has_no_forms(self):
         from views.auditor.radar.tab_documentos import build
-        html = build(self.audit_id, self.docs, self.checks, self.sources, read_only=True)
+        html = build(self.audit_id, self.sources, read_only=True)
         self.assertNotIn("<form", html)
-        self.assertNotIn("/auditor/radar/document", html)
-        self.assertNotIn("/auditor/source", html)
-        self.assertNotIn("/auditor/radar/source-check", html)
+        self.assertIn("Consulta SERCOP", html)
 
-    def test_auditor_mode_has_document_and_evidence_forms(self):
+    def test_auditor_mode_has_only_the_evidence_form(self):
         from views.auditor.radar.tab_documentos import build
-        html = build(
-            self.audit_id, self.docs, self.checks, self.sources,
-            read_only=False, csrf_token="token",
-        )
-        self.assertIn("/auditor/radar/document", html)
-        self.assertIn("/auditor/source", html)
-        self.assertIn("/auditor/radar/source-check", html)
+        html = build(self.audit_id, self.sources, read_only=False, csrf_token="token")
+        self.assertIn('action="/auditor/source"', html)
         self.assertIn('name="_csrf" value="token"', html)
+        self.assertNotIn("/auditor/radar/document", html)
+        self.assertNotIn("/auditor/radar/source-check", html)
+        self.assertNotIn("Documentos económicos", html)
+        self.assertNotIn("Otras fuentes guiadas", html)
 
-    def test_empty_state_placeholders(self):
+    def test_empty_state_placeholder(self):
         from views.auditor.radar.tab_documentos import build
-        html = build(self.audit_id, [], [], [], read_only=True)
-        self.assertIn("Sin documentos registrados", html)
-        self.assertIn("No hay fuentes adicionales configuradas", html)
-        self.assertIn("Sin evidencias registradas", html)
+        self.assertIn("Sin evidencias registradas", build(self.audit_id, [], read_only=True))
 
 
 class TestTabAdminsReadOnly(unittest.TestCase):
@@ -481,8 +438,9 @@ class TestTabFinancieroReadOnly(unittest.TestCase):
         """El auditor sí debe ver el formulario para ingresar datos financieros."""
         from views.auditor.radar.tab_financiero import build
         html = build(self.audit_id, self.indicators, read_only=False, **self.kwargs)
-        self.assertIn('/auditor/radar/financial-year', html,
-                      "Sin año fiscal, el auditor debe ver primero el paso del año fiscal")
+        self.assertNotIn('/auditor/radar/financial-year', html,
+                         "No se pide el año fiscal antes de mostrar la información")
+        self.assertIn('action="/auditor/radar/financial"', html)
         set_audit_fiscal_year(self.audit_id, 2025, db_path=self.db)
         self.kwargs["financial"] = get_financial_context(self.audit_id, self.db)
         html = build(self.audit_id, self.indicators, read_only=False, **self.kwargs)

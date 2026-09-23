@@ -1,6 +1,6 @@
 """views/auditor/radar/tab_resumen.py — Tab de resumen y exportaciones."""
 from __future__ import annotations
-from ui.helpers import esc, csrf_input
+from ui.helpers import esc, hidden_inputs
 from ui.icons import SVG_DOWNLOAD, SVG_RADAR, SVG_SAVE
 
 
@@ -48,9 +48,7 @@ def _render_alert(alerta: dict, read_only: bool, audit_id: int, csrf_token: str)
             label = "Actualizar tratamiento" if alerta.get("tratamiento") else "Registrar tratamiento (obligatorio para el resumen)"
             treatment += f"""
             <form method="post" action="/auditor/radar/alert-treatment" class="validation-treatment-form">
-              {csrf_input(csrf_token)}
-              <input type="hidden" name="audit_id" value="{audit_id}">
-              <input type="hidden" name="codigo" value="{esc(alerta['codigo'])}">
+              {hidden_inputs(csrf_token, audit_id=audit_id, codigo=alerta['codigo'])}
               <label>{esc(label)}</label>
               <textarea name="observacion" minlength="15" maxlength="2000" required>{esc(alerta.get("tratamiento") or "")}</textarea>
               <button type="submit" class="btn btn-sm btn-primary">{SVG_SAVE} Guardar tratamiento</button>
@@ -69,7 +67,7 @@ def _render_alert(alerta: dict, read_only: bool, audit_id: int, csrf_token: str)
 
 
 def _render_validations(validacion: dict | None, read_only: bool, audit_id: int, csrf_token: str) -> str:
-    """Paso 9 del flujo de consulta: validaciones cruzadas y alertas."""
+    """Validaciones cruzadas y alertas del levantamiento."""
     if not validacion:
         return ""
     alertas = validacion.get("alertas", [])
@@ -91,7 +89,7 @@ def _render_validations(validacion: dict | None, read_only: bool, audit_id: int,
         """
     return f"""
     <section class="validation-panel">
-      <span class="dossier-eyebrow">Paso 9 — Sistema</span>
+      <span class="dossier-eyebrow">Sistema</span>
       <h3>Validaciones cruzadas y alertas</h3>
       <h4 class="fin-section-title">Alertas automáticas</h4>
       {alerts_html}
@@ -196,7 +194,7 @@ def _render_dossier(audit_id: int, dossier: dict | None) -> str:
         </li>
         """
         for row in dossier.get("evidence", [])
-    ) or "<li><strong>Sin evidencias registradas</strong><span>Agregue enlaces o notas desde el tab Fuentes.</span></li>"
+    ) or "<li><strong>Sin evidencias registradas</strong><span>Agregue enlaces o notas desde la pestaña Documentos.</span></li>"
     financial = "".join(
         f'<div class="dossier-kv"><span>{esc(item["label"])}</span><strong>{esc(item["value"])}</strong></div>'
         for item in dossier.get("financial", [])
@@ -222,7 +220,6 @@ def _render_dossier(audit_id: int, dossier: dict | None) -> str:
         {_metric("Avance de fuentes", f'{metrics.get("source_percent", 0)}%')}
         {_metric("Fuentes completas", str(metrics.get("completed_sources", 0)), f'{metrics.get("partial_sources", 0)} en avance')}
         {_metric("Evidencias", str(metrics.get("evidence_count", 0)), "registros de soporte")}
-        {_metric("Documentos", f'{metrics.get("reviewed_docs", 0)}/{metrics.get("total_docs", 0)}', "revisados")}
         {_metric("Riesgos", str(metrics.get("risk_count", 0)), f'{metrics.get("pending_count", 0)} pendientes')}
       </div>
       <div class="dossier-grid">
@@ -300,8 +297,7 @@ def build(
         actions_html = f"""
       <div class="actions mt-0">
         <form method="post" action="/auditor/radar/summary" style="display:inline;">
-          {csrf_input(csrf_token)}
-          <input type="hidden" name="audit_id" value="{audit_id}">
+          {hidden_inputs(csrf_token, audit_id=audit_id)}
           <button type="submit" class="btn btn-sm btn-primary">{SVG_RADAR} Generar resumen</button>
         </form>
         <a class="btn btn-sm" href="/export/summary?audit_id={audit_id}">{SVG_DOWNLOAD} TXT</a>
@@ -333,8 +329,7 @@ def build(
       Observaciones adicionales del auditor
     </h4>
     <form method="post" action="/auditor/radar">
-      {csrf_input(csrf_token)}
-      <input type="hidden" name="audit_id" value="{audit_id}">
+      {hidden_inputs(csrf_token, audit_id=audit_id)}
       <div class="grid">
         <div class="col-6"><label>Observaciones</label>
           <textarea name="observations" style="min-height:80px;">{esc(research['observations'] or '')}</textarea></div>

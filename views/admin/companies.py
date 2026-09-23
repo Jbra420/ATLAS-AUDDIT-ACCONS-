@@ -7,7 +7,7 @@ import sqlite3
 
 from database import list_admin_audits, list_auditors
 from ui.components import badge
-from ui.helpers import esc, form_value, csrf_input
+from ui.helpers import esc, form_value, csrf_input, hidden_inputs
 from ui.icons import SVG_ALERT, SVG_ARROW_RIGHT
 from ui.layout import layout
 
@@ -49,8 +49,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
         if reassign_options:
             reassign_form = f"""
             <form method="post" action="/admin/companies/reassign" style="display:inline; margin:0;" title="Reasignar">
-              {csrf_input(csrf_token)}
-              <input type="hidden" name="audit_id" value="{a['id']}">
+              {hidden_inputs(csrf_token, audit_id=a['id'])}
               <select name="new_auditor_id" onchange="this.form.submit()" class="form-control form-control-sm" style="width:auto; display:inline-block; padding: 2px 4px; font-size: 12px;">
                 <option value="" disabled selected>Reasignar...</option>
                 {reassign_options}

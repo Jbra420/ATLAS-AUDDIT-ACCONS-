@@ -31,6 +31,7 @@ from database import (
     list_users,
     reactivate_user,
     reassign_audit,
+    refresh_summary,
     register_audit_ruc,
     soft_delete_user,
     update_research,
@@ -388,6 +389,20 @@ class TestResearchFlow(unittest.TestCase):
         self.assertIn("GRUCANQUI", summary)
         research = get_research(self.audit_id, self.db)
         self.assertIsNotNone(research["generated_summary"])
+
+    def test_refresh_summary_creates_notes_for_new_audit(self):
+        audit_id = create_company_audit(
+            "Empresa Nueva", "", "Cuenca", "Servicios", "2026",
+            self.auditor["id"], self.admin["id"], self.db,
+        )
+        with connect(self.db) as conn:
+            self.assertIsNone(conn.execute(
+                "SELECT 1 FROM research_notes WHERE audit_id = ?", (audit_id,)
+            ).fetchone())
+
+        summary = refresh_summary(audit_id, self.db)
+        self.assertIn("Empresa Nueva", summary)
+        self.assertEqual(get_research(audit_id, self.db)["generated_summary"], summary)
 
     def test_summary_contains_disclaimer(self):
         summary = update_research(

@@ -161,9 +161,8 @@ class TestAnioFiscalSugerido(unittest.TestCase):
         indicators = compute_indicators(None)
         html = tab_financiero.build(1, indicators, csrf_token="t", ruc=REFERENCE_RUC,
                                     anio_sugerido={"anio": 2025, "fecha_corte": "2025-12-31"})
-        self.assertIn("Año fiscal sugerido: 2025", html)
-        self.assertIn("2025-12-31", html)
-        self.assertNotIn("Año fiscal sugerido",
+        self.assertIn("fecha de corte 2025-12-31", html)
+        self.assertNotIn("fecha de corte",
                          tab_financiero.build(1, indicators, csrf_token="t", ruc=REFERENCE_RUC))
 
 

@@ -5,7 +5,7 @@ from services.company_search import find_certificate_evidence
 from services.financial import formato_moneda
 from services.rowutil import row_get
 from services.trazabilidad import BLOQUE_ACCIONISTAS
-from ui.helpers import csrf_input, esc
+from ui.helpers import hidden_inputs, esc
 from ui.components import (
     fecha_consulta_field,
     fuente_text as _fuente_text,
@@ -92,10 +92,7 @@ def _complete_form(audit_id: int, s, csrf_token: str) -> str:
     <details class="row-edit">
       <summary>Completar</summary>
       <form method="post" action="/auditor/radar/shareholder">
-        {csrf_input(csrf_token)}
-        <input type="hidden" name="audit_id" value="{audit_id}">
-        <input type="hidden" name="shareholder_id" value="{s['id']}">
-        <input type="hidden" name="action" value="update">
+        {hidden_inputs(csrf_token, audit_id=audit_id, shareholder_id=s['id'], action="update")}
         <label>Tipo de identificación</label>{_tipo_select(row_get(s, "tipo_identificacion") or "cedula", _PERMITIDOS)}
         <label>Identificación</label>
         <input name="identificacion" maxlength="32" value="{esc(row_get(s, 'identificacion') or '')}">
@@ -134,10 +131,7 @@ def build(
         <td class="people-table-actions">
           {_complete_form(audit_id, s, csrf_token)}
           <form method="post" action="/auditor/radar/shareholder">
-            {csrf_input(csrf_token)}
-            <input type="hidden" name="audit_id" value="{audit_id}">
-            <input type="hidden" name="shareholder_id" value="{s['id']}">
-            <input type="hidden" name="action" value="delete">
+            {hidden_inputs(csrf_token, audit_id=audit_id, shareholder_id=s['id'], action="delete")}
             <button type="submit" class="btn-icon-danger" title="Eliminar accionista" aria-label="Eliminar accionista">{SVG_TRASH}</button>
           </form>
         </td>''')
@@ -165,9 +159,7 @@ def build(
         <h4>Registrar socio o accionista</h4>
       </div>
       <form method="post" action="/auditor/radar/shareholder">
-        {csrf_input(csrf_token)}
-        <input type="hidden" name="audit_id" value="{audit_id}">
-        <input type="hidden" name="action" value="add">
+        {hidden_inputs(csrf_token, audit_id=audit_id, action="add")}
         <div class="grid">
           <div class="col-2"><label>Número</label><input name="numero" type="number" min="1" placeholder="Auto"></div>
           <div class="col-5"><label>Nombre completo *</label><input name="nombre" maxlength="160" required></div>

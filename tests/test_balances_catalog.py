@@ -98,7 +98,8 @@ class TestBalancesCatalog(unittest.TestCase):
         self.assertEqual((result["financial_years"], again["financial_years"]), (1, 1))
         self.assertEqual(result["pending_source"], "SRI y Supercias")
         context = get_financial_context(self.audit_id, self.app_db)
-        self.assertIsNone(context["anio_fiscal"])
+        self.assertEqual(context["anio_fiscal"], 2025)
+        self.assertEqual(context["snapshot"]["origen"], "anual")
         row = context["years"][0]
         self.assertEqual(row["activo_total"], 4000000)
         self.assertEqual(row["otros_ingresos_403"], 11761.20)

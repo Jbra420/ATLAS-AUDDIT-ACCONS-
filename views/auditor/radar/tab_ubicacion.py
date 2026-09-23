@@ -1,10 +1,10 @@
 """views/auditor/radar/tab_ubicacion.py — Tab de ubicación y domicilio."""
 from __future__ import annotations
-from ui.helpers import esc, csrf_input
-from ui.icons import SVG_MAP_PIN, SVG_SAVE
+from ui.helpers import esc
+from ui.icons import SVG_MAP_PIN
 from services.rowutil import row_get
 from services.trazabilidad import BLOQUE_UBICACION, etiqueta_traza, ultimo_por_campo
-from ui.components import fecha_consulta_field, provenance_history
+from ui.components import edit_panel, form_field, provenance_history
 
 # (campo, etiqueta) — bloque 3 del levantamiento.
 CAMPOS = (
@@ -18,6 +18,7 @@ CAMPOS = (
     ("referencia", "Referencia"),
 )
 ETIQUETAS = dict(CAMPOS)
+PLACEHOLDERS = {"numero": "S/N", "referencia": "Facilita la visita al cliente"}
 
 
 def _lval(location, key):
@@ -42,30 +43,13 @@ def build(audit_id, audit, location, read_only: bool = False, csrf_token: str = 
             f'<span class="{cls}">{esc(v or "Pendiente")}</span>{trace_html}</div>'
         )
 
+    edit_fields = "".join(
+        form_field(campo, etiqueta, lv(campo), placeholder=PLACEHOLDERS.get(campo, ""))
+        for campo, etiqueta in CAMPOS
+    )
     edit_block = "" if read_only else f"""
     <hr class="section-divider">
-    <details style="margin-top:0">
-      <summary style="font-size:13px;font-weight:600;color:var(--accent-base);cursor:pointer;margin-bottom:14px;">✎ Editar ubicación</summary>
-      <form method="post" action="/auditor/radar/profile">
-        {csrf_input(csrf_token)}
-        <input type="hidden" name="audit_id" value="{audit_id}">
-        <input type="hidden" name="return_tab" value="ubicacion">
-        <div class="grid">
-          <div class="col-6"><label>Provincia</label><input name="provincia" value="{esc(lv('provincia'))}"></div>
-          <div class="col-6"><label>Cantón</label><input name="canton" value="{esc(lv('canton'))}"></div>
-          <div class="col-6"><label>Ciudad</label><input name="ciudad" value="{esc(lv('ciudad'))}"></div>
-          <div class="col-6"><label>Calle principal</label><input name="calle" value="{esc(lv('calle'))}"></div>
-          <div class="col-6"><label>Número</label><input name="numero" value="{esc(lv('numero'))}" placeholder="S/N"></div>
-          <div class="col-6"><label>Intersección</label><input name="interseccion" value="{esc(lv('interseccion'))}"></div>
-          <div class="col-6"><label>Barrio</label><input name="barrio" value="{esc(lv('barrio'))}"></div>
-          <div class="col-6"><label>Referencia</label><input name="referencia" value="{esc(lv('referencia'))}" placeholder="Facilita la visita al cliente"></div>
-          {fecha_consulta_field("col-6")}
-        </div>
-        <div class="actions" style="justify-content:flex-end;margin-top:12px;">
-          <button type="submit" class="btn btn-primary btn-sm">{SVG_SAVE} Guardar ubicación</button>
-        </div>
-      </form>
-    </details>
+    {edit_panel("Editar ubicación", csrf_token, audit_id, "ubicacion", edit_fields, "Guardar ubicación", "col-6")}
     """
 
     fields_html = "".join(loc_field(label, key) for key, label in CAMPOS)

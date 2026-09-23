@@ -1,6 +1,6 @@
 """
 services/validaciones.py — Requisitos, validaciones cruzadas y alertas del
-levantamiento de información (paso 9 del flujo de consulta: "Sistema").
+levantamiento de información.
 
 Única fuente de decisión: la interfaz, el servidor (antes de generar el
 resumen), el resumen y la ficha final consumen el resultado de

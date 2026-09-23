@@ -1,7 +1,8 @@
 """views/auditor/radar/tab_financiero.py — Tab de información financiera por año fiscal.
 
 Bloque 6 del levantamiento:
-  1. Parámetro previo obligatorio: el año fiscal de los estados financieros.
+  1. Ejercicio mostrado: el registrado con cifras o, si no, el más reciente
+     con cifras del RUC. No se pide el año antes de mostrar la información.
   2. Casilleros del Estado de Situación Financiera (1, 2, 3) y del Estado de
      Resultados Integral (401, 403, 501, 502, 707) de ese año.
   3. Comparativo entre ejercicios del mismo RUC.
@@ -10,11 +11,13 @@ from __future__ import annotations
 
 from datetime import date
 
-from services.financial import CASILLEROS, ETIQUETAS_FINANCIERAS, comparativo, formato_moneda
+from services.financial import (
+    CASILLEROS, ETIQUETAS_FINANCIERAS, comparativo, compute_indicators, formato_moneda,
+)
 from services.rowutil import row_get
 from services.trazabilidad import BLOQUE_FINANCIERO
 from ui.components import fecha_consulta_field, provenance_history
-from ui.helpers import csrf_input, esc
+from ui.helpers import hidden_inputs, esc
 from ui.icons import SVG_ALERT, SVG_DOLLAR, SVG_SAVE
 
 
@@ -64,47 +67,24 @@ def _history_labels(historial: list) -> dict[str, str]:
     return labels
 
 
-def _year_step(audit_id: int, anio: int | None, anio_sugerido: dict | None, ruc: str,
-               read_only: bool, csrf_token: str) -> str:
-    """Paso 1: registrar el año fiscal (parámetro previo obligatorio)."""
+def _year_status(anio: int | None, years: list, anio_sugerido: dict | None, ruc: str) -> str:
+    """Ejercicio mostrado. No se pide el año: se muestran las cifras disponibles."""
     if len(ruc or "") != 13:
         return _notice("alert-medium", "Registre el RUC del expediente antes de cargar información financiera.")
-    sugerencia = ""
-    if anio_sugerido and anio_sugerido["anio"] != anio:
-        sugerencia = _notice(
-            "alert-info",
-            f'<strong>Año fiscal sugerido: {anio_sugerido["anio"]}</strong> — último balance presentado '
-            f'según el Directorio de Compañías. Descargue en Supercias los documentos económicos con '
-            f'fecha de corte {esc(anio_sugerido["fecha_corte"])} y confirme el año antes de registrar cifras.',
+    if years:
+        disponibles = ", ".join(str(y["anio_fiscal"]) for y in years)
+        sin_cifras = "" if anio in {int(y["anio_fiscal"]) for y in years} else " — sin cifras registradas"
+        return (
+            f'<p style="font-size:13px;color:var(--muted);margin:0 0 12px;">'
+            f"Ejercicio mostrado: <strong>{anio}</strong> (EEFF al {anio}-12-31){sin_cifras}. "
+            f"Ejercicios con cifras: {esc(disponibles)}.</p>"
         )
-    if read_only:
-        estado = f"Año fiscal {anio}" if anio else "Año fiscal pendiente de registrar"
-        return f'<p style="font-size:13px;color:var(--muted);margin:0 0 12px;">{estado}.</p>{sugerencia}'
-    valor = anio or (anio_sugerido["anio"] if anio_sugerido else "")
-    return f"""
-    {sugerencia}
-    <section class="people-editor">
-      <div class="people-editor-head">
-        <span class="workflow-eyebrow">Paso previo obligatorio</span>
-        <h4>Año fiscal de los estados financieros</h4>
-      </div>
-      <p style="font-size:13px;color:var(--muted);margin:0 0 12px;">
-        Si la auditoría se ejecuta en {date.today().year} sobre el ejercicio {date.today().year - 1},
-        se descargan los documentos con fecha {date.today().year - 1}-12-31.
-      </p>
-      <form method="post" action="/auditor/radar/financial-year">
-        {csrf_input(csrf_token)}
-        <input type="hidden" name="audit_id" value="{audit_id}">
-        <div class="grid">
-          <div class="col-4"><label>Año fiscal *</label>
-            <input name="anio_fiscal" type="number" min="1990" max="{date.today().year}" value="{esc(str(valor))}" required></div>
-        </div>
-        <div class="actions people-editor-actions">
-          <button type="submit" class="btn btn-sm btn-primary">{SVG_SAVE} {"Cambiar" if anio else "Registrar"} año fiscal</button>
-        </div>
-      </form>
-    </section>
-    """
+    detalle = (
+        f' Descargue en Supercias los documentos económicos con fecha de corte '
+        f'{esc(anio_sugerido["fecha_corte"])} (último balance presentado) y registre las cifras.'
+        if anio_sugerido else ""
+    )
+    return _notice("alert-info", "No hay cifras financieras disponibles para este RUC." + detalle)
 
 
 def _figures_form(audit_id: int, anio_edicion: int, fila, desde_sin_anio: bool, csrf_token: str) -> str:
@@ -134,9 +114,7 @@ def _figures_form(audit_id: int, anio_edicion: int, fila, desde_sin_anio: bool, 
       </div>
       {aviso}
       <form method="post" action="/auditor/radar/financial">
-        {csrf_input(csrf_token)}
-        <input type="hidden" name="audit_id" value="{audit_id}">
-        <input type="hidden" name="anio_fiscal" value="{anio_edicion}">
+        {hidden_inputs(csrf_token, audit_id=audit_id, anio_fiscal=anio_edicion)}
         <div class="grid">
           {inputs}
           <div class="col-4"><label>Fecha de aprobación (acta de junta)</label>
@@ -157,11 +135,12 @@ def _figures_form(audit_id: int, anio_edicion: int, fila, desde_sin_anio: bool, 
 
 
 def _other_year_selector(audit_id: int, anio_edicion: int) -> str:
+    """Abre otro ejercicio completo: cifras, indicadores, comparativo y formulario."""
     return f"""
     <form method="get" action="/auditor/radar" class="fin-year-switch">
       <input type="hidden" name="audit_id" value="{audit_id}">
       <input type="hidden" name="tab" value="indicadores">
-      <label>Registrar o editar otro ejercicio</label>
+      <label>Ver o registrar otro ejercicio</label>
       <input name="fin_anio" type="number" min="1990" max="{date.today().year}" value="{anio_edicion}">
       <button type="submit" class="btn btn-sm">Abrir ejercicio</button>
     </form>
@@ -220,20 +199,25 @@ def build(
     years = financial.get("years") or []
     snapshot = financial.get("snapshot")
     por_anio = {int(y["anio_fiscal"]): y for y in years}
+    if anio_edicion and anio_edicion != anio:
+        # Ejercicio abierto desde la pestaña: todo lo que se muestra es de ese año.
+        anio = anio_edicion
+        fila = por_anio.get(anio)
+        snapshot = {**dict(fila), "origen": "anual"} if fila is not None else None
+        indicators = compute_indicators(snapshot)
     origen = row_get(snapshot, "origen")
 
-    if anio is None:
-        estado_badge = '<span class="badge badge-gray">Año fiscal pendiente</span>'
-    elif origen == "anual":
+    if origen == "anual":
         estado_badge = f'<span class="badge badge-green">Ejercicio {anio}</span>'
-    else:
+    elif anio_edicion:
         estado_badge = f'<span class="badge badge-gray">Ejercicio {anio} sin cifras</span>'
+    else:
+        estado_badge = '<span class="badge badge-gray">Sin cifras por ejercicio</span>'
 
     sin_anio_html = _notice(
         "alert-medium",
         "Las cifras que se muestran fueron registradas sin año fiscal. "
-        + ("Regístrelas como ejercicio del año fiscal elegido para usarlas en el levantamiento."
-           if anio else "Registre el año fiscal y confírmelas contra los documentos económicos."),
+        "Guárdelas como un ejercicio para usarlas en el levantamiento.",
     ) if origen == "sin_anio" else ""
 
     catalog_notice = ""
@@ -243,7 +227,7 @@ def build(
         catalog_notice = _notice(
             "alert-info",
             f"Cifras del reporte local de Supercias disponibles para {esc(lista)}. "
-            "Confirme el año fiscal y contraste los importes con los documentos económicos originales."
+            "Contraste los importes con los documentos económicos originales."
         )
     if origen == "anual" and snapshot and row_get(snapshot, "fuente"):
         catalog_notice += (
@@ -260,16 +244,20 @@ def build(
         for a in indicators.get("alertas", [])
     )
 
+    selector_html = ""
     edit_html = ""
-    if not read_only and anio is not None:
-        anio_edicion = anio_edicion or anio
+    if not read_only and len(ruc or "") == 13:
+        anio_defecto = financial.get("anio_fiscal") or (
+            anio_sugerido["anio"] if anio_sugerido else date.today().year - 1)
+        anio_edicion = anio_edicion or anio_defecto
         fila = por_anio.get(anio_edicion)
-        desde_sin_anio = fila is None and anio_edicion == anio and financial.get("legacy") is not None
+        desde_sin_anio = (fila is None and anio_edicion == anio_defecto
+                          and financial.get("legacy") is not None)
         if desde_sin_anio:
             fila = financial.get("legacy")
+        selector_html = _other_year_selector(audit_id, anio_edicion)
         edit_html = (
             '<hr class="section-divider">'
-            + _other_year_selector(audit_id, anio_edicion)
             + _figures_form(audit_id, anio_edicion, fila, desde_sin_anio, csrf_token)
         )
 
@@ -279,7 +267,8 @@ def build(
       <h3 style="margin:0;font-size:15px;">Información financiera</h3>
       {estado_badge}
     </div>
-    {_year_step(audit_id, anio, anio_sugerido, ruc, read_only, csrf_token)}
+    {_year_status(anio, years, anio_sugerido, ruc)}
+    {selector_html}
     {catalog_notice}
     {sin_anio_html}
     <div class="kpi-grid">

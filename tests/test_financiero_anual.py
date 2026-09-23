@@ -187,10 +187,42 @@ class TestFinancialTab(_FinancialCase):
             financial=ctx["financial"], ruc=REFERENCE_RUC, provenance=ctx["provenance"], **kwargs,
         )
 
-    def test_without_year_only_the_year_step_is_offered(self):
+    def test_year_is_not_asked_before_showing_figures(self):
         html = self._html()
-        self.assertIn('action="/auditor/radar/financial-year"', html)
-        self.assertNotIn('action="/auditor/radar/financial"', html)
+        self.assertNotIn('action="/auditor/radar/financial-year"', html)
+        self.assertIn("No hay cifras financieras disponibles", html)
+        self.assertIn('action="/auditor/radar/financial"', html)
+
+    def test_latest_year_with_figures_is_shown_without_choosing(self):
+        self._save(2024, {"activo_total": "2900000"})
+        self._save(2025, CIFRAS_2025)
+        set_audit_fiscal_year(self.audit_id, 2006, db_path=self.db)
+        ctx = get_audit_context(self.audit_id, self.db)
+        self.assertEqual((ctx["snapshot"]["origen"], ctx["snapshot"]["anio_fiscal"]), ("anual", 2025))
+        html = self._html()
+        self.assertIn('<span class="badge badge-green">Ejercicio 2025</span>', html)
+        self.assertIn("Ejercicios con cifras: 2025, 2024", html)
+        self.assertIn("$3,108,776.58", html)
+
+    def test_opened_year_drives_the_whole_tab(self):
+        self._save(2024, {"activo_total": "2900000"})
+        self._save(2025, CIFRAS_2025)
+        html = self._html(anio_edicion=2024)
+        self.assertIn('<span class="badge badge-green">Ejercicio 2024</span>', html)
+        self.assertIn('<div class="kpi-value">$2,900,000.00</div>', html)
+        self.assertNotIn('<div class="kpi-value">$3,108,776.58</div>', html)
+        self.assertIn('name="anio_fiscal" value="2024"', html)
+
+        html_2012 = self._html(anio_edicion=2012)
+        self.assertIn("Ejercicio 2012 sin cifras", html_2012)
+        self.assertIn("2012</strong> (EEFF al 2012-12-31) — sin cifras registradas", html_2012)
+        self.assertNotIn('<div class="kpi-value">$3,108,776.58</div>', html_2012)
+
+    def test_registered_year_with_figures_is_kept(self):
+        self._save(2024, {"activo_total": "2900000"})
+        self._save(2025, CIFRAS_2025)
+        set_audit_fiscal_year(self.audit_id, 2024, db_path=self.db)
+        self.assertEqual(get_audit_context(self.audit_id, self.db)["snapshot"]["anio_fiscal"], 2024)
 
     def test_other_year_opens_its_own_figures(self):
         set_audit_fiscal_year(self.audit_id, 2025, db_path=self.db)

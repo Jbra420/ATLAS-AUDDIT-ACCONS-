@@ -4,7 +4,7 @@ from providers.supercias import SuperciasProvider
 from services.company_search import find_certificate_evidence
 from services.rowutil import row_get
 from services.trazabilidad import BLOQUE_ADMINISTRADORES
-from ui.helpers import csrf_input, esc
+from ui.helpers import hidden_inputs, esc
 from ui.components import (
     fecha_consulta_field,
     fuente_text as _fuente_text,
@@ -13,7 +13,7 @@ from ui.components import (
     people_avatar as _avatar,
     provenance_history,
 )
-from ui.icons import SVG_CHECK, SVG_EXTERNAL, SVG_SAVE, SVG_TRASH
+from ui.icons import SVG_CHECK, SVG_CROSS, SVG_EXTERNAL, SVG_SAVE, SVG_TRASH
 
 
 def _assisted_flow_panel(audit_id: int, audit, sources: list) -> str:
@@ -68,25 +68,61 @@ def _assisted_flow_panel(audit_id: int, audit, sources: list) -> str:
 
 
 def _complete_form(audit_id: int, a, csrf_token: str) -> str:
-    """Formulario por fila para completar identificación y nacionalidad sin
-    volver a escribir nombre y cargo (p. ej. el registro que trajo el Directorio)."""
+    """Formulario por fila para completar identificación y nacionalidad usando el Popover API nativo
+    como un hermoso modal flotante e interactivo."""
+    popover_id = f"edit-admin-{a['id']}"
+    initials = "".join(p[0] for p in a["nombre"].split()[:2] if p)
+
     return f"""
-    <details class="row-edit">
-      <summary>Completar</summary>
-      <form method="post" action="/auditor/radar/administrator">
-        {csrf_input(csrf_token)}
-        <input type="hidden" name="audit_id" value="{audit_id}">
-        <input type="hidden" name="administrator_id" value="{a['id']}">
-        <input type="hidden" name="action" value="update">
-        <label>Tipo de identificación</label>{_tipo_select(row_get(a, "tipo_identificacion") or "cedula")}
-        <label>Identificación</label>
-        <input name="identificacion" maxlength="32" value="{esc(row_get(a, 'identificacion') or '')}">
-        <label>Nacionalidad</label>
-        <input name="nacionalidad" maxlength="80" value="{esc(row_get(a, 'nacionalidad') or '')}">
-        {fecha_consulta_field("")}
-        <button type="submit" class="btn btn-sm btn-primary">{SVG_SAVE} Guardar</button>
-      </form>
-    </details>
+    <!-- Botón disparador del Popover nativo -->
+    <button type="button" popovertarget="{popover_id}" class="btn btn-sm" style="color: var(--accent-base); border-color: var(--accent-base); background: var(--accent-light);">
+      {SVG_SAVE} Completar
+    </button>
+
+    <!-- Modal Popover -->
+    <div popover="auto" id="{popover_id}" class="admin-popover">
+      <div class="admin-popover-card">
+        <div class="admin-popover-header">
+          <div class="admin-popover-avatar">{esc(initials)}</div>
+          <div class="admin-popover-title">
+            <strong>{esc(a["nombre"])}</strong>
+            <span class="cargo-badge" style="margin-top: 4px;">{esc(a["cargo"])}</span>
+          </div>
+          <button type="button" class="admin-popover-close" popovertarget="{popover_id}" popovertargetaction="hide" aria-label="Cerrar">
+            {SVG_CROSS}
+          </button>
+        </div>
+
+        <form method="post" action="/auditor/radar/administrator">
+          {hidden_inputs(csrf_token, audit_id=audit_id, administrator_id=a['id'], action="update")}
+
+          <div style="margin-bottom: 12px;">
+            <label style="margin-top:0;">Tipo de identificación</label>
+            {_tipo_select(row_get(a, "tipo_identificacion") or "cedula")}
+          </div>
+
+          <div class="grid" style="gap: 16px; margin-bottom: 12px;">
+            <div class="col-6">
+              <label style="margin-top:0;">Identificación</label>
+              <input name="identificacion" maxlength="32" value="{esc(row_get(a, 'identificacion') or '')}" placeholder="Número...">
+            </div>
+            <div class="col-6">
+              <label style="margin-top:0;">Nacionalidad</label>
+              <input name="nacionalidad" maxlength="80" value="{esc(row_get(a, 'nacionalidad') or '')}" placeholder="Ej. Ecuatoriana">
+            </div>
+          </div>
+
+          <div style="margin-bottom: 24px;">
+            {fecha_consulta_field("")}
+          </div>
+
+          <div class="actions" style="justify-content: flex-end;">
+            <button type="button" class="btn" popovertarget="{popover_id}" popovertargetaction="hide">Cancelar</button>
+            <button type="submit" class="btn btn-primary">{SVG_SAVE} Guardar cambios</button>
+          </div>
+        </form>
+      </div>
+    </div>
     """
 
 
@@ -110,10 +146,7 @@ def build(
         <td class="people-table-actions">
           {_complete_form(audit_id, a, csrf_token)}
           <form method="post" action="/auditor/radar/administrator">
-            {csrf_input(csrf_token)}
-            <input type="hidden" name="audit_id" value="{audit_id}">
-            <input type="hidden" name="administrator_id" value="{a['id']}">
-            <input type="hidden" name="action" value="delete">
+            {hidden_inputs(csrf_token, audit_id=audit_id, administrator_id=a['id'], action="delete")}
             <button type="submit" class="btn-icon-danger" title="Eliminar administrador" aria-label="Eliminar administrador">{SVG_TRASH}</button>
           </form>
         </td>''')
@@ -134,9 +167,7 @@ def build(
         Se requiere al menos el gerente general y el presidente, cada uno con su identificación.
       </p>
       <form method="post" action="/auditor/radar/administrator">
-        {csrf_input(csrf_token)}
-        <input type="hidden" name="audit_id" value="{audit_id}">
-        <input type="hidden" name="action" value="add">
+        {hidden_inputs(csrf_token, audit_id=audit_id, action="add")}
         <div class="grid">
           <div class="col-4"><label>Nombre completo *</label><input name="nombre" maxlength="160" required></div>
           <div class="col-4"><label>Cargo *</label><input name="cargo" maxlength="120" required placeholder="Gerente general"></div>

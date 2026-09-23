@@ -10,7 +10,7 @@ from database import AUDIT_STATUSES
 from services.identificacion import TIPOS_IDENTIFICACION
 from services.ruc_validator import validate_ruc
 from services.rowutil import row_get
-from ui.helpers import csrf_input, esc
+from ui.helpers import esc, hidden_inputs
 from ui.icons import (
     SVG_ALERT,
     SVG_CHECK,
@@ -18,6 +18,7 @@ from ui.icons import (
     SVG_CLOCK,
     SVG_CROSS,
     SVG_INFO,
+    SVG_SAVE,
 )
 
 
@@ -105,6 +106,47 @@ def fecha_consulta_field(css_col: str = "col-4") -> str:
     )
 
 
+def form_field(
+    name: str, label: str, value: object = "", *, col: str = "col-6",
+    placeholder: str = "", textarea: bool = False,
+) -> str:
+    """Campo etiquetado de un formulario en grilla (input de texto o textarea)."""
+    ph = f' placeholder="{esc(placeholder)}"' if placeholder else ""
+    control = (
+        f'<textarea name="{name}" style="min-height:60px;"{ph}>{esc(value)}</textarea>'
+        if textarea else f'<input name="{name}" value="{esc(value)}"{ph}>'
+    )
+    return f'<div class="{col}"><label>{esc(label)}</label>{control}</div>'
+
+
+def edit_panel(
+    title: str, csrf_token: str, audit_id: int, return_tab: str, fields_html: str, submit_label: str,
+    fecha_col: str = "col-4",
+) -> str:
+    """Formulario plegable "✎ Editar …" de un bloque del expediente.
+
+    Envía a /auditor/radar/profile solo los campos del bloque más la fecha de
+    consulta de la fuente, y vuelve a la pestaña return_tab.
+    """
+    return f"""
+    <details style="margin-top:0">
+      <summary style="font-size:13px;font-weight:600;color:var(--accent-base);cursor:pointer;margin-bottom:14px;">
+        ✎ {esc(title)}
+      </summary>
+      <form method="post" action="/auditor/radar/profile">
+        {hidden_inputs(csrf_token, audit_id=audit_id, return_tab=return_tab)}
+        <div class="grid">
+          {fields_html}
+          {fecha_consulta_field(fecha_col)}
+        </div>
+        <div class="actions" style="justify-content:flex-end;margin-top:12px;">
+          <button type="submit" class="btn btn-primary btn-sm">{SVG_SAVE} {esc(submit_label)}</button>
+        </div>
+      </form>
+    </details>
+    """
+
+
 def provenance_history(rows: list, labels: dict[str, str], title: str = "Historial del dato") -> str:
     """Historial de trazabilidad de un bloque, del cambio más reciente al más antiguo.
 
@@ -164,11 +206,8 @@ def source_check_control(
     <div class="source-check-inline">
       {badge_html}
       <form method="post" action="/auditor/radar/source-check" class="source-check-inline-form">
-        {csrf_input(csrf_token)}
-        <input type="hidden" name="audit_id" value="{audit_id}">
-        <input type="hidden" name="check_id" value="{row_get(check, 'id')}">
-        <input type="hidden" name="accion" value="{accion}">
-        <input type="hidden" name="return_tab" value="{esc(return_tab)}">
+        {hidden_inputs(csrf_token, audit_id=audit_id, check_id=row_get(check, "id"),
+                       accion=accion, return_tab=return_tab)}
         {obs_input}
         <button type="submit" class="btn btn-sm">{btn_text}</button>
       </form>

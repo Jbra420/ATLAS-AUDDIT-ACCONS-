@@ -6,7 +6,7 @@ from __future__ import annotations
 import sqlite3
 
 from database import list_users
-from ui.helpers import esc, form_value, csrf_input
+from ui.helpers import esc, form_value, csrf_input, hidden_inputs
 from ui.icons import SVG_ALERT, SVG_PAUSE, SVG_REFRESH, SVG_TRASH
 from ui.layout import layout
 
@@ -49,8 +49,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
             if not is_self:
                 actions_html = f"""
                   <form method="post" action="/admin/users/reactivate" class="user-inline-form">
-                    {csrf_input(csrf_token)}
-                    <input type="hidden" name="user_id" value="{u['id']}">
+                    {hidden_inputs(csrf_token, user_id=u['id'])}
                     <button type="submit" class="user-action-btn user-action-success"
                             title="Reactivar usuario" aria-label="Reactivar usuario">{SVG_REFRESH}</button>
                   </form>
