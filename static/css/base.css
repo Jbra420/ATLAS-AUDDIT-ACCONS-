@@ -1,0 +1,306 @@
+/* ============================================================
+   base.css — Base: reset, tipografía, marco de la página (topbar, contenido, pie) y grilla.
+   ============================================================ */
+
+/* ── Reset ──────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  background-image: 
+    radial-gradient(circle at 10% 0%, rgba(139,63,192,0.03) 0%, transparent 40%),
+    radial-gradient(circle at 90% 100%, rgba(14,58,99,0.04) 0%, transparent 40%);
+  background-attachment: fixed;
+  color: var(--ink);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* ── Layout: Topbar + Main ─────────────────────────────── */
+.atlas-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ── Topbar (Glassmorphism) ────────────────────────────── */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+  padding: 0 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+  box-shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.03);
+  transition: all 0.3s ease;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+}
+
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+}
+
+/* Marca visual compartida por el topbar y el login (ver también
+   .login-logo en login.css): un solo lugar para el tamaño/sombra/hover del
+   isotipo Atlas en vez de estilos inline repetidos por pantalla. */
+.brand-mark {
+  display: block;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 2px 8px rgba(14, 58, 99, 0.2);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s;
+}
+.brand-mark:hover {
+  transform: rotate(-4deg) scale(1.06);
+  box-shadow: 0 4px 14px rgba(139, 63, 192, 0.35);
+}
+.brand-mark--topbar { height: 30px; width: 30px; }
+.brand-mark--login  { height: 44px; width: 44px; }
+
+.topbar-brand-text {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--ink);
+  letter-spacing: -0.5px;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.topbar-brand-sub {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-base);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.topbar-nav a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+
+.topbar-nav a svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  transition: transform 0.2s;
+}
+
+.topbar-nav a:hover {
+  color: var(--ink);
+  background: var(--line-2);
+}
+
+.topbar-nav a:hover svg {
+  transform: translateY(-2px);
+}
+
+.topbar-nav a.active {
+  color: var(--accent-base);
+  background: var(--accent-light);
+  font-weight: 600;
+}
+
+/* Custom interactive active indicator */
+.topbar-nav a.active::after {
+  content: '';
+  position: absolute;
+  bottom: -20px; /* Align to bottom of topbar */
+  left: 50%;
+  transform: translateX(-50%);
+  width: 24px;
+  height: 4px;
+  background: var(--grad-primary);
+  border-radius: 4px 4px 0 0;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.userbox {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-radius: 30px;
+  background: var(--line-2);
+  border: 1px solid var(--line);
+  transition: all 0.2s;
+}
+
+.userbox:hover {
+  background: white;
+  box-shadow: var(--shadow-sm);
+  border-color: rgba(139,63,192,0.25);
+}
+
+.userbox-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--grad-primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex; 
+  align-items: center; 
+  justify-content: center;
+}
+
+.userbox-info { display: flex; flex-direction: column; }
+
+.userbox-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.1;
+}
+
+.userbox-role {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.logout-link {
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  transition: all 0.2s;
+}
+.logout-link:hover { 
+  background: var(--red-50); 
+  color: var(--red-700); 
+}
+.logout-link svg {
+  width: 18px; height: 18px;
+}
+
+/* ── Main content ───────────────────────────────────────── */
+.main-content {
+  flex: 1;
+  width: 100%;
+}
+
+/* ── Pie de página: crédito de marca Auddit ─────────────── */
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 20px 32px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+.footer-logo {
+  height: 20px;
+  width: auto;
+  display: block;
+  opacity: 0.85;
+  transition: opacity 0.2s;
+}
+.app-footer:hover .footer-logo { opacity: 1; }
+
+.shell {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 32px;
+  animation: fade-in 0.4s ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Typography ─────────────────────────────────────────── */
+h1 { font-size: 24px; font-weight: 700; color: var(--ink); margin: 0 0 6px; letter-spacing: -0.5px;}
+h2 { font-size: 18px; font-weight: 600; color: var(--ink); margin: 0 0 16px; letter-spacing: -0.3px; display: flex; align-items: center; gap: 8px;}
+h3 { font-size: 15px; font-weight: 600; color: var(--ink-2); margin: 0 0 12px; }
+
+.page-title { 
+  font-size: 28px; 
+  font-weight: 800; 
+  background: var(--grad-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  display: inline-block;
+  margin-bottom: 4px;
+}
+.page-subtitle { font-size: 14px; color: var(--muted); margin-top: 4px; font-weight: 500;}
+
+.muted { color: var(--muted); }
+
+/* ── Grid ───────────────────────────────────────────────── */
+.grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 24px; }
+.col-3  { grid-column: span 3; }
+.col-4  { grid-column: span 4; }
+.col-5  { grid-column: span 5; }
+.col-6  { grid-column: span 6; }
+.col-8  { grid-column: span 8; }
+.col-12 { grid-column: span 12; }
+
+/* ── Section divider ────────────────────────────────────── */
+.section-divider {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 24px 0;
+}
+
+/* ── Responsive ─────────────────────────────────────────── */
+
+@media (max-width: 860px) {
+  .topbar { padding: 0 16px; height: auto; padding-top: 12px; padding-bottom: 12px; flex-direction: column; gap: 16px;}
+  .topbar-left { flex-direction: column; gap: 16px; width: 100%;}
+  .topbar-nav { width: 100%; justify-content: space-between; overflow-x: auto; padding-bottom: 8px;}
+  .topbar-nav a.active::after { display: none; }
+  .topbar-right { width: 100%; justify-content: flex-end; border-top: 1px solid var(--line); padding-top: 12px;}
+  .shell { padding: 16px; }
+  .grid { grid-template-columns: 1fr; gap: 16px;}
+  .col-3, .col-4, .col-5, .col-6, .col-8, .col-12 { grid-column: span 1; }
+}

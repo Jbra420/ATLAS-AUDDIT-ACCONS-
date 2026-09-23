@@ -1,0 +1,442 @@
+/* ============================================================
+   componentes.css — Componentes reutilizables en toda la app: avisos, paneles, tarjetas de
+   resumen, badges, botones, formularios, tablas, banner de RUC, modal y modo lectura.
+   ============================================================ */
+
+/* ── Flash / Error messages ─────────────────────────────── */
+.flash, .error-msg {
+  padding: 14px 20px;
+  border-radius: var(--radius-md);
+  margin-bottom: 0;
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  animation: toast-slide-in 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  min-width: 300px;
+  max-width: 400px;
+}
+
+@keyframes toast-slide-in {
+  from { opacity: 0; transform: translateY(100px) scale(0.9); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.flash {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--primary);
+  color: var(--ink);
+}
+
+.flash svg {
+  color: var(--primary);
+}
+
+.error-msg {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--red-500);
+  color: var(--ink);
+}
+
+.error-msg svg {
+  color: var(--red-500);
+}
+
+.flash svg, .error-msg svg {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+
+/* Solo los toasts transitorios (mensajes de flash/validación tras una
+   acción) reciben botón de cierre + auto-desaparición. Los usos de
+   .error-msg como contenido completo de una página (403, 404, "no
+   disponible") no llevan la clase .toast y por lo tanto no se cierran solos. */
+.toast-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 4px;
+  display: flex;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.toast-close:hover { background: var(--line-2); color: var(--ink); }
+.toast-close svg { width: 15px; height: 15px; }
+
+.toast.toast-hide {
+  animation: toast-slide-out 0.35s ease forwards;
+}
+@keyframes toast-slide-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(12px) scale(0.95); }
+}
+
+/* ── Panels ─────────────────────────────────────────────── */
+.panel {
+  background: var(--panel);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  margin-bottom: 24px;
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.3s ease, transform 0.3s ease;
+}
+
+.panel:hover {
+  box-shadow: var(--shadow-hover);
+}
+
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+/* ── Stat cards (Creative Redesign) ─────────────────────── */
+.stat-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow);
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  z-index: 1;
+}
+
+.stat-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-hover);
+  border-color: transparent;
+}
+
+/* Gradient borders on hover */
+.stat-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-lg);
+  padding: 2px;
+  background: var(--line);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  z-index: -1;
+  transition: all 0.3s;
+  opacity: 0;
+}
+
+.stat-card.blue:hover::before   { background: var(--grad-primary); opacity: 1; }
+.stat-card.amber:hover::before  { background: var(--grad-warning); opacity: 1; }
+.stat-card.green:hover::before  { background: var(--grad-success); opacity: 1; }
+.stat-card.red:hover::before    { background: var(--grad-danger); opacity: 1; }
+
+.stat-icon-wrap {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+.stat-card.blue .stat-icon-wrap { background: var(--blue-50); color: var(--accent-base); }
+.stat-card.amber .stat-icon-wrap { background: var(--amber-50); color: var(--amber-700); }
+.stat-card.green .stat-icon-wrap { background: var(--green-50); color: var(--green-700); }
+
+.stat-card svg {
+  width: 24px; height: 24px;
+}
+
+.stat-content {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.stat-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.stat-value {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--ink);
+  line-height: 1;
+  letter-spacing: -1px;
+}
+
+/* decorative background shape */
+.stat-bg-shape {
+  position: absolute;
+  right: -10px;
+  bottom: -10px;
+  opacity: 0.04;
+  width: 100px;
+  height: 100px;
+  z-index: -1;
+  transform: rotate(-15deg);
+  transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.stat-card:hover .stat-bg-shape {
+  transform: rotate(0deg) scale(1.1);
+  opacity: 0.08;
+}
+
+/* ── Badges ─────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.badge svg { width: 14px; height: 14px; }
+
+.badge-gray   { background: var(--gray-100); color: var(--gray-700); border-color: rgba(0,0,0,0.05); }
+.badge-amber  { background: var(--amber-50); color: var(--amber-700); border-color: rgba(180, 83, 9, 0.15); }
+.badge-blue   { background: var(--accent-light); color: var(--accent-hover); border-color: rgba(117, 48, 168, 0.18); }
+/* usa el acento de marca: distingue al Jefe Auditor */
+.badge-green  { background: var(--green-50); color: var(--green-700); border-color: rgba(4, 120, 87, 0.15); }
+.badge-red    { background: var(--red-50);   color: var(--red-700); border-color: rgba(185, 28, 28, 0.15); }
+
+/* ── Buttons ────────────────────────────────────────────── */
+.btn, button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink-2);
+  padding: 8px 16px;
+  font: 600 14px 'Inter', system-ui, sans-serif;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.2s;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.btn svg, button svg {
+  width: 16px; height: 16px;
+}
+
+.btn:hover, button:hover {
+  background: var(--bg);
+  border-color: var(--muted-2);
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+  transform: translateY(-1px);
+}
+
+.btn:active, button:active {
+  transform: translateY(0);
+}
+
+.btn-primary {
+  background: var(--grad-primary);
+  color: #FFFFFF;
+  border: none;
+  box-shadow: 0 4px 12px rgba(139, 63, 192, 0.3);
+}
+
+.btn-primary:hover {
+  background: linear-gradient(135deg, #7530A8 0%, #0A2C4D 100%);
+  color: #FFFFFF;
+  box-shadow: 0 6px 15px rgba(139, 63, 192, 0.4);
+  transform: translateY(-2px);
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* ── Forms ──────────────────────────────────────────────── */
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  margin: 16px 0 6px;
+}
+
+input, select, textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font: 400 14px 'Inter', system-ui, sans-serif;
+  background: var(--panel);
+  color: var(--ink);
+  transition: all 0.2s;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.02);
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent-base);
+  box-shadow: 0 0 0 4px rgba(139, 63, 192, 0.15);
+  background: #FFFFFF;
+}
+
+textarea { min-height: 100px; resize: vertical; line-height: 1.6; }
+
+.field-hint {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Tables ─────────────────────────────────────────────── */
+.table-wrap { overflow-x: auto; border-radius: var(--radius-sm); border: 1px solid var(--line); }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+thead tr { background: var(--bg); }
+
+th {
+  padding: 12px 16px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+tbody tr:last-child td { border-bottom: none; }
+
+tbody tr { transition: background 0.15s; }
+tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
+
+.td-company strong { font-weight: 600; font-size: 14.5px; color: var(--ink); }
+.td-company span   { font-size: 12.5px; color: var(--muted); display: block; margin-top: 2px; }
+
+/* ── RUC validation banner ───────────────────────────── */
+.ruc-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  border-radius: var(--radius);
+  border: 1px solid;
+  margin-bottom: 24px;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: var(--shadow-sm);
+}
+
+.ruc-banner.valid   { background: var(--green-50); border-color: rgba(16, 185, 129, 0.2); color: var(--green-700); }
+.ruc-banner.invalid { background: var(--red-50);   border-color: rgba(239, 68, 68, 0.2);  color: var(--red-700); }
+.ruc-banner.warning { background: var(--amber-50); border-color: rgba(245, 158, 11, 0.2);  color: var(--amber-700); }
+.ruc-banner.neutral { background: var(--bg);  border-color: var(--line); color: var(--ink-2); }
+
+.ruc-banner svg { width: 24px; height: 24px; flex-shrink: 0; }
+
+.ruc-banner .ruc-val {
+  font-family: 'Courier New', monospace;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  background: rgba(0,0,0,.04);
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+/* ── Custom Modal ────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.2s ease;
+}
+.modal-overlay.active {
+  opacity: 1;
+  visibility: visible;
+}
+.modal-content {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 24px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  transform: scale(0.95) translateY(10px);
+  transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.modal-overlay.active .modal-content {
+  transform: scale(1) translateY(0);
+}
+.modal-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+.modal-desc {
+  font-size: 14px;
+  color: var(--muted);
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}

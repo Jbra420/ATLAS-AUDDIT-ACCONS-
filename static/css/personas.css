@@ -1,0 +1,223 @@
+/* ============================================================
+   personas.css — Administradores y accionistas: tabla, flujo asistido y edición en popover.
+   ============================================================ */
+
+/* Completar datos de una persona ya registrada (administradores, accionistas) */
+.row-edit { display: inline-block; margin-right: 6px; vertical-align: middle; }
+.row-edit > summary {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-base);
+  cursor: pointer;
+}
+.row-edit form {
+  display: grid;
+  gap: 6px;
+  min-width: 240px;
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.row-edit form label { font-size: 11px; margin: 0; }
+
+/* ── Tabla de administradores / accionistas ──────────────── */
+.people-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 6px;
+}
+.people-table thead th {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 8px 14px;
+  text-align: left;
+  border-bottom: 2px solid var(--line);
+}
+.people-table tbody tr {
+  transition: all 0.2s;
+}
+.people-table tbody tr:hover td { background: var(--line-2); }
+.people-table tbody td {
+  padding: 12px 14px;
+  font-size: 13.5px;
+  background: var(--bg);
+}
+.people-table tbody td:first-child { border-radius: 8px 0 0 8px; }
+.people-table tbody td:last-child  { border-radius: 0 8px 8px 0; }
+.people-avatar {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: var(--grad-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  margin-right: 10px;
+  vertical-align: middle;
+}
+.cargo-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--accent-light);
+  color: var(--accent-base);
+}
+.people-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.people-section-head h3,
+.people-editor-head h4 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+}
+.people-section-head p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.people-table-actions {
+  width: 64px;
+  text-align: right;
+}
+.people-table-actions form {
+  display: inline-flex;
+}
+.btn-icon-danger {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--red-200);
+  border-radius: 6px;
+  background: var(--red-50);
+  color: var(--red-600);
+  cursor: pointer;
+}
+.btn-icon-danger:hover {
+  border-color: var(--red-500);
+  background: var(--red-100);
+}
+.btn-icon-danger svg {
+  width: 15px;
+  height: 15px;
+}
+.people-editor {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.people-editor-head {
+  margin-bottom: 14px;
+}
+.people-editor-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+/* ── Admin Form Popover (Glassmorphism & Native Popover API) ── */
+.admin-popover {
+  margin: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  overflow: visible;
+  text-align: left;
+}
+.admin-popover::backdrop {
+  background: rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.admin-popover-card {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,0.8);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  width: 90vw;
+  max-width: 420px;
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.25);
+  transform: scale(0.95) translateY(10px);
+  opacity: 0;
+  transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.admin-popover:popover-open .admin-popover-card {
+  transform: scale(1) translateY(0);
+  opacity: 1;
+}
+.admin-popover-card form {
+  display: block;
+}
+.admin-popover-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.admin-popover-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--grad-primary);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.admin-popover-title {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.admin-popover-title strong {
+  font-size: 16px;
+  color: var(--ink);
+  line-height: 1.2;
+}
+.admin-popover-title span {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.admin-popover-close {
+  margin-left: auto;
+  background: var(--line-2);
+  border: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--muted);
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+.admin-popover-close:hover {
+  background: var(--red-50);
+  color: var(--red-600);
+}

@@ -1,0 +1,114 @@
+/* ============================================================
+   login.css — Pantalla de inicio de sesión.
+   ============================================================ */
+
+/* ── Login page (Redesigned) ────────────────────────────── */
+.login-wrap {
+  min-height: 100vh;
+  background: var(--ink);
+  background-image:
+    radial-gradient(circle at 15% 50%, rgba(139, 63, 192, 0.18) 0%, transparent 50%),
+    radial-gradient(circle at 85% 30%, rgba(14, 58, 99, 0.3) 0%, transparent 50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.login-card {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  padding: 48px 40px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  color: white;
+}
+
+.login-card label { color: rgba(255,255,255,0.8); }
+.login-card input {
+  background: rgba(0,0,0,0.2);
+  border-color: rgba(255,255,255,0.1);
+  color: white;
+}
+.login-card input:focus {
+  background: rgba(0,0,0,0.3);
+  border-color: var(--accent-base);
+  box-shadow: 0 0 0 4px rgba(139, 63, 192, 0.25);
+}
+.login-card input::placeholder { color: rgba(255,255,255,0.3); }
+
+.login-brand {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.login-logo {
+  font-size: 36px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.login-tagline {
+  font-size: 14px;
+  color: rgba(255,255,255,0.6);
+  font-weight: 500;
+}
+
+.login-demo { font-size: 12px; color: rgba(255,255,255,0.4); text-align: center; margin-top: 24px; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px;}
+.login-demo code { background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; color: white;}
+
+/* Credito de marca bajo la tarjeta de login: el logo de Auddit trae su
+   propio fondo blanco (no es un PNG transparente), así que se aloja en una
+   pastilla blanca a propósito en vez de flotar directo sobre el fondo
+   oscuro del login. */
+.login-footer-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 28px;
+  padding: 8px 16px;
+  background: rgba(255,255,255,0.92);
+  border-radius: 999px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+  animation: login-footer-fade-in 0.6s ease-out 0.2s both;
+}
+.login-footer-logo { height: 18px; width: auto; display: block; }
+.login-footer-badge span {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2);
+  letter-spacing: 0.02em;
+}
+@keyframes login-footer-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.login-wrap.has-auddit-bg::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(60vw, 620px);
+  height: min(60vw, 620px);
+  background-image: url("/static/logoauddit.jpeg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  opacity: 0.05;
+  pointer-events: none;
+  z-index: 0;
+  filter: grayscale(100%);
+}

@@ -39,7 +39,7 @@ _TOAST_SCRIPT = f"""
 </script>
 """
 
-# CSS se inyecta desde afuera (cargado en startup desde static/atlas.css)
+# CSS se inyecta desde afuera (core/server.load_css une static/css/*.css al arrancar)
 _CSS_CONTENT: str = ""
 
 

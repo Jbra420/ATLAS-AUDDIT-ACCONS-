@@ -34,17 +34,22 @@ from core.router import ADMIN_POSTS, EXPORTS, GET_ROUTES, RADAR_POSTS, radar_url
 BASE_DIR = Path(__file__).resolve().parent.parent
 COOKIE_NAME = "atlas_session"
 STATIC_DIR = BASE_DIR / "static"
-CSS_PATH = STATIC_DIR / "atlas.css"
+CSS_DIR = STATIC_DIR / "css"
+# Orden de la cascada, de lo general a lo específico. utilidades va último
+# porque sus reglas (y el modo solo lectura) deben ganar sobre todo lo demás.
+CSS_FILES = (
+    "tokens", "base", "componentes", "login", "paneles",
+    "expediente", "financiero", "personas", "resumen", "ficha", "utilidades",
+)
 _CSS_CONTENT: str = ""
 _QUIET_MODE: bool = False  # Se activa con --quiet; suprime el log de peticiones HTTP
 
 
 def load_css() -> None:
+    """Une static/css/*.css en el orden de CSS_FILES. Se sirve como una sola
+    hoja (en línea en cada página y en /static/atlas.css)."""
     global _CSS_CONTENT
-    try:
-        _CSS_CONTENT = CSS_PATH.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        _CSS_CONTENT = "/* atlas.css no encontrado */"
+    _CSS_CONTENT = "\n".join((CSS_DIR / f"{name}.css").read_text(encoding="utf-8") for name in CSS_FILES)
     set_css(_CSS_CONTENT)
 
 

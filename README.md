@@ -189,6 +189,10 @@ guiar la consulta y guardar evidencia.
 - `views/`: construcción de HTML por pantalla (`admin/`, `auditor/`,
   `auditor/radar/` para el Radar Empresarial).
 - `ui/`: componentes, helpers e íconos HTML reutilizables entre vistas.
+- `static/css/`: estilos, un archivo por responsabilidad. `core/server.py`
+  los une al arrancar en el orden de `CSS_FILES`: `tokens` → `base` →
+  `componentes` → páginas (`login`, `paneles`, `expediente`, `financiero`,
+  `personas`, `resumen`, `ficha`) → `utilidades`, que va último.
 - `scripts/`: herramientas de importación de catálogos locales
   (`update_catastro.py` para el SRI, `update_supercias_catalog.py` para el
   Directorio de Compañías de Supercías) — se ejecutan manualmente, no en
@@ -242,6 +246,15 @@ automática y por eso usa `database`; `ui/components.py` lee
 Un bloque del levantamiento se define una sola vez como tupla `CAMPOS`
 `(campo, etiqueta, …)` en su pestaña. De ella salen las tarjetas, el
 formulario de edición y las etiquetas del historial.
+
+**Estilos**
+
+- Un color o una medida que se repite va como variable en `tokens.css`, y se
+  usa con `var(--…)`.
+- Una regla nueva va en el archivo de su pantalla o de su componente, y sus
+  `@media` al final de ese mismo archivo.
+- Un archivo nuevo se agrega a `CSS_FILES`. El orden importa: lo más
+  específico va después.
 
 **Nomenclatura**
 
