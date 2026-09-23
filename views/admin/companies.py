@@ -50,7 +50,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
             reassign_form = f"""
             <form method="post" action="/admin/companies/reassign" style="display:inline; margin:0;" title="Reasignar">
               {hidden_inputs(csrf_token, audit_id=a['id'])}
-              <select name="new_auditor_id" onchange="this.form.submit()" class="form-control form-control-sm" style="width:auto; display:inline-block; padding: 2px 4px; font-size: 12px;">
+              <select name="new_auditor_id" onchange="this.form.submit()" style="width:auto; display:inline-block; padding: 2px 4px; font-size: 12px;">
                 <option value="" disabled selected>Reasignar...</option>
                 {reassign_options}
               </select>
@@ -91,7 +91,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
             <label for="comp_ruc">RUC de la empresa *</label>
             <div style="display:flex; gap:8px;">
                 <input id="comp_ruc" name="ruc" placeholder="13 dígitos numéricos" maxlength="13" pattern="\\d{{13}}" title="El RUC debe tener exactamente 13 dígitos numéricos" required style="flex:1;">
-                <button type="button" id="btn-search-ruc" class="btn btn-secondary">Buscar</button>
+                <button type="button" id="btn-search-ruc" class="btn">Buscar</button>
             </div>
             <div class="field-hint" id="ruc-hint">Ingrese el RUC para autocompletar los datos.</div>
           </div>

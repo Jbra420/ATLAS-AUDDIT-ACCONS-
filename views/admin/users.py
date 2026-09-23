@@ -79,7 +79,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
           {csrf_input(csrf_token)}
           <input type="hidden" name="user_id" id="deactivateUserId">
           <div class="modal-actions">
-            <button type="button" class="btn btn-outline" onclick="closeModal('deactivateModal')">Cancelar</button>
+            <button type="button" class="btn" onclick="closeModal('deactivateModal')">Cancelar</button>
             <button type="submit" class="btn user-confirm-warning">Desactivar</button>
           </div>
         </form>
@@ -100,7 +100,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
           <textarea id="deletionReason" name="deletion_reason" minlength="5" maxlength="250"
                     required placeholder="Ej. Finalización de relación laboral"></textarea>
           <div class="modal-actions">
-            <button type="button" class="btn btn-outline" onclick="closeModal('deleteModal')">Cancelar</button>
+            <button type="button" class="btn" onclick="closeModal('deleteModal')">Cancelar</button>
             <button type="submit" class="btn user-confirm-danger">Confirmar baja</button>
           </div>
         </form>

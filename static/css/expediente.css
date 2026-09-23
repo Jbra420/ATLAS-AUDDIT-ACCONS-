@@ -395,7 +395,48 @@
   color: rgba(148,163,184,0.9);
 }
 .radar-action-left svg { width: 16px; height: 16px; stroke: var(--accent-soft); }
-.radar-action-right { display: flex; gap: 10px; }
+.radar-action-right { display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* ── Editor de bloque (captura por pestaña) ───────────────── */
+.people-editor {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+/* Sin línea doble: ni al inicio de la pestaña ni tras un separador. */
+.people-editor:first-child,
+.section-divider + .people-editor {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.people-editor-head {
+  margin-bottom: 14px;
+}
+.people-editor-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+/* ── Control de fuente consultada (badge + botón) ─────────── */
+.source-check-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.source-check-inline-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.source-check-obs-input {
+  width: 220px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
 
 /* ── Links a fuentes externas ────────────────────────────── */
 .external-links-row {

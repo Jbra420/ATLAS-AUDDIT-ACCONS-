@@ -14,7 +14,7 @@
 .fin-year-switch {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: stretch;
   gap: 8px;
   margin-bottom: 16px;
 }

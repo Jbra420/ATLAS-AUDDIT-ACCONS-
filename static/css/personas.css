@@ -91,9 +91,11 @@
   font-size: 12px;
 }
 .people-table-actions {
-  width: 64px;
+  width: 1%;
   text-align: right;
+  white-space: nowrap;
 }
+.people-table-actions > * + * { margin-left: 6px; }
 .people-table-actions form {
   display: inline-flex;
 }
@@ -116,18 +118,6 @@
 .btn-icon-danger svg {
   width: 15px;
   height: 15px;
-}
-.people-editor {
-  margin-top: 22px;
-  padding-top: 18px;
-  border-top: 1px solid var(--line);
-}
-.people-editor-head {
-  margin-bottom: 14px;
-}
-.people-editor-actions {
-  justify-content: flex-end;
-  margin-top: 12px;
 }
 
 /* ── Admin Form Popover (Glassmorphism & Native Popover API) ── */

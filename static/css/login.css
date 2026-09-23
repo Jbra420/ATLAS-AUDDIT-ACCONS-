@@ -110,5 +110,6 @@
   opacity: 0.05;
   pointer-events: none;
   z-index: 0;
-  filter: grayscale(100%);
+  filter: grayscale(100%) invert(1);
+  mix-blend-mode: screen;
 }

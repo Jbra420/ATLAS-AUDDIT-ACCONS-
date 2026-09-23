@@ -278,6 +278,7 @@ h3 { font-size: 15px; font-weight: 600; color: var(--ink-2); margin: 0 0 12px; }
 
 /* ── Grid ───────────────────────────────────────────────── */
 .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 24px; }
+.col-2  { grid-column: span 2; }
 .col-3  { grid-column: span 3; }
 .col-4  { grid-column: span 4; }
 .col-5  { grid-column: span 5; }
@@ -302,5 +303,5 @@ h3 { font-size: 15px; font-weight: 600; color: var(--ink-2); margin: 0 0 12px; }
   .topbar-right { width: 100%; justify-content: flex-end; border-top: 1px solid var(--line); padding-top: 12px;}
   .shell { padding: 16px; }
   .grid { grid-template-columns: 1fr; gap: 16px;}
-  .col-3, .col-4, .col-5, .col-6, .col-8, .col-12 { grid-column: span 1; }
+  .col-2, .col-3, .col-4, .col-5, .col-6, .col-8, .col-12 { grid-column: span 1; }
 }
