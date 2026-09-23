@@ -1,12 +1,15 @@
 """
 tests/test_http.py — Pruebas de integración HTTP para Atlas · Auddit.
 
-Conecta al servidor ya en ejecución en localhost:8765 (debe estar corriendo).
+Conecta a un servidor Atlas ya en ejecución en el puerto ATLAS_HTTP_TEST_PORT.
 Si el servidor no está disponible, los tests se saltean automáticamente.
 
-Para correr:
-    1. Iniciar el servidor: python3 app.py
-    2. Correr los tests:    python3 -m unittest tests.test_http -v
+Escriben en auddit.db (crean empresas y registros de prueba), así que no se
+ejecutan salvo que se pida explícitamente con ATLAS_HTTP_TEST_PORT. Úselos
+sobre una copia del proyecto o una base desechable, nunca contra el servidor
+con datos reales:
+    1. Iniciar el servidor de la copia: python3 app.py --port 8799
+    2. Correr los tests desde la copia: ATLAS_HTTP_TEST_PORT=8799 python3 -m unittest tests.test_http -v
 
 Los tests verifican:
   - Rutas públicas responden correctamente.
@@ -18,6 +21,7 @@ Los tests verifican:
 from __future__ import annotations
 
 import json
+import os
 import re
 import socket
 import time
@@ -30,12 +34,14 @@ from urllib.error import HTTPError, URLError
 from database import connect, create_company_audit
 
 SERVER_HOST = "127.0.0.1"
-SERVER_PORT = 8765
+SERVER_PORT = int(os.environ.get("ATLAS_HTTP_TEST_PORT", "0"))
 BASE_URL = f"http://{SERVER_HOST}:{SERVER_PORT}"
 
 
 def _server_available() -> bool:
     """Verifica si el servidor Atlas está disponible en el puerto configurado."""
+    if not SERVER_PORT:
+        return False
     try:
         with socket.create_connection((SERVER_HOST, SERVER_PORT), timeout=1):
             return True
@@ -109,9 +115,12 @@ def _csrf_token(path: str, cookie: str) -> str:
     return match.group(1) if match else ""
 
 
+_SKIP_REASON = "Defina ATLAS_HTTP_TEST_PORT y levante un servidor sobre una copia (ver docstring)"
+
+
 # ── Casos de prueba ───────────────────────────────────────────────────────────
 
-@unittest.skipUnless(_server_available(), "Servidor Atlas no disponible en localhost:8765 — inicia con: python3 app.py")
+@unittest.skipUnless(_server_available(), _SKIP_REASON)
 class TestHTTPPublicRoutes(unittest.TestCase):
     """Rutas públicas accesibles sin autenticación."""
 
@@ -174,7 +183,7 @@ class TestHTTPPublicRoutes(unittest.TestCase):
         self.assertEqual(resp.status, 404)
 
 
-@unittest.skipUnless(_server_available(), "Servidor Atlas no disponible en localhost:8765 — inicia con: python3 app.py")
+@unittest.skipUnless(_server_available(), _SKIP_REASON)
 class TestHTTPAuditorFlow(unittest.TestCase):
     """Flujo completo del auditor: login → dashboard → aislamiento de roles."""
 
@@ -547,7 +556,7 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         self.assertEqual(location["numero"], "S/N")
 
 
-@unittest.skipUnless(_server_available(), "Servidor Atlas no disponible en localhost:8765 — inicia con: python3 app.py")
+@unittest.skipUnless(_server_available(), _SKIP_REASON)
 class TestHTTPAdminFlow(unittest.TestCase):
     """Flujo completo del jefe auditor: login → dashboard → aislamiento de roles."""
 
@@ -697,7 +706,7 @@ class TestHTTPAdminFlow(unittest.TestCase):
         self.assertIn("propio+usuario", location)
 
 
-@unittest.skipUnless(_server_available(), "Servidor Atlas no disponible en localhost:8765 — inicia con: python3 app.py")
+@unittest.skipUnless(_server_available(), _SKIP_REASON)
 class TestHTTPSuperciasFlow(unittest.TestCase):
     """Fase 5 — pruebas integrales del catálogo local de Supercias y del
     flujo asistido de certificados, end-to-end contra el servidor real.
