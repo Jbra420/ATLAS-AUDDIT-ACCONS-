@@ -8,7 +8,7 @@ la búsqueda automática, por el catálogo local consultado). La fecha de consul
 es la fecha en que se revisó la fuente oficial: la indica el auditor en cada
 formulario (por defecto, hoy) y no puede ser futura.
 
-No consulta bases de datos: database.py registra y lee el historial; este
+No consulta bases de datos: database/trazabilidad.py registra y lee el historial; este
 módulo solo define las fuentes, valida fechas y resume el historial.
 """
 from __future__ import annotations

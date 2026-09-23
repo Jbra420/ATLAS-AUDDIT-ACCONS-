@@ -203,8 +203,8 @@ class TestNamesBySource(_TempDbCase):
         self._run_search()
         self._clear_names()
 
-        with mock.patch.object(database, "lookup_catastro", return_value={"name": "GRUCANQUI CIA. LTDA"}), \
-             mock.patch.object(database, "lookup_supercias_catalog",
+        with mock.patch.object(database.esquema, "lookup_catastro", return_value={"name": "GRUCANQUI CIA. LTDA"}), \
+             mock.patch.object(database.esquema, "lookup_supercias_catalog",
                                return_value={"razon_social": "GRUCANQUI CIA. LTDA."}):
             init_db(self.db)
 
@@ -220,8 +220,8 @@ class TestNamesBySource(_TempDbCase):
                 ("0190377210001", self.audit_id),
             )
 
-        with mock.patch.object(database, "lookup_catastro", return_value={"name": "X"}) as sri, \
-             mock.patch.object(database, "lookup_supercias_catalog", return_value={"razon_social": "Y"}) as sup:
+        with mock.patch.object(database.esquema, "lookup_catastro", return_value={"name": "X"}) as sri, \
+             mock.patch.object(database.esquema, "lookup_supercias_catalog", return_value={"razon_social": "Y"}) as sup:
             init_db(self.db)
 
         profile = get_company_profile(self.audit_id, self.db)

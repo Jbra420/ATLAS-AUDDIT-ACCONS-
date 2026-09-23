@@ -152,7 +152,7 @@ class TestLookupSuperciasCatalogMissing(unittest.TestCase):
     """Cuando el catálogo no fue importado, todo debe degradar sin excepciones."""
 
     def test_returns_none_when_catalog_file_absent(self):
-        with patch.object(database, "SUPERCIAS_CATALOG_PATH", Path(tempfile.mkdtemp()) / "no_existe.db"):
+        with patch.object(database.catalogos, "SUPERCIAS_CATALOG_PATH", Path(tempfile.mkdtemp()) / "no_existe.db"):
             self.assertIsNone(database.lookup_supercias_catalog("0190377210001"))
 
     def test_returns_none_when_ruc_not_in_an_existing_catalog(self):
@@ -170,7 +170,7 @@ class TestLookupSuperciasCatalogMissing(unittest.TestCase):
             conn.execute(
                 "INSERT INTO supercias_catalog (ruc, razon_social) VALUES ('9999999999001', 'OTRA EMPRESA')"
             )
-        with patch.object(database, "SUPERCIAS_CATALOG_PATH", catalog_path):
+        with patch.object(database.catalogos, "SUPERCIAS_CATALOG_PATH", catalog_path):
             self.assertIsNone(database.lookup_supercias_catalog("0190314014001"))
             self.assertIsNotNone(database.lookup_supercias_catalog("9999999999001"))
 
@@ -184,7 +184,7 @@ class TestLookupSuperciasCatalogMissing(unittest.TestCase):
             "Empresa sin Supercias", "0190314014001", "", "", "2026",
             auditor["id"], admin["id"], db,
         )
-        with patch.object(database, "SUPERCIAS_CATALOG_PATH", Path(tempfile.mkdtemp()) / "no_existe.db"):
+        with patch.object(database.catalogos, "SUPERCIAS_CATALOG_PATH", Path(tempfile.mkdtemp()) / "no_existe.db"):
             with patch("services.company_research.lookup_catastro", return_value=dict(SRI_RECORD)):
                 outcome = research_company_by_ruc(audit_id, "0190314014001", auditor["id"], db)
 

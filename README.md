@@ -174,7 +174,9 @@ guiar la consulta y guardar evidencia.
 - `app.py`: punto de entrada; delega en `core/server.py`.
 - `core/server.py`: servidor HTTP (rutas, sesiones, CSRF, RBAC).
 - `core/router.py`: tabla declarativa de rutas GET.
-- `database.py`: SQLite, usuarios, sesiones, empresas, fuentes y resumen.
+- `database/`: SQLite, un módulo por tema (usuarios, expedientes,
+  investigación, perfil, personas, financiero, catálogos, trazabilidad,
+  esquema). `database/__init__.py` re-exporta la API pública.
 - `schema.sql`: esquema de la base de datos.
 - `services/`: lógica de negocio pura, sin SQL. Incluye:
   - validación de RUC e identificaciones;
@@ -206,7 +208,7 @@ core/      HTTP: rutas, sesión, CSRF, rol → llama a database/ y services/
 views/     HTML por pantalla              → usa ui/, services/, database/ (solo lectura)
 ui/        componentes HTML sin estado     → nunca importa de views/
 services/  reglas de negocio puras, sin SQL
-database.py  SQL y persistencia (única capa que escribe en SQLite)
+database/  SQL y persistencia (única capa que escribe en SQLite)
 ```
 
 Excepciones conocidas: `services/company_research.py` orquesta la búsqueda

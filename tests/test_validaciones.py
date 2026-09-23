@@ -266,7 +266,7 @@ class TestSummaryAndView(unittest.TestCase):
 
 
 _CATALOGS_READY = (
-    (Path(database.__file__).parent / "sri_catastro.db").exists()
+    database.SRI_CATASTRO_PATH.exists()
     and database.SUPERCIAS_CATALOG_PATH.exists()
     and database.lookup_catastro(REFERENCE_RUC) is not None
     and database.lookup_supercias_catalog(REFERENCE_RUC) is not None
