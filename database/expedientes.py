@@ -9,7 +9,7 @@ from seed_data import DEMO_RUC, seed_demo_radar
 from services.ruc_validator import format_ruc, validate_ruc
 
 from database.base import DB_PATH, connect, now_iso
-from database.certificados import _pending_certificates
+from database.certificados import _pending_certificate
 from database.financiero import _financial_context
 
 
@@ -316,7 +316,7 @@ def _load_radar_context(conn: sqlite3.Connection, audit_id: int) -> dict[str, An
     context["alert_treatments"] = list(conn.execute(
         "SELECT * FROM alert_treatments WHERE audit_id = ?", (audit_id,)
     ))
-    context["certificados"] = _pending_certificates(conn, audit_id)
+    context["certificado"] = _pending_certificate(conn, audit_id)
     financial = _financial_context(conn, audit_id)
     context["snapshot"] = financial["snapshot"]
     context["financial"] = financial

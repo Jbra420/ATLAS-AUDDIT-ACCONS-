@@ -133,12 +133,15 @@ nómina completa de administradores ni los accionistas. Para esos dos campos,
 las pestañas "Administradores" y "Accionistas" muestran un flujo asistido:
 
 1. Enlaces al trámite del certificado y al portal de información de Supercías.
-2. El auditor adjunta el certificado en PDF. El archivo se guarda en
-   `adjuntos/<expediente>/<sha256>.pdf` (excluido de Git) y queda registrado
-   como evidencia.
-3. `services/certificados.py` extrae el texto (pypdf) y propone las filas:
-   identificación, nombre, cargo o capital y participación.
-4. Nada se importa sin revisión: el auditor corrige, desmarca y confirma.
+2. El auditor adjunta el certificado en PDF una sola vez, desde cualquiera de
+   las dos pestañas. El archivo se guarda en `adjuntos/<expediente>/<sha256>.pdf`
+   (excluido de Git) y queda registrado como evidencia.
+3. `services/certificados.py` extrae el texto (pypdf) y propone ambas
+   nóminas: administradores (identificación, nombre, cargo, nacionalidad) y
+   accionistas (identificación, nombre, capital, participación). Cada fila se
+   asigna por la sección del documento y por su contenido (cargo o capital).
+4. Nada se importa sin revisión: el mismo panel aparece en las dos pestañas y
+   un solo "Importar" registra administradores y accionistas.
    Las filas importadas llevan la fuente "Supercias — certificado de nómina
    (PDF adjunto)" y su fecha de consulta.
 

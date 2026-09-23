@@ -1,9 +1,9 @@
 """
 services/certificados.py — Lectura de los certificados de nómina de Supercias.
 
-El auditor adjunta el certificado electrónico (PDF) de nómina de
-administradores o de accionistas/socios. Este módulo extrae su texto y
-propone las filas que encuentra. No escribe en la base: la propuesta se
+El auditor adjunta el certificado electrónico (PDF) de la compañía, que trae
+la nómina de administradores y la de accionistas/socios. Este módulo extrae
+su texto y propone las filas de ambas nóminas. No escribe en la base: la propuesta se
 muestra al auditor, que la corrige y confirma antes de importar nada.
 
 El análisis es heurístico: busca cada fila por su identificación (cédula de
@@ -21,10 +21,8 @@ from datetime import date
 from services.identificacion import inferir_tipo
 from services.normalizacion import normalizar_texto
 
-TIPOS_CERTIFICADO = {
-    "administradores": "Certificado de nómina de administradores",
-    "accionistas": "Certificado de nómina de accionistas/socios",
-}
+NOMINAS = ("administradores", "accionistas")
+TITULO_CERTIFICADO = "Certificado de nómina de administradores y accionistas"
 MAX_PDF_BYTES = 10 * 1024 * 1024
 
 # Cargos de administración más frecuentes; los compuestos van antes que sus
@@ -175,31 +173,74 @@ def _nombre(lineas: list[str], quitar: list[str]) -> str:
     return " ".join(mejor) if len(mejor) >= 2 else ""
 
 
-def _registros(texto: str, ruc_empresa: str) -> list[tuple[str, list[str]]]:
-    """(identificación, líneas de la fila). Una fila empieza en la línea que
-    trae una identificación y sigue en las líneas siguientes hasta la próxima,
-    porque las celdas largas del PDF se parten en varias líneas."""
-    registros: list[tuple[str, list[str]]] = []
+def _seccion(linea: str) -> str:
+    """'administradores' o 'accionistas' si la línea es el título de una
+    sección de la nómina; vacío si no lo es (o si nombra a ambas, como el
+    título general del certificado)."""
+    normal = normalizar_texto(linea)
+    adm = "ADMINISTRADOR" in normal
+    acc = "ACCIONISTA" in normal or "SOCIO" in normal
+    return ("administradores" if adm else "accionistas") if adm != acc else ""
+
+
+def _registros(texto: str, ruc_empresa: str) -> list[tuple[str, str, list[str]]]:
+    """(sección, identificación, líneas de la fila). Una fila empieza en la
+    línea que trae una identificación y sigue en las siguientes hasta la
+    próxima, porque las celdas largas del PDF se parten en varias líneas. Un
+    título de sección corta la fila en curso."""
+    registros: list[tuple[str, str, list[str]]] = []
+    seccion, en_fila = "", False
     for linea in texto.splitlines():
         ids = [i for i in _ID.findall(linea) if i != ruc_empresa]
         if ids:
-            registros.append((ids[0], [_ID.sub(" ", linea)]))
-        elif registros and linea.strip():
-            registros[-1][1].append(linea)
+            registros.append((seccion, ids[0], [_ID.sub(" ", linea)]))
+            en_fila = True
+        elif _seccion(linea):
+            seccion, en_fila = _seccion(linea), False
+        elif en_fila and linea.strip():
+            registros[-1][2].append(linea)
     return registros
 
 
-def analizar_certificado(texto: str, tipo: str, ruc_empresa: str = "") -> dict:
-    """Propuesta de filas del certificado para que el auditor la revise.
+def _fila(identificacion: str, lineas: list[str], seccion: str) -> tuple[str, dict] | None:
+    """Clasifica la fila y extrae sus datos. Un cargo la hace de
+    administradores; un capital o porcentaje, de accionistas. Si no trae
+    ninguno de los dos, decide la sección del documento en que aparece."""
+    normal = normalizar_texto(" ".join(lineas))
+    cargo = _buscar(CARGOS, normal)
+    montos = _MONTO.findall(normal)
+    porcentaje = _PORCENTAJE.search(normal)
+    if cargo and not (montos or porcentaje):
+        tipo = "administradores"
+    elif (montos or porcentaje) and not cargo:
+        tipo = "accionistas"
+    else:
+        tipo = seccion or ("administradores" if cargo else "accionistas")
+    nacionalidad = _buscar(NACIONALIDADES, normal)
+    fila = {"identificacion": identificacion, "tipo_identificacion": inferir_tipo(identificacion)}
+    if tipo == "administradores":
+        fila |= {"cargo": cargo, "nacionalidad": nacionalidad}
+        quitar = [cargo, nacionalidad]
+    else:
+        fila |= {
+            "capital": _monto(montos[0]) if montos else None,
+            "participacion_porcentaje": float(porcentaje[1].replace(",", ".")) if porcentaje else None,
+        }
+        quitar = [nacionalidad]
+    fila["nombre"] = _nombre(lineas, quitar)
+    return (tipo, fila) if fila["nombre"] else None
 
-    Devuelve {"filas": [...], "fecha_certificado": "AAAA-MM-DD" | "",
-    "advertencias": [...]}. Cada fila de administradores trae identificacion,
-    tipo_identificacion, nombre, cargo y nacionalidad; cada fila de
-    accionistas trae identificacion, tipo_identificacion, nombre, capital y
-    participacion_porcentaje.
+
+def analizar_nomina(texto: str, ruc_empresa: str = "") -> dict:
+    """Propuesta de administradores y accionistas del certificado para que el
+    auditor la revise. Un mismo PDF alimenta las dos nóminas.
+
+    Devuelve {"administradores": [...], "accionistas": [...],
+    "fecha_certificado": "AAAA-MM-DD" | "", "advertencias": [...]}. Cada
+    administrador trae identificacion, tipo_identificacion, nombre, cargo y
+    nacionalidad; cada accionista trae identificacion, tipo_identificacion,
+    nombre, capital y participacion_porcentaje.
     """
-    if tipo not in TIPOS_CERTIFICADO:
-        raise ValueError("Tipo de certificado no reconocido")
     advertencias = []
     normal_doc = normalizar_texto(texto)
     if not normal_doc:
@@ -212,44 +253,22 @@ def analizar_certificado(texto: str, tipo: str, ruc_empresa: str = "") -> dict:
             "Verifique que corresponde a esta compañía."
         )
 
-    filas = []
-    for identificacion, lineas in _registros(texto, ruc_empresa):
-        normal = normalizar_texto(" ".join(lineas))
-        nacionalidad = _buscar(NACIONALIDADES, normal)
-        propuesta = {
-            "identificacion": identificacion,
-            "tipo_identificacion": inferir_tipo(identificacion),
-        }
-        if tipo == "administradores":
-            cargo = _buscar(CARGOS, normal)
-            propuesta |= {"cargo": cargo, "nacionalidad": nacionalidad}
-            quitar = [cargo, nacionalidad]
-        else:
-            montos = _MONTO.findall(normal)
-            porcentaje = _PORCENTAJE.search(normal)
-            propuesta |= {
-                "capital": _monto(montos[0]) if montos else None,
-                "participacion_porcentaje": float(porcentaje[1].replace(",", ".")) if porcentaje else None,
-            }
-            quitar = [nacionalidad]
-        propuesta["nombre"] = _nombre(lineas, quitar)
-        if propuesta["nombre"]:
-            filas.append(propuesta)
+    nomina: dict[str, list[dict]] = {tipo: [] for tipo in NOMINAS}
+    for seccion, identificacion, lineas in _registros(texto, ruc_empresa):
+        resultado = _fila(identificacion, lineas, seccion)
+        if resultado:
+            nomina[resultado[0]].append(resultado[1])
 
-    if tipo == "accionistas":
-        # Sin porcentaje explícito, la participación sale del capital de cada socio.
-        total = sum(f["capital"] or 0 for f in filas)
-        for f in filas:
-            if f["participacion_porcentaje"] is None and f["capital"] and total:
-                f["participacion_porcentaje"] = round(f["capital"] * 100 / total, 4)
+    # Sin porcentaje explícito, la participación sale del capital de cada socio.
+    accionistas = nomina["accionistas"]
+    total = sum(a["capital"] or 0 for a in accionistas)
+    for a in accionistas:
+        if a["participacion_porcentaje"] is None and a["capital"] and total:
+            a["participacion_porcentaje"] = round(a["capital"] * 100 / total, 4)
 
-    if normal_doc and not filas:
-        advertencias.append(
-            "No se reconocieron filas con cédula o RUC. El PDF quedó como evidencia: "
-            "registre la nómina manualmente."
-        )
-    return {
-        "filas": filas,
-        "fecha_certificado": fecha_del_certificado(texto),
-        "advertencias": advertencias,
-    }
+    if normal_doc:
+        advertencias += [
+            f"No se reconocieron {tipo} con cédula o RUC: regístrelos manualmente si corresponde."
+            for tipo, filas in nomina.items() if not filas
+        ]
+    return nomina | {"fecha_certificado": fecha_del_certificado(texto), "advertencias": advertencias}

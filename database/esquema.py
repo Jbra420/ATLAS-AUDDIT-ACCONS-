@@ -177,6 +177,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
         """
     )
 
+    # certificate_imports (una propuesta por tipo) se reemplazó por
+    # nomina_imports (un PDF, ambas nóminas). Solo se elimina si está vacía.
+    antigua = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'certificate_imports'")
+    if antigua.fetchone() and not conn.execute("SELECT 1 FROM certificate_imports LIMIT 1").fetchone():
+        conn.execute("DROP TABLE certificate_imports")
+
 
 def _backfill_source_names(conn: sqlite3.Connection) -> None:
     """Completa razon_social_sri / razon_social_supercias en expedientes que ya

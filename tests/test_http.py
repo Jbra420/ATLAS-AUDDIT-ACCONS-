@@ -265,9 +265,9 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         return match.group(1) if match else ""
 
     def test_certificate_pdf_upload_review_and_import(self):
-        """El auditor adjunta el certificado PDF de administradores, revisa la
-        propuesta y la importa: las filas quedan con la fuente del certificado
-        y el PDF como evidencia."""
+        """Un solo certificado PDF, adjuntado en Administradores, propone ambas
+        nóminas; el auditor revisa e importa administradores y accionistas en un
+        paso. Las filas quedan con la fuente del certificado y el PDF como evidencia."""
         import http.client
         from tests.test_certificados import _pdf_con_texto
 
@@ -288,12 +288,14 @@ class TestHTTPAuditorFlow(unittest.TestCase):
 
         page = f"/auditor/radar?audit_id={audit_id}&tab=admins"
         pdf = _pdf_con_texto([
+            "ADMINISTRADORES",
             "0102030405 TORRES VEGA ANA ECUADOR GERENTE GENERAL",
             "0912345678 PEREZ LUIS ECUADOR PRESIDENTE",
+            "ACCIONISTAS",
+            "0102030405 TORRES VEGA ANA ECUADOR 800,00",
         ])
         limite = "----atlastest"
-        campos = {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie),
-                  "tipo": "administradores", "return_tab": "admins"}
+        campos = {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), "return_tab": "admins"}
         cuerpo = b"".join(
             f"--{limite}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
             for k, v in campos.items()
@@ -305,26 +307,41 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         })
         resp = conn.getresponse()
         self.assertEqual(resp.status, 303)
-        self.assertIn("2+fila", resp.getheader("Location", ""))
+        self.assertIn("2+administrador", resp.getheader("Location", ""))
+        self.assertIn("1+accionista", resp.getheader("Location", ""))
 
         _, body = _get(page, self.cookie)
         admins_pane = self._pane_content(body, "admins", "accionistas")
+        accionistas_pane = self._pane_content(body, "accionistas", "indicadores")
         self.assertIn("Certificado registrado como evidencia", admins_pane)
         import_id = re.search(r'name="import_id" value="(\d+)"', admins_pane).group(1)
+        self.assertIn(f'name="import_id" value="{import_id}"', accionistas_pane,
+                      "La misma revisión aparece en la pestaña Accionistas")
 
+        # Se importa el gerente (sin el presidente) y el accionista, en un solo envío.
         status, location, _ = _post_raw("/auditor/radar/certificado/importar", {
             "audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), "import_id": import_id,
-            "return_tab": "admins", "incluir": "0", "fecha_consulta": "2026-09-01",
-            "identificacion_0": "0102030405", "nombre_0": "TORRES VEGA ANA",
-            "cargo_0": "GERENTE GENERAL", "nacionalidad_0": "ECUADOR",
+            "return_tab": "admins", "fecha_consulta": "2026-09-01",
+            "incluir_administradores": "0", "incluir_accionistas": "0",
+            "administradores_identificacion_0": "0102030405", "administradores_nombre_0": "TORRES VEGA ANA",
+            "administradores_cargo_0": "GERENTE GENERAL", "administradores_nacionalidad_0": "ECUADOR",
+            "accionistas_identificacion_0": "0102030405", "accionistas_nombre_0": "TORRES VEGA ANA",
+            "accionistas_capital_0": "800", "accionistas_participacion_porcentaje_0": "100",
         }, self.cookie)
         self.assertEqual(status, 303)
-        self.assertIn("1+registro", location)
+        self.assertIn("Importados+1+administrador", location)
+        self.assertIn("1+accionista", location)
         with connect() as conn:
-            rows = list(conn.execute(
+            admins = list(conn.execute(
                 "SELECT nombre, cargo, fuente FROM company_administrators WHERE audit_id = ?", (audit_id,)))
-        self.assertEqual([(r["nombre"], r["cargo"]) for r in rows], [("TORRES VEGA ANA", "GERENTE GENERAL")])
-        self.assertEqual(rows[0]["fuente"], "Supercias — certificado de nómina (PDF adjunto)")
+            socios = list(conn.execute(
+                "SELECT nombre, participacion_porcentaje, fuente FROM company_shareholders WHERE audit_id = ?",
+                (audit_id,)))
+        fuente = "Supercias — certificado de nómina (PDF adjunto)"
+        self.assertEqual([(r["nombre"], r["cargo"], r["fuente"]) for r in admins],
+                         [("TORRES VEGA ANA", "GERENTE GENERAL", fuente)])
+        self.assertEqual([(r["nombre"], r["participacion_porcentaje"], r["fuente"]) for r in socios],
+                         [("TORRES VEGA ANA", 100.0, fuente)])
 
     def test_complete_audit_via_ui_forms_can_generate_summary(self):
         """Flujo feliz completo del levantamiento de información, exclusivamente

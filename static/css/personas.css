@@ -150,6 +150,7 @@
   color: var(--amber-800);
   font-size: 13px;
 }
+.cert-review-title { margin: 14px 0 8px; color: var(--ink-2); font-size: 13px; font-weight: 700; }
 .cert-review-table { width: 100%; font-size: 13px; }
 .cert-review-table td { padding: 6px 8px; vertical-align: middle; }
 .cert-review-table td:first-child { width: 1%; text-align: center; }

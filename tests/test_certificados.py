@@ -22,27 +22,25 @@ from database import (
     init_db,
     save_certificate,
 )
-from services.certificados import analizar_certificado, extraer_texto, fecha_del_certificado
+from services.certificados import analizar_nomina, extraer_texto, fecha_del_certificado
 from views.auditor.radar.certificado import assisted_panel, review_panel
 
 RUC_EMPRESA = "0190444619001"
 
-ADMINISTRADORES = f"""SUPERINTENDENCIA DE COMPAÑÍAS, VALORES Y SEGUROS
-CERTIFICADO DE NÓMINA DE ADMINISTRADORES
+NOMINA = f"""SUPERINTENDENCIA DE COMPAÑÍAS, VALORES Y SEGUROS
+CERTIFICADO DE NÓMINA DE ADMINISTRADORES Y ACCIONISTAS
 Fecha de emisión: 15/09/2026   RUC: {RUC_EMPRESA}
+ADMINISTRADORES ACTUALES
 IDENTIFICACIÓN NOMBRE NACIONALIDAD CARGO FECHA NOMBRAMIENTO PERIODO
 0102030405 ORDOÑEZ FAJARDO JULIO ECUADOR GERENTE GENERAL 12/03/2024 5
 FERNANDO
 0912345678 PÉREZ LÓPEZ ANA MARÍA COLOMBIA PRESIDENTE 12/03/2024 5
-Página 1 de 1
-"""
-
-ACCIONISTAS = f"""CERTIFICADO DE NÓMINA DE ACCIONISTAS
-RUC {RUC_EMPRESA}  Cuenca, 15 de septiembre de 2026
+NÓMINA DE ACCIONISTAS / SOCIOS
 No. IDENTIFICACIÓN NOMBRE NACIONALIDAD TIPO INVERSIÓN CAPITAL
 1 0102030405 ORDOÑEZ FAJARDO JULIO FERNANDO ECUADOR NACIONAL 600,00
 2 1790012345001 INVERSIONES ANDINAS S.A. ECUADOR NACIONAL 400,00
 TOTAL 1.000,00
+Página 1 de 1
 """
 
 
@@ -73,49 +71,55 @@ def _pdf_con_texto(lineas: list[str]) -> bytes:
 
 
 class TestAnalizador(unittest.TestCase):
-    def test_administradores(self):
-        resultado = analizar_certificado(ADMINISTRADORES, "administradores", RUC_EMPRESA)
+    def test_un_certificado_llena_ambas_nominas(self):
+        resultado = analizar_nomina(NOMINA, RUC_EMPRESA)
         self.assertEqual(resultado["advertencias"], [])
         self.assertEqual(resultado["fecha_certificado"], "2026-09-15")
         self.assertEqual(
-            [(f["identificacion"], f["nombre"], f["cargo"], f["nacionalidad"]) for f in resultado["filas"]],
+            [(f["identificacion"], f["nombre"], f["cargo"], f["nacionalidad"]) for f in resultado["administradores"]],
             [
                 ("0102030405", "ORDOÑEZ FAJARDO JULIO FERNANDO", "GERENTE GENERAL", "ECUADOR"),
                 ("0912345678", "PÉREZ LÓPEZ ANA MARÍA", "PRESIDENTE", "COLOMBIA"),
             ],
         )
-
-    def test_accionistas_calcula_participacion_desde_el_capital(self):
-        filas = analizar_certificado(ACCIONISTAS, "accionistas", RUC_EMPRESA)["filas"]
         self.assertEqual(
             [(f["identificacion"], f["tipo_identificacion"], f["capital"], f["participacion_porcentaje"])
-             for f in filas],
+             for f in resultado["accionistas"]],
             [("0102030405", "cedula", 600.0, 60.0), ("1790012345001", "ruc", 400.0, 40.0)],
         )
-        self.assertEqual(filas[1]["nombre"], "INVERSIONES ANDINAS S A")
+        self.assertEqual(resultado["accionistas"][1]["nombre"], "INVERSIONES ANDINAS S A")
+
+    def test_sin_titulos_clasifica_por_el_contenido_de_la_fila(self):
+        texto = "0102030405 TORRES VEGA ANA GERENTE GENERAL\n0912345678 VEGA RUIZ LUIS 500,00"
+        resultado = analizar_nomina(texto)
+        self.assertEqual([f["nombre"] for f in resultado["administradores"]], ["TORRES VEGA ANA"])
+        self.assertEqual([f["nombre"] for f in resultado["accionistas"]], ["VEGA RUIZ LUIS"])
+
+    def test_certificado_de_una_sola_nomina_avisa_la_otra(self):
+        texto = "ADMINISTRADORES\n0102030405 TORRES VEGA ANA ECUADOR GERENTE GENERAL"
+        resultado = analizar_nomina(texto)
+        self.assertEqual(len(resultado["administradores"]), 1)
+        self.assertEqual(resultado["accionistas"], [])
+        self.assertTrue(any("accionistas" in a for a in resultado["advertencias"]))
 
     def test_porcentaje_explicito_prevalece(self):
-        texto = "0102030405 TORRES VEGA ANA 1.500,00 75%\n0912345678 VEGA LUIS 500,00 25%"
-        filas = analizar_certificado(texto, "accionistas")["filas"]
-        self.assertEqual([f["participacion_porcentaje"] for f in filas], [75.0, 25.0])
-        self.assertEqual(filas[0]["capital"], 1500.0)
+        texto = "ACCIONISTAS\n0102030405 TORRES VEGA ANA 1.500,00 75%\n0912345678 VEGA RUIZ LUIS 500,00 25%"
+        accionistas = analizar_nomina(texto)["accionistas"]
+        self.assertEqual([f["participacion_porcentaje"] for f in accionistas], [75.0, 25.0])
+        self.assertEqual(accionistas[0]["capital"], 1500.0)
 
     def test_ruc_de_la_empresa_no_es_una_fila(self):
-        filas = analizar_certificado(ADMINISTRADORES, "administradores", RUC_EMPRESA)["filas"]
-        self.assertNotIn(RUC_EMPRESA, [f["identificacion"] for f in filas])
+        resultado = analizar_nomina(NOMINA, RUC_EMPRESA)
+        ids = [f["identificacion"] for n in ("administradores", "accionistas") for f in resultado[n]]
+        self.assertNotIn(RUC_EMPRESA, ids)
 
     def test_advierte_si_el_certificado_es_de_otra_empresa(self):
-        advertencias = analizar_certificado(ADMINISTRADORES, "administradores", "1790000000001")["advertencias"]
+        advertencias = analizar_nomina(NOMINA, "1790000000001")["advertencias"]
         self.assertTrue(any("no menciona el RUC" in a for a in advertencias))
 
     def test_pdf_sin_texto_o_sin_filas(self):
-        self.assertIn("escaneado", analizar_certificado("", "administradores")["advertencias"][0])
-        self.assertIn("No se reconocieron filas",
-                      analizar_certificado("Sin tabla", "accionistas")["advertencias"][0])
-
-    def test_tipo_desconocido(self):
-        with self.assertRaises(ValueError):
-            analizar_certificado(ADMINISTRADORES, "gerentes")
+        self.assertIn("escaneado", analizar_nomina("")["advertencias"][0])
+        self.assertEqual(len(analizar_nomina("Sin tabla")["advertencias"]), 2)
 
     def test_fechas(self):
         self.assertEqual(fecha_del_certificado("Emitido el 2026-01-05"), "2026-01-05")
@@ -125,11 +129,13 @@ class TestAnalizador(unittest.TestCase):
 
 class TestExtraerTexto(unittest.TestCase):
     def test_lee_el_texto_de_un_pdf(self):
-        pdf = _pdf_con_texto(["0102030405 TORRES VEGA ANA ECUADOR GERENTE GENERAL"])
-        texto = extraer_texto(pdf)
-        self.assertIn("TORRES VEGA ANA", texto)
-        filas = analizar_certificado(texto, "administradores")["filas"]
-        self.assertEqual(filas[0]["cargo"], "GERENTE GENERAL")
+        pdf = _pdf_con_texto([
+            "ADMINISTRADORES", "0102030405 TORRES VEGA ANA ECUADOR GERENTE GENERAL",
+            "ACCIONISTAS", "0102030405 TORRES VEGA ANA ECUADOR 800,00",
+        ])
+        resultado = analizar_nomina(extraer_texto(pdf))
+        self.assertEqual(resultado["administradores"][0]["cargo"], "GERENTE GENERAL")
+        self.assertEqual(resultado["accionistas"][0]["participacion_porcentaje"], 100.0)
 
     def test_rechaza_lo_que_no_es_pdf(self):
         with self.assertRaisesRegex(ValueError, "no es un PDF"):
@@ -169,11 +175,11 @@ class TestGuardarCertificado(unittest.TestCase):
             self.auditor["id"], admin["id"], self.db,
         )
         self.pdf = _pdf_con_texto(["certificado"])
-        self.analisis = analizar_certificado(ACCIONISTAS, "accionistas", RUC_EMPRESA)
+        self.analisis = analizar_nomina(NOMINA, RUC_EMPRESA)
 
     def _guardar(self, pdf: bytes | None = None) -> int:
         return save_certificate(
-            self.audit_id, "accionistas", "nomina.pdf", pdf or self.pdf, self.analisis,
+            self.audit_id, "nomina.pdf", pdf or self.pdf, self.analisis,
             self.auditor["id"], self.db, self.adjuntos,
         )
 
@@ -185,14 +191,14 @@ class TestGuardarCertificado(unittest.TestCase):
         import_id = self._guardar()
         propuesta = get_certificate_import(self.audit_id, import_id, self.db)
         self.assertEqual(propuesta["estado"], "pendiente")
-        self.assertEqual(len(propuesta["filas"]), 2)
+        self.assertEqual((len(propuesta["administradores"]), len(propuesta["accionistas"])), (2, 2))
         self.assertEqual(propuesta["fecha_certificado"], "2026-09-15")
         self.assertEqual((self.adjuntos / propuesta["ruta"]).read_bytes(), self.pdf)
         evidencia = self._evidencias()
         self.assertEqual(len(evidencia), 1)
-        self.assertIn("accionistas", evidencia[0]["title"])
+        self.assertIn("administradores y accionistas", evidencia[0]["title"])
         self.assertIn(propuesta["sha256"], evidencia[0]["notes"])
-        self.assertEqual(get_audit_context(self.audit_id, self.db)["certificados"]["accionistas"]["id"], import_id)
+        self.assertEqual(get_audit_context(self.audit_id, self.db)["certificado"]["id"], import_id)
 
     def test_el_mismo_archivo_no_duplica_la_evidencia_y_reemplaza_la_propuesta(self):
         primero = self._guardar()
@@ -204,7 +210,7 @@ class TestGuardarCertificado(unittest.TestCase):
     def test_cerrar_la_propuesta(self):
         import_id = self._guardar()
         close_certificate_import(self.audit_id, import_id, "importado", self.db)
-        self.assertNotIn("accionistas", get_audit_context(self.audit_id, self.db)["certificados"])
+        self.assertIsNone(get_audit_context(self.audit_id, self.db)["certificado"])
         with self.assertRaises(ValueError):
             close_certificate_import(self.audit_id, import_id, "descartado", self.db)
 
@@ -213,16 +219,18 @@ class TestGuardarCertificado(unittest.TestCase):
         html = review_panel(self.audit_id, propuesta, "accionistas", "tok")
         self.assertIn('action="/auditor/radar/certificado/importar"', html)
         self.assertIn('formaction="/auditor/radar/certificado/descartar"', html)
-        self.assertIn('name="nombre_0" value="ORDOÑEZ FAJARDO JULIO FERNANDO"', html)
-        self.assertIn('name="participacion_porcentaje_1" value="40.0"', html)
+        self.assertIn('name="administradores_cargo_0" value="GERENTE GENERAL"', html)
+        self.assertIn('name="accionistas_nombre_0" value="ORDOÑEZ FAJARDO JULIO FERNANDO"', html)
+        self.assertIn('name="accionistas_participacion_porcentaje_1" value="40.0"', html)
+        self.assertEqual(html.count('name="incluir_administradores"'), 2)
         self.assertIn('value="2026-09-15"', html, "La fecha de consulta parte de la del certificado")
 
     def test_flujo_asistido_ofrece_portal_y_adjunto(self):
         audit = {"ruc": RUC_EMPRESA, "company_name": "COBBLERCOMPANY CIA. LTDA."}
-        html = assisted_panel(self.audit_id, audit, [], "administradores", "admins", "tok")
+        html = assisted_panel(self.audit_id, audit, [], "admins", "tok")
         self.assertIn("https://www.supercias.gob.ec/portalscvs/index.htm", html)
         self.assertIn('enctype="multipart/form-data"', html)
-        self.assertIn('name="tipo" value="administradores"', html)
+        self.assertNotIn('name="tipo"', html, "Un solo adjunto sirve para las dos nóminas")
         self.assertIn("Certificado aún no registrado", html)
 
 

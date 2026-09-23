@@ -226,17 +226,18 @@ CREATE TABLE IF NOT EXISTS financial_statements (
     UNIQUE (ruc, anio_fiscal)
 );
 
--- ── Certificados de nómina adjuntos (administradores / accionistas) ──
--- Cada PDF queda como evidencia con su SHA-256. filas_json es la propuesta
--- del analizador: nada entra a la nómina hasta que el auditor la confirma.
-CREATE TABLE IF NOT EXISTS certificate_imports (
+-- ── Certificado de nómina adjunto (administradores y accionistas) ────
+-- Un PDF trae las dos nóminas. Queda como evidencia con su SHA-256, y
+-- administradores_json / accionistas_json son la propuesta del analizador:
+-- nada entra a la nómina hasta que el auditor la confirma.
+CREATE TABLE IF NOT EXISTS nomina_imports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
-    tipo TEXT NOT NULL CHECK (tipo IN ('administradores', 'accionistas')),
     archivo TEXT NOT NULL,
     sha256 TEXT NOT NULL,
     ruta TEXT NOT NULL,
-    filas_json TEXT NOT NULL,
+    administradores_json TEXT NOT NULL DEFAULT '[]',
+    accionistas_json TEXT NOT NULL DEFAULT '[]',
     advertencias_json TEXT NOT NULL DEFAULT '[]',
     fecha_certificado TEXT,
     estado TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'importado', 'descartado')),

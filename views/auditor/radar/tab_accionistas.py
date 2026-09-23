@@ -128,7 +128,7 @@ def build(
     </section>
     """
     assisted_panel = "" if read_only else assisted_panel_html(
-        audit_id, audit, sources or [], "accionistas", "accionistas", csrf_token, certificado,
+        audit_id, audit, sources or [], "accionistas", csrf_token, certificado,
     )
     historial = [r for r in provenance or [] if row_get(r, "bloque") == BLOQUE_ACCIONISTAS]
     return f"""

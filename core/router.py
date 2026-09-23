@@ -57,7 +57,7 @@ from database import (
     update_shareholder,
     upsert_financial_statement,
 )
-from services.certificados import TIPOS_CERTIFICADO, analizar_certificado, extraer_texto
+from services.certificados import NOMINAS, analizar_nomina, extraer_texto
 from services.financial import CAMPOS_FINANCIEROS, compute_indicators
 from services.company_search import source_map_from_context
 from services.company_research import research_company_by_ruc
@@ -314,37 +314,32 @@ def _shareholder(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
 
 def _upload_certificate(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
     """Adjunta el certificado PDF de nómina: queda como evidencia y su
-    propuesta de filas espera la revisión del auditor."""
-    tipo = form_value(form, "tipo")
-    if tipo not in TIPOS_CERTIFICADO:
-        raise ValueError("Tipo de certificado no reconocido")
+    propuesta de administradores y accionistas espera la revisión del auditor."""
     archivo = getattr(form, "files", {}).get("archivo")
     if not archivo:
         raise ValueError("Seleccione el certificado en PDF")
     nombre, pdf = archivo
-    analisis = analizar_certificado(extraer_texto(pdf), tipo, audit["ruc"] or "")
-    save_certificate(audit["id"], tipo, nombre, pdf, analisis, user["id"])
-    filas = len(analisis["filas"])
-    if not filas:
+    analisis = analizar_nomina(extraer_texto(pdf), audit["ruc"] or "")
+    save_certificate(audit["id"], nombre, pdf, analisis, user["id"])
+    adm, acc = (len(analisis[n]) for n in NOMINAS)
+    if not adm and not acc:
         return "Certificado registrado como evidencia. No se detectaron filas: registre la nómina manualmente."
-    return f"Certificado registrado como evidencia. {filas} fila(s) detectada(s): revíselas y confirme la importación."
+    return (f"Certificado registrado como evidencia. Detectados {adm} administrador(es) y "
+            f"{acc} accionista(s): revíselos y confirme la importación.")
 
 
-def _import_certificate(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
-    """Importa las filas que el auditor marcó (y corrigió) en la revisión."""
-    propuesta = get_certificate_import(audit["id"], _int(form, "import_id"))
-    if not propuesta or propuesta["estado"] != "pendiente":
-        raise ValueError("El certificado ya fue revisado o no existe")
-    indices = sorted({int(i) for i in form.get("incluir", []) if i.isdigit() and int(i) < len(propuesta["filas"])})
-    if not indices:
-        raise ValueError("Marque al menos una fila para importar")
-    fecha = validar_fecha_consulta(form_value(form, "fecha_consulta"))
+def _import_rows(form: dict, audit: sqlite3.Row, user: sqlite3.Row, nomina: str, total: int) -> tuple[int, list[str]]:
+    """Importa las filas marcadas de una nómina: (importadas, omitidas con motivo)."""
+    indices = sorted({int(i) for i in form.get(f"incluir_{nomina}", []) if i.isdigit() and int(i) < total})
+    comunes = dict(
+        fecha_consulta=validar_fecha_consulta(form_value(form, "fecha_consulta")),
+        user_id=user["id"], fuente=FUENTE_CERTIFICADO_SUPERCIAS,
+    )
     importadas, omitidas = 0, []
     for i in indices:
-        valor = lambda campo: form_value(form, f"{campo}_{i}")  # noqa: E731
-        comunes = dict(fecha_consulta=fecha, user_id=user["id"], fuente=FUENTE_CERTIFICADO_SUPERCIAS)
+        valor = lambda campo: form_value(form, f"{nomina}_{campo}_{i}")  # noqa: E731
         try:
-            if propuesta["tipo"] == "administradores":
+            if nomina == "administradores":
                 add_administrator(
                     audit["id"], valor("identificacion"), valor("nombre"), valor("nacionalidad"), valor("cargo"),
                     **comunes,
@@ -358,8 +353,21 @@ def _import_certificate(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> st
             importadas += 1
         except ValueError as exc:
             omitidas.append(f"{valor('nombre') or f'fila {i + 1}'} ({exc})")
+    return importadas, omitidas
+
+
+def _import_certificate(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
+    """Importa a ambas nóminas las filas que el auditor marcó (y corrigió)."""
+    propuesta = get_certificate_import(audit["id"], _int(form, "import_id"))
+    if not propuesta or propuesta["estado"] != "pendiente":
+        raise ValueError("El certificado ya fue revisado o no existe")
+    if not any(form.get(f"incluir_{n}") for n in NOMINAS):
+        raise ValueError("Marque al menos una fila para importar")
+    resultado = {n: _import_rows(form, audit, user, n, len(propuesta[n])) for n in NOMINAS}
     close_certificate_import(audit["id"], propuesta["id"], "importado")
-    msg = f"{importadas} registro(s) importado(s) del certificado"
+    msg = (f"Importados {resultado['administradores'][0]} administrador(es) y "
+           f"{resultado['accionistas'][0]} accionista(s) del certificado")
+    omitidas = [o for _, lista in resultado.values() for o in lista]
     return f"{msg}. Omitidos: {'; '.join(omitidas)}" if omitidas else msg
 
 
