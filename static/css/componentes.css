@@ -1,6 +1,6 @@
 /* ============================================================
    componentes.css — Componentes reutilizables en toda la app: avisos, paneles, tarjetas de
-   resumen, badges, botones, formularios, tablas, banner de RUC, modal y modo lectura.
+   resumen, badges, botones, formularios, tablas, banner de RUC y modal.
    ============================================================ */
 
 /* ── Flash / Error messages ─────────────────────────────── */
@@ -401,6 +401,7 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
   align-items: center;
   justify-content: center;
   z-index: 9999;
+  padding: 16px;
   opacity: 0;
   visibility: hidden;
   transition: all 0.2s ease;
@@ -419,6 +420,11 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
   transform: scale(0.95) translateY(10px);
   transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.modal-content.modal-wide {
+  max-width: 680px;
+  max-height: 85vh;
+  overflow-y: auto;
 }
 .modal-overlay.active .modal-content {
   transform: scale(1) translateY(0);

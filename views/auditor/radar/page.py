@@ -185,6 +185,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     tab_sri = build_sri(
         audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok,
         source_check=sri_check, provenance=provenance,
+        alertas=source_map["validacion"]["alertas"],
     )
     tab_supercias = build_supercias(
         audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok,
@@ -221,7 +222,6 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
         readiness=source_map["readiness"],
         read_only=is_read_only,
         csrf_token=csrf_tok,
-        validacion=source_map["validacion"],
     )
 
     # Panel lateral de señales eliminado a petición del usuario para mejor uso del espacio horizontal.

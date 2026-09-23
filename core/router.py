@@ -309,14 +309,19 @@ def _shareholder(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
 
 
 def _generate_summary(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
-    readiness = source_map_from_context(audit, get_audit_context(audit["id"]))["readiness"]
-    if not readiness["ready"]:
-        labels = [item["label"] for item in readiness["blockers"]]
+    # Con obligatorios pendientes solo se genera si el auditor lo confirmó en
+    # el modal de la pestaña Resumen (confirmar_pendientes=1). El resumen deja
+    # constancia de lo pendiente en su sección "Pendientes de validación".
+    blockers = source_map_from_context(audit, get_audit_context(audit["id"]))["readiness"]["blockers"]
+    if blockers and form_value(form, "confirmar_pendientes") != "1":
+        labels = [item["label"] for item in blockers]
         preview = ", ".join(labels[:3])
         if len(labels) > 3:
             preview += f" y {len(labels) - 3} requisito(s) más"
         raise ValueError(f"No se puede generar el resumen. Complete: {preview}.")
     refresh_summary(audit["id"])
+    if blockers:
+        return f"Resumen generado con {len(blockers)} requisito(s) obligatorio(s) pendiente(s)"
     return "Resumen generado"
 
 
@@ -330,7 +335,7 @@ RADAR_POSTS = {
     "/auditor/radar/source-check": ("sri", _toggle_source_check),
     "/auditor/radar/document": ("documentos", _toggle_document),
     "/auditor/radar/financial": ("indicadores", _save_financial),
-    "/auditor/radar/alert-treatment": ("resumen", _alert_treatment),
+    "/auditor/radar/alert-treatment": ("sri", _alert_treatment),
     "/auditor/radar/financial-year": ("indicadores", _fiscal_year),
     "/auditor/radar/profile": ("sri", _save_profile),
     "/auditor/radar/administrator": ("admins", _administrator),

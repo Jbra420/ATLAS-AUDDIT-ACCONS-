@@ -1,42 +1,15 @@
 /* ============================================================
-   resumen.css — Pestaña Resumen: requisitos del resumen, validaciones cruzadas y alertas.
+   resumen.css — Pestaña Resumen: resumen preliminar y modal de puntos
+   pendientes antes de generarlo.
    ============================================================ */
 
-/* Paso 9: validaciones cruzadas y alertas */
-.validation-panel {
+/* ── Modal de pendientes ─────────────────────────────────── */
+.summary-pending-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px 24px;
   margin-bottom: 20px;
-  padding: 18px 20px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
 }
-.validation-panel h3 { margin: 4px 0 4px; font-size: 16px; }
-.validation-panel table { width: 100%; font-size: 13px; }
-.validation-panel td { vertical-align: top; }
-.validation-alerts { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.validation-alert {
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  font-size: 13px;
-}
-.validation-alert.is-critica { border-color: var(--red-200); background: var(--red-50); }
-.validation-alert .badge { margin-right: 6px; }
-.validation-treatment { margin: 8px 0 0; font-size: 13px; color: var(--ink-2); }
-.validation-treatment-form { display: grid; gap: 6px; margin-top: 8px; }
-.validation-treatment-form label { font-size: 12px; margin: 0; }
-.validation-treatment-form textarea { min-height: 70px; }
-.validation-treatment-form .btn { justify-self: end; }
-.validation-empty { font-size: 13px; color: var(--muted); margin: 0; }
-.validation-alert a, .validation-panel td a {
-  color: var(--ink);
-  font-weight: 600;
-  text-decoration: none;
-}
-.validation-panel td a { color: var(--accent-base); }
-.validation-alert a:hover, .validation-panel td a:hover { text-decoration: underline; }
-
 .summary-check-title {
   display: block;
   margin-bottom: 8px;
@@ -45,7 +18,7 @@
   font-weight: 800;
   text-transform: uppercase;
 }
-.summary-check-grid ul {
+.summary-check-list {
   margin: 0;
   padding: 0;
   list-style: none;
@@ -87,64 +60,6 @@
 .summary-check-item button:hover,
 .summary-check-item a:hover { text-decoration: underline; }
 
-.summary-readiness {
-  margin-bottom: 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--panel);
-  overflow: hidden;
-}
-.summary-readiness.is-blocked { border-color: var(--amber-200); }
-.summary-readiness.is-ready { border-color: var(--green-100); }
-.summary-readiness-head {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 14px 16px;
-  background: var(--bg);
-}
-.summary-readiness.is-blocked .summary-readiness-head { background: var(--amber-50); }
-.summary-readiness.is-ready .summary-readiness-head { background: var(--green-50); }
-.summary-readiness-head h3 {
-  margin: 2px 0 4px;
-  color: var(--ink);
-  font-size: 16px;
-}
-.summary-readiness-head p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-.summary-readiness-head > strong {
-  margin-left: auto;
-  color: var(--ink);
-  font-size: 20px;
-}
-.summary-check-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-.summary-check-grid > div {
-  min-width: 0;
-  padding: 14px 16px;
-  border-top: 1px solid var(--line);
-}
-.summary-check-grid > div + div { border-left: 1px solid var(--line); }
-.summary-historical-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin-bottom: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--amber-200);
-  border-radius: var(--radius-sm);
-  background: var(--amber-50);
-  color: var(--amber-800);
-  font-size: 12px;
-}
-.summary-historical-note strong { white-space: nowrap; }
-.summary-historical-note span { color: var(--amber-900); }
-
 /* ── Resumen estructurado ────────────────────────────────── */
 .summary-box-v3 {
   background: var(--bg);
@@ -161,14 +76,6 @@
   overflow-y: auto;
 }
 
-/* ── Responsive ─────────────────────────────────────────── */
-
-@media (max-width: 1100px) {
-  .summary-check-grid { grid-template-columns: 1fr; }
-  .summary-check-grid > div + div { border-left: 0; }
-}
-
 @media (max-width: 860px) {
-  .summary-readiness-head { align-items: flex-start; }
-  .summary-historical-note { flex-direction: column; }
+  .summary-pending-groups { grid-template-columns: 1fr; }
 }

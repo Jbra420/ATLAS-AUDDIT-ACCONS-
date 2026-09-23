@@ -28,7 +28,7 @@ from services.validaciones import (
     evaluar_levantamiento,
     normalizar_razon_social,
 )
-from views.auditor.radar import tab_resumen
+from views.auditor.radar import tab_sri
 
 REFERENCE_RUC = "0190377210001"
 AUDIT = {"ruc": REFERENCE_RUC, "company_name": "GRUCANQUI CIA. LTDA", "period": "2025", "city": "", "activity_hint": ""}
@@ -251,18 +251,22 @@ class TestSummaryAndView(unittest.TestCase):
         text = generate_summary(AUDIT, {}, 0, profile={**PROFILE, "situacion_legal": "INACTIVA"})
         self.assertEqual(text.count("La situación legal en Supercias no es activa"), 1)
 
-    def test_resumen_tab_offers_treatment_form_only_to_auditor(self):
-        class _Research(dict):
-            def __missing__(self, key):
-                return ""
-
-        validacion = evaluar({**PROFILE, "contribuyente_fantasma": "SI"})
-        auditor = tab_resumen.build(1, _Research(), validacion=validacion, csrf_token="t")
-        jefe = tab_resumen.build(1, _Research(), validacion=validacion, read_only=True)
+    def test_sri_tab_offers_treatment_form_only_to_auditor(self):
+        """La alerta crítica y su tratamiento se registran en la pestaña SRI,
+        junto al dato que la origina."""
+        alertas = evaluar({**PROFILE, "contribuyente_fantasma": "SI"})["alertas"]
+        audit = {"ruc": "0190377210001", "company_name": "GRUCANQUI CIA. LTDA"}
+        auditor = tab_sri.build(1, audit, PROFILE, {}, csrf_token="t", alertas=alertas)
+        jefe = tab_sri.build(1, audit, PROFILE, {}, read_only=True, alertas=alertas)
         self.assertIn('action="/auditor/radar/alert-treatment"', auditor)
-        self.assertNotIn("<form", jefe)
+        self.assertIn("Alerta crítica", jefe)
         self.assertIn("Tratamiento pendiente de registro", jefe)
-        self.assertIn("Validaciones cruzadas y alertas", jefe)
+        self.assertNotIn("alert-treatment", jefe)
+
+    def test_untreated_critical_alert_links_to_sri_tab(self):
+        pendientes = evaluar({**PROFILE, "contribuyente_fantasma": "SI"})["pendientes"]
+        tratamiento = [p for p in pendientes if p["label"].startswith("Tratamiento de alerta crítica")]
+        self.assertEqual([p["tab"] for p in tratamiento], ["sri"])
 
 
 _CATALOGS_READY = (

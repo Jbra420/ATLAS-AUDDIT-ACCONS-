@@ -324,8 +324,8 @@ class TestTabResumenReadOnly(unittest.TestCase):
         self.assertNotIn('/auditor/radar/summary', html,
                          "read_only=True no debe mostrar el formulario de generación de resumen")
 
-    def test_read_only_checklist_uses_view_actions(self):
-        """El jefe navega a los pendientes sin recibir acciones operativas."""
+    def test_read_only_has_no_pending_modal(self):
+        """El jefe no genera el resumen: no recibe el modal de pendientes."""
         from views.auditor.radar.tab_resumen import build
         html = build(
             self.audit_id,
@@ -333,9 +333,8 @@ class TestTabResumenReadOnly(unittest.TestCase):
             readiness=_blocked_readiness(),
             read_only=True,
         )
-        self.assertIn(">Ver</a>", html)
-        self.assertIn(f'/admin/audit?audit_id={self.audit_id}&tab=sri#radar-tabs-main', html)
-        self.assertNotIn(">Completar</a>", html)
+        self.assertNotIn("summaryPendingModal", html)
+        self.assertNotIn("Completar", html)
 
     def test_auditor_mode_has_generate_button(self):
         """El auditor sí debe ver el botón para generar el resumen."""
@@ -343,9 +342,11 @@ class TestTabResumenReadOnly(unittest.TestCase):
         html = build(self.audit_id, self.research, read_only=False)
         self.assertIn('/auditor/radar/summary', html,
                       "read_only=False debe mostrar el formulario de generación")
+        self.assertNotIn("summaryPendingModal", html, "Sin pendientes se genera directo")
 
-    def test_blocked_readiness_suppresses_generate_form(self):
-        """Los faltantes obligatorios bloquean el formulario también para el auditor."""
+    def test_pending_items_open_modal_with_option_to_continue(self):
+        """Con puntos pendientes, "Generar resumen" abre un modal que los lista
+        y permite generar igual (confirmar_pendientes=1)."""
         from views.auditor.radar.tab_resumen import build
         html = build(
             self.audit_id,
@@ -353,11 +354,13 @@ class TestTabResumenReadOnly(unittest.TestCase):
             readiness=_blocked_readiness(),
             read_only=False,
         )
-        self.assertIn("Resumen bloqueado", html)
+        self.assertIn("openModal('summaryPendingModal')", html)
         self.assertIn("Estado contribuyente", html)
-        self.assertNotIn('/auditor/radar/summary', html)
+        self.assertIn('name="confirmar_pendientes" value="1"', html)
+        self.assertIn("Generar de todas formas", html)
+        self.assertIn("Volver y completar", html)
 
-    def test_blocked_readiness_separates_warnings(self):
+    def test_pending_modal_separates_warnings(self):
         """Las recomendaciones se muestran separadas de los requisitos obligatorios."""
         from views.auditor.radar.tab_resumen import build
         html = build(
@@ -370,7 +373,7 @@ class TestTabResumenReadOnly(unittest.TestCase):
         self.assertIn("Recomendaciones", html)
         self.assertIn("Informacion financiera", html)
 
-    def test_auditor_pending_actions_have_real_navigation_targets(self):
+    def test_pending_items_have_real_navigation_targets(self):
         from views.auditor.radar.tab_resumen import build
         html = build(
             self.audit_id,
@@ -382,7 +385,7 @@ class TestTabResumenReadOnly(unittest.TestCase):
             f'/auditor/radar?audit_id={self.audit_id}&tab=sri#radar-tabs-main',
             html,
         )
-        self.assertIn("onclick=\"return switchTab('sri')\"", html)
+        self.assertIn("closeModal('summaryPendingModal'); return switchTab('sri')", html)
 
     def test_summary_content_visible_in_both_modes(self):
         """El contenido del resumen (si existe) debe verse en ambos modos."""

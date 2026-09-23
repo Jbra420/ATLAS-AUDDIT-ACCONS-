@@ -60,9 +60,13 @@ de 9 pasos que la pantalla del expediente muestra en ese orden.
   - balance descuadrado;
   - contribuyente fantasma o transacciones inexistentes: alerta crítica, que
     exige registrar su tratamiento.
-- **Resumen:** solo se genera cuando están completos todos los campos
-  obligatorios del requisito. Se presenta en el orden de los bloques, con la
-  fuente y fecha de cada uno.
+- **Resumen:** si faltan datos, "Generar resumen" abre un modal con los
+  obligatorios y las recomendaciones pendientes. El auditor puede volver a
+  completarlos o generar igual; en ese caso el resumen los lista en su
+  sección "Pendientes de validación". Se presenta en el orden de los bloques,
+  con la fuente y fecha de cada uno.
+- **Alerta crítica:** su tratamiento se registra en la pestaña SRI, junto al
+  dato que la origina.
 
 La documentación de cada fase está en
 `../atlas_documentacion/propuesta_levantamiento/`.

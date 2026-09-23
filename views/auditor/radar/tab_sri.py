@@ -1,7 +1,7 @@
 """views/auditor/radar/tab_sri.py — Tab de identidad tributaria (SRI)."""
 from __future__ import annotations
-from ui.helpers import esc
-from ui.icons import SVG_EXTERNAL
+from ui.helpers import esc, hidden_inputs
+from ui.icons import SVG_EXTERNAL, SVG_SAVE
 from providers.sri import SriProvider
 from services.rowutil import row_get
 from services.trazabilidad import BLOQUE_SRI, etiqueta_traza, ultimo_por_campo
@@ -56,6 +56,37 @@ def _si_no_select(name: str, current: str) -> str:
     return f'<select name="{name}">{options}</select>'
 
 
+def _critical_alerts(alertas: list[dict], audit_id: int, read_only: bool, csrf_token: str) -> str:
+    """Alertas críticas del SRI (contribuyente fantasma o transacciones
+    inexistentes) con el tratamiento que el auditor debe registrar."""
+    items = ""
+    for alerta in (a for a in alertas if a["nivel"] == "critica"):
+        tratamiento = alerta.get("tratamiento") or ""
+        body = (
+            f'<p class="validation-treatment"><strong>Tratamiento del auditor:</strong> {esc(tratamiento)}</p>'
+            if tratamiento else
+            '<p class="validation-treatment">Tratamiento pendiente de registro por el auditor.</p>'
+            if read_only else ""
+        )
+        if not read_only:
+            label = "Actualizar tratamiento" if tratamiento else "Registrar tratamiento"
+            body += f"""
+            <form method="post" action="/auditor/radar/alert-treatment" class="validation-treatment-form">
+              {hidden_inputs(csrf_token, audit_id=audit_id, codigo=alerta["codigo"])}
+              <label>{label}</label>
+              <textarea name="observacion" minlength="15" maxlength="2000" required>{esc(tratamiento)}</textarea>
+              <button type="submit" class="btn btn-sm btn-primary">{SVG_SAVE} Guardar tratamiento</button>
+            </form>
+            """
+        items += f"""
+        <li class="validation-alert is-critica">
+          <div><span class="badge badge-red">Alerta crítica</span> {esc(alerta["mensaje"])}</div>
+          {body}
+        </li>
+        """
+    return f'<ul class="validation-alerts">{items}</ul>' if items else ""
+
+
 def build(
     audit_id: int,
     audit: object,
@@ -65,6 +96,7 @@ def build(
     csrf_token: str = "",
     source_check: object | None = None,
     provenance: list | None = None,
+    alertas: list[dict] | None = None,
 ) -> str:
     ruc = audit["ruc"] or ""
     company_name = audit["company_name"]
@@ -101,6 +133,7 @@ def build(
       <h3 style="margin:0;font-size:15px;">Identidad tributaria — SRI</h3>
       {check_html}
     </div>
+    {_critical_alerts(alertas or [], audit_id, read_only, csrf_token)}
     <div class="info-grid">
       {cards}
     </div>

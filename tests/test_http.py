@@ -314,7 +314,25 @@ class TestHTTPAuditorFlow(unittest.TestCase):
             })
 
         _, resumen_body = _get(page, self.cookie)
-        self.assertIn("Resumen bloqueado", resumen_body, "Sin los bloques del levantamiento el resumen se bloquea")
+        self.assertIn("openModal('summaryPendingModal')", resumen_body,
+                      "Con datos pendientes, generar el resumen abre el modal de pendientes")
+        self.assertNotIn("Validaciones cruzadas y alertas", resumen_body)
+        self.assertNotIn("Resumen bloqueado", resumen_body)
+
+        # Sin confirmar, un POST directo sigue rechazado; confirmado, se genera
+        # y el resumen deja constancia de lo pendiente.
+        status, location, _ = _post_raw(
+            "/auditor/radar/summary", {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie)},
+            self.cookie,
+        )
+        self.assertIn("err=", location)
+        location = post("/auditor/radar/summary", {"confirmar_pendientes": "1"})
+        self.assertIn("pendiente", unquote_plus(location))
+        with connect() as conn:
+            borrador = conn.execute(
+                "SELECT generated_summary FROM research_notes WHERE audit_id = ?", (audit_id,)
+            ).fetchone()["generated_summary"]
+        self.assertIn("Obligatorio:", borrador)
 
         # Bloques 1 a 6 del levantamiento.
         post("/auditor/radar/profile", {
@@ -352,13 +370,14 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         })
 
         _, resumen_body = _get(page, self.cookie)
-        self.assertIn("Resumen habilitado", resumen_body)
         self.assertIn('action="/auditor/radar/summary"', resumen_body)
-        self.assertIn("Validaciones cruzadas y alertas", resumen_body)
-        self.assertNotIn("No coincide", resumen_body, "Los cuatro cruces del caso de prueba coinciden")
+        self.assertNotIn("Obligatorios pendientes", resumen_body, "Solo quedan recomendaciones")
 
         # Una alerta crítica bloquea el resumen hasta registrar su tratamiento.
         post("/auditor/radar/profile", {"return_tab": "sri", "contribuyente_fantasma": "SI"})
+        _, body = _get(page, self.cookie)
+        self.assertIn('action="/auditor/radar/alert-treatment"', self._pane_content(body, "sri", "supercias"),
+                      "La alerta crítica y su tratamiento se registran en la pestaña SRI")
         status, location, _ = _post_raw(
             "/auditor/radar/summary", {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie)},
             self.cookie,

@@ -39,6 +39,34 @@ _TOAST_SCRIPT = f"""
 </script>
 """
 
+# Modales (ui.components.modal): abrir/cerrar por id, cerrar con Escape o al
+# hacer clic fuera del contenido.
+_MODAL_SCRIPT = """
+<script>
+function openModal(id) {
+  var modal = document.getElementById(id);
+  if (!modal) return;
+  // <main> crea su propio contexto de apilamiento: dentro de él el modal
+  // quedaría bajo el topbar. En <body> cubre toda la página.
+  if (modal.parentElement !== document.body) document.body.appendChild(modal);
+  modal.classList.add('active');
+  var focus = modal.querySelector('[autofocus], textarea, input:not([type=hidden]), button');
+  if (focus) focus.focus();
+}
+function closeModal(id) {
+  var modal = document.getElementById(id);
+  if (modal) modal.classList.remove('active');
+}
+document.addEventListener('click', function (event) {
+  if (event.target.classList && event.target.classList.contains('modal-overlay')) closeModal(event.target.id);
+});
+document.addEventListener('keydown', function (event) {
+  if (event.key !== 'Escape') return;
+  document.querySelectorAll('.modal-overlay.active').forEach(function (modal) { closeModal(modal.id); });
+});
+</script>
+"""
+
 # CSS se inyecta desde afuera (core/server.load_css une static/css/*.css al arrancar)
 _CSS_CONTENT: str = ""
 
@@ -144,5 +172,6 @@ def layout(
   </footer>
 </div>
 {_TOAST_SCRIPT}
+{_MODAL_SCRIPT}
 </body>
 </html>"""

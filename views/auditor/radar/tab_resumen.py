@@ -1,5 +1,6 @@
 """views/auditor/radar/tab_resumen.py — Tab de resumen y exportaciones."""
 from __future__ import annotations
+from ui.components import modal
 from ui.helpers import esc, hidden_inputs
 from ui.icons import SVG_DOWNLOAD, SVG_RADAR, SVG_SAVE
 
@@ -24,146 +25,50 @@ def _list_items(items: list[str]) -> str:
     return "".join(f"<li>{esc(item)}</li>" for item in items)
 
 
-_ESTADO_CRUCE = {
-    "coincide": ("badge-green", "Coincide"),
-    "no_coincide": ("badge-red", "No coincide"),
-    "pendiente": ("badge-gray", "Pendiente de datos"),
-    "revisar": ("badge-amber", "Revisar"),
-}
-_NIVEL_ALERTA = {
-    "critica": ("badge-red", "Crítica"),
-    "alta": ("badge-red", "Alta"),
-    "media": ("badge-amber", "Media"),
-    "informativa": ("badge-gray", "Informativa"),
-}
+PENDING_MODAL_ID = "summaryPendingModal"
 
 
-def _render_alert(alerta: dict, read_only: bool, audit_id: int, csrf_token: str) -> str:
-    css, nivel = _NIVEL_ALERTA.get(alerta["nivel"], ("badge-gray", alerta["nivel"]))
-    treatment = ""
-    if alerta["nivel"] == "critica":
-        if alerta.get("tratamiento"):
-            treatment = f'<p class="validation-treatment"><strong>Tratamiento del auditor:</strong> {esc(alerta["tratamiento"])}</p>'
-        if not read_only:
-            label = "Actualizar tratamiento" if alerta.get("tratamiento") else "Registrar tratamiento (obligatorio para el resumen)"
-            treatment += f"""
-            <form method="post" action="/auditor/radar/alert-treatment" class="validation-treatment-form">
-              {hidden_inputs(csrf_token, audit_id=audit_id, codigo=alerta['codigo'])}
-              <label>{esc(label)}</label>
-              <textarea name="observacion" minlength="15" maxlength="2000" required>{esc(alerta.get("tratamiento") or "")}</textarea>
-              <button type="submit" class="btn btn-sm btn-primary">{SVG_SAVE} Guardar tratamiento</button>
-            </form>
-            """
-        elif not alerta.get("tratamiento"):
-            treatment = '<p class="validation-treatment">Tratamiento pendiente de registro por el auditor.</p>'
-    return f"""
-    <li class="validation-alert is-{esc(alerta['nivel'])}">
-      <div><span class="badge {css}">{nivel}</span>
-        <a href="{_tab_href(audit_id, alerta['tab'], read_only)}" onclick="return switchTab('{alerta['tab']}')">{esc(alerta['mensaje'])}</a>
-      </div>
-      {treatment}
-    </li>
-    """
-
-
-def _render_validations(validacion: dict | None, read_only: bool, audit_id: int, csrf_token: str) -> str:
-    """Validaciones cruzadas y alertas del levantamiento."""
-    if not validacion:
+def _pending_items(title: str, items: list[dict], audit_id: int) -> str:
+    """Lista de puntos faltantes; "Completar" cierra el modal y abre la pestaña."""
+    if not items:
         return ""
-    alertas = validacion.get("alertas", [])
-    alerts_html = (
-        "<ul class=\"validation-alerts\">"
-        + "".join(_render_alert(a, read_only, audit_id, csrf_token) for a in alertas)
-        + "</ul>"
-    ) if alertas else '<p class="validation-empty">Sin alertas automáticas con la información registrada.</p>'
-    rows = ""
-    for cruce in validacion.get("cruces", []):
-        css, estado = _ESTADO_CRUCE.get(cruce["estado"], ("badge-gray", cruce["estado"]))
-        rows += f"""
-        <tr>
-          <td>{esc(cruce['regla'])}</td>
-          <td><span class="badge {css}">{estado}</span></td>
-          <td>{esc(cruce['detalle'])}</td>
-          <td><a href="{_tab_href(audit_id, cruce['tab'], read_only)}" onclick="return switchTab('{cruce['tab']}')">Ver</a></td>
-        </tr>
+    rows = "".join(
+        f"""
+        <li class="summary-check-item">
+          <span><strong>{esc(item['label'])}</strong><small>{esc(item['source'])}</small></span>
+          <a href="{_tab_href(audit_id, item['tab'], False)}"
+             onclick="closeModal('{PENDING_MODAL_ID}'); return switchTab('{item['tab']}')">Completar</a>
+        </li>
         """
-    return f"""
-    <section class="validation-panel">
-      <span class="dossier-eyebrow">Sistema</span>
-      <h3>Validaciones cruzadas y alertas</h3>
-      <h4 class="fin-section-title">Alertas automáticas</h4>
-      {alerts_html}
-      <h4 class="fin-section-title">Validaciones cruzadas</h4>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Regla</th><th>Resultado</th><th>Detalle</th><th></th></tr></thead>
-          <tbody>{rows}</tbody>
-        </table>
-      </div>
-    </section>
-    """
-
-
-def _render_generation_status(readiness: dict, read_only: bool, audit_id: int) -> str:
-    blockers = readiness.get("blockers", [])
-    warnings = readiness.get("warnings", [])
-    ready = bool(readiness.get("ready"))
-
-    def rows(items: list[dict], item_class: str) -> str:
-        action_label = "Ver" if read_only else "Completar"
-        return "".join(
-            f"""
-            <li class="summary-check-item {item_class}">
-              <span><strong>{esc(item['label'])}</strong><small>{esc(item['source'])}</small></span>
-              <a href="{_tab_href(audit_id, item['tab'], read_only)}"
-                 onclick="return switchTab('{item['tab']}')">{action_label}</a>
-            </li>
-            """
-            for item in items
-        )
-
-    blocker_list = rows(blockers, "is-blocker")
-    warning_list = rows(warnings, "is-warning")
-    status_class = "is-ready" if ready else "is-blocked"
-    title = "Resumen habilitado" if ready else "Resumen bloqueado"
-    description = (
-        "Los requisitos obligatorios están completos. Las recomendaciones no bloquean la generación."
-        if ready else
-        "Complete los requisitos obligatorios. Las recomendaciones pueden resolverse después."
+        for item in items
     )
-    blocker_section = ""
-    if blockers:
-        blocker_section = f"""
-        <div>
-          <span class="summary-check-title">Obligatorios pendientes</span>
-          <ul>{blocker_list}</ul>
-        </div>
-        """
-    warning_section = ""
-    if warnings:
-        warning_section = f"""
-        <div>
-          <span class="summary-check-title">Recomendaciones</span>
-          <ul>{warning_list}</ul>
-        </div>
-        """
-
     return f"""
-    <section class="summary-readiness {status_class}">
-      <div class="summary-readiness-head">
-        <div>
-          <span class="dossier-eyebrow">Control previo</span>
-          <h3>{esc(title)}</h3>
-          <p>{esc(description)}</p>
-        </div>
-        <strong>{readiness.get('required_completed', 0)}/{readiness.get('required_total', 0)}</strong>
+      <div>
+        <span class="summary-check-title">{esc(title)} ({len(items)})</span>
+        <ul class="summary-check-list">{rows}</ul>
       </div>
-      <div class="summary-check-grid">
-        {blocker_section}
-        {warning_section}
-      </div>
-    </section>
     """
+
+
+def _pending_modal(readiness: dict, audit_id: int, csrf_token: str) -> str:
+    """Modal previo a generar el resumen: muestra lo que falta y permite
+    continuar igual. Lo pendiente queda en la sección 10 del resumen."""
+    blockers, warnings = readiness.get("blockers", []), readiness.get("warnings", [])
+    return modal(PENDING_MODAL_ID, "Faltan datos del levantamiento", f"""
+      <p class="modal-desc">
+        Puede completarlos ahora o generar el resumen igual: los puntos pendientes
+        quedarán listados en su sección «Pendientes de validación».
+      </p>
+      <div class="summary-pending-groups">
+        {_pending_items("Obligatorios pendientes", blockers, audit_id)}
+        {_pending_items("Recomendaciones", warnings, audit_id)}
+      </div>
+      <form method="post" action="/auditor/radar/summary" class="modal-actions">
+        {hidden_inputs(csrf_token, audit_id=audit_id, confirmar_pendientes="1")}
+        <button type="button" class="btn" onclick="closeModal('{PENDING_MODAL_ID}')">Volver y completar</button>
+        <button type="submit" class="btn btn-primary">{SVG_RADAR} Generar de todas formas</button>
+      </form>
+    """, wide=True)
 
 
 def _render_dossier(audit_id: int, dossier: dict | None) -> str:
@@ -265,49 +170,32 @@ def build(
     readiness: dict | None = None,
     read_only: bool = False,
     csrf_token: str = "",
-    validacion: dict | None = None,
 ) -> str:
-    readiness = readiness or {
-        "ready": True,
-        "blockers": [],
-        "warnings": [],
-        "required_completed": 0,
-        "required_total": 0,
-    }
-    is_ready = bool(readiness.get("ready"))
+    readiness = readiness or {"blockers": [], "warnings": []}
+    has_pending = bool(readiness.get("blockers") or readiness.get("warnings"))
     summary_text = research["generated_summary"] or (
         "El auditor aún no ha generado el resumen estructurado."
         if read_only else
-        (
-            "Presione 'Generar resumen' para crear el resumen estructurado."
-            if is_ready else
-            "El resumen se habilitará al completar los requisitos obligatorios."
-        )
+        "Presione 'Generar resumen' para crear el resumen estructurado."
     )
-    historical_notice = ""
-    if research["generated_summary"] and not is_ready:
-        historical_notice = """
-        <div class="summary-historical-note">
-          <strong>Resumen anterior no vigente</strong>
-          <span>Se conserva como referencia, pero no debe utilizarse hasta completar los requisitos y generar una nueva versión.</span>
-        </div>
-        """
-    actions_html = ""
-    if not read_only and is_ready:
+    actions_html = pending_modal_html = ""
+    if not read_only:
+        # Con puntos pendientes, el botón abre el modal en vez de enviar.
+        generate = (
+            f"""<button type="button" class="btn btn-sm btn-primary" onclick="openModal('{PENDING_MODAL_ID}')">
+              {SVG_RADAR} Generar resumen</button>"""
+            if has_pending else
+            f"""<form method="post" action="/auditor/radar/summary" style="display:inline;">
+              {hidden_inputs(csrf_token, audit_id=audit_id)}
+              <button type="submit" class="btn btn-sm btn-primary">{SVG_RADAR} Generar resumen</button>
+            </form>"""
+        )
+        pending_modal_html = _pending_modal(readiness, audit_id, csrf_token) if has_pending else ""
         actions_html = f"""
       <div class="actions mt-0">
-        <form method="post" action="/auditor/radar/summary" style="display:inline;">
-          {hidden_inputs(csrf_token, audit_id=audit_id)}
-          <button type="submit" class="btn btn-sm btn-primary">{SVG_RADAR} Generar resumen</button>
-        </form>
+        {generate}
         <a class="btn btn-sm" href="/export/summary?audit_id={audit_id}">{SVG_DOWNLOAD} TXT</a>
         <a class="btn btn-sm" href="/export/csv?audit_id={audit_id}">{SVG_DOWNLOAD} CSV</a>
-      </div>
-        """
-    elif not read_only:
-        actions_html = f"""
-      <div class="actions mt-0">
-        <button type="button" class="btn btn-sm" disabled>{SVG_RADAR} Generación bloqueada</button>
       </div>
         """
     observations_html = (
@@ -357,14 +245,12 @@ def build(
     )
 
     return f"""
-    {_render_validations(validacion, read_only, audit_id, csrf_token)}
-    {_render_generation_status(readiness, read_only, audit_id)}
     {_render_dossier(audit_id, dossier)}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <h3 style="margin:0;font-size:15px;">Resumen preliminar de investigación</h3>
       {actions_html}
     </div>
-    {historical_notice}
     <div class="summary-box-v3">{esc(summary_text)}</div>
     {observations_html}
+    {pending_modal_html}
     """

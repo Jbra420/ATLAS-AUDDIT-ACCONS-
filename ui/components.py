@@ -106,6 +106,22 @@ def fecha_consulta_field(css_col: str = "col-4") -> str:
     )
 
 
+def modal(modal_id: str, title: str, content_html: str, *, wide: bool = False) -> str:
+    """Diálogo modal oculto; se abre con openModal('<modal_id>') (ver ui/layout.py).
+
+    content_html lleva la descripción, el formulario y los botones
+    (.modal-desc, .modal-actions).
+    """
+    return f"""
+    <div id="{modal_id}" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="{modal_id}Title">
+      <div class="modal-content{' modal-wide' if wide else ''}">
+        <div class="modal-title" id="{modal_id}Title">{esc(title)}</div>
+        {content_html}
+      </div>
+    </div>
+    """
+
+
 def form_field(
     name: str, label: str, value: object = "", *, col: str = "col-6",
     placeholder: str = "", textarea: bool = False,

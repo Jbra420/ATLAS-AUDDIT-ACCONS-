@@ -355,7 +355,7 @@ def evaluar_levantamiento(
 
     pendientes = [item for item, ok in requisitos if not ok]
     sin_tratamiento = [
-        _item(f"Tratamiento de alerta crítica: {a['mensaje']}", _FUENTE_SISTEMA, "resumen")
+        _item(f"Tratamiento de alerta crítica: {a['mensaje']}", _FUENTE_SISTEMA, "sri")
         for a in alertas if a["nivel"] == NIVEL_CRITICA and not a["tratamiento"]
     ]
     return {
