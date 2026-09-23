@@ -23,11 +23,6 @@ def _assisted_flow_panel(audit_id: int, audit, sources: list) -> str:
     administradores)."""
     ruc = audit["ruc"] or ""
     company_name = audit["company_name"]
-    cert_link = next(
-        (lnk for lnk in SuperciasProvider().get_links(ruc, company_name)
-         if "certificado" in lnk.name.lower()),
-        None,
-    )
     evidence = find_certificate_evidence(sources, "accionista") or find_certificate_evidence(sources, "socio")
     if evidence:
         status_html = (
@@ -35,10 +30,10 @@ def _assisted_flow_panel(audit_id: int, audit, sources: list) -> str:
         )
     else:
         status_html = '<span class="badge badge-gray">Certificado aún no registrado</span>'
-    link_html = (
-        f'<a class="btn-ext-link" href="{esc(cert_link.url)}" target="_blank" rel="noopener">'
-        f'{SVG_EXTERNAL} {esc(cert_link.name)}</a>'
-        if cert_link else ""
+    link_html = "".join(
+        f'<a class="btn-ext-link" href="{esc(lnk.url)}" target="_blank" rel="noopener">'
+        f'{SVG_EXTERNAL} {esc(lnk.name)}</a>'
+        for lnk in SuperciasProvider().nomina_links(ruc, company_name)
     )
     docs_href = f"/auditor/radar?audit_id={audit_id}&tab=documentos#radar-tabs-main"
     return f"""

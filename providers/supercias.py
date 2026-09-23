@@ -77,6 +77,23 @@ class SuperciasProvider(BaseProvider):
                     "legal actual, no la nómina completa. Esta es la única fuente oficial "
                     "para administradores y accionistas completos."
                 ),
-                field_hint="supercias_info",
+                field_hint="nomina",
+            ),
+            ProviderLink(
+                name="Supercias — Portal de información",
+                url="https://www.supercias.gob.ec/portalscvs/index.htm",
+                instructions=(
+                    "1. Abra el portal de información de la Superintendencia de Compañías.\n"
+                    f"2. Busque la compañía por RUC ({ruc}) o nombre.\n"
+                    "3. Descargue los documentos de administradores y de accionistas/socios.\n"
+                    "4. Transcriba la nómina en esta pestaña."
+                ),
+                source_type="Supercias",
+                icon="🏛️",
+                field_hint="nomina",
             ),
         ]
+
+    def nomina_links(self, ruc: str, company_name: str = "") -> list[ProviderLink]:
+        """Fuentes oficiales de la nómina de administradores y accionistas."""
+        return [lnk for lnk in self.get_links(ruc, company_name) if lnk.field_hint == "nomina"]
