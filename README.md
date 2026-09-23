@@ -1,6 +1,6 @@
 # Auddit MVP local
 
-MVP en Python para cubrir la base del proyecto en 45 horas: usuarios con roles,
+MVP en Python para cubrir la base del proyecto que conyiene: usuarios con roles,
 asignacion de empresas a auditores y herramienta de busqueda asistida para
 generar una ficha inicial de la empresa auditada.
 
