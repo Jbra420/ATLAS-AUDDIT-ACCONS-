@@ -134,10 +134,11 @@ las pestañas "Administradores" y "Accionistas" muestran un flujo asistido:
 
 1. Enlaces al trámite del certificado y al portal de información de Supercías.
 2. El auditor adjunta el certificado en PDF una sola vez, desde cualquiera de
-   las dos pestañas. El archivo se guarda en `adjuntos/<expediente>/<sha256>.pdf`
+   las dos pestañas. Si la nómina viene en varios documentos (hasta 5), los
+   selecciona juntos. Cada archivo se guarda en `adjuntos/<expediente>/<sha256>.pdf`
    (excluido de Git) y queda registrado como evidencia.
 3. `services/certificados.py` extrae el texto (pypdf) y propone ambas
-   nóminas: administradores (identificación, nombre, cargo, nacionalidad) y
+   nóminas, combinando los documentos en una sola propuesta sin repetir filas: administradores (identificación, nombre, cargo, nacionalidad) y
    accionistas (identificación, nombre, capital, participación). Cada fila se
    asigna por la sección del documento y por su contenido (cargo o capital).
 4. Nada se importa sin revisión: el mismo panel aparece en las dos pestañas y

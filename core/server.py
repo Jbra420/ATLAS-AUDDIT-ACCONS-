@@ -45,17 +45,18 @@ CSS_FILES = (
     "expediente", "financiero", "personas", "resumen", "ficha", "utilidades",
 )
 _CSS_CONTENT: str = ""
-# Cuerpo máximo de un POST: el certificado PDF (10 MB) más los campos del formulario.
-MAX_BODY_BYTES = 11 * 1024 * 1024
+# Cuerpo máximo de un POST: los certificados PDF (hasta 5 de 10 MB) más los campos del formulario.
+MAX_BODY_BYTES = 51 * 1024 * 1024
 _QUIET_MODE: bool = False  # Se activa con --quiet; suprime el log de peticiones HTTP
 
 
 class FormData(dict):
     """Campos de un POST ({nombre: [valores]}, como parse_qs) y sus archivos
-    adjuntos en .files ({nombre: (nombre_de_archivo, contenido)})."""
+    adjuntos en .files ({nombre: [(nombre_de_archivo, contenido), ...]}), en
+    el orden en que llegaron (un <input type="file" multiple> envía varios)."""
 
     def __init__(self, fields: dict[str, list[str]] | None = None,
-                 files: dict[str, tuple[str, bytes]] | None = None) -> None:
+                 files: dict[str, list[tuple[str, bytes]]] | None = None) -> None:
         super().__init__(fields or {})
         self.files = files or {}
 
@@ -76,7 +77,7 @@ def parse_multipart(content_type: str, body: bytes) -> FormData:
             form.setdefault(name, []).append(payload.decode("utf-8", errors="replace"))
         elif payload:
             # Algunos navegadores envían la ruta completa (C:\\fakepath\\x.pdf).
-            form.files[name] = (re.split(r"[\\/]", filename)[-1], payload)
+            form.files.setdefault(name, []).append((re.split(r"[\\/]", filename)[-1], payload))
     return form
 
 

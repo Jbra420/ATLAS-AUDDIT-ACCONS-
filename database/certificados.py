@@ -26,26 +26,29 @@ def _import_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
 
 def save_certificate(
     audit_id: int,
-    archivo: str,
-    pdf: bytes,
+    archivos: list[tuple[str, bytes]],
     analisis: dict[str, Any],
     user_id: int,
     db_path: Path | str = DB_PATH,
     adjuntos_dir: Path = ADJUNTOS_DIR,
 ) -> int:
-    """Guarda el PDF, lo registra como evidencia de Supercias y deja la
-    propuesta de ambas nóminas pendiente de revisión. Reemplaza la propuesta
-    pendiente anterior (se revisa un certificado a la vez)."""
-    sha256 = hashlib.sha256(pdf).hexdigest()
-    ruta = Path(str(audit_id)) / f"{sha256}.pdf"
-    destino = adjuntos_dir / ruta
-    destino.parent.mkdir(parents=True, exist_ok=True)
-    if not destino.exists():
-        destino.write_bytes(pdf)
-
+    """Guarda los PDF [(nombre, contenido)], registra cada uno como evidencia
+    de Supercias y deja una sola propuesta de ambas nóminas pendiente de
+    revisión. Reemplaza la propuesta pendiente anterior (se revisa una a la
+    vez). Con varios archivos, archivo, sha256 y ruta guardan uno por línea."""
     ts = now_iso()
     conteo = ", ".join(f"{len(analisis[n])} {n}" for n in NOMINAS)
-    notas = f"Archivo: {archivo} · SHA-256: {sha256} · Detectados: {conteo}"
+    detectados = f"Detectados: {conteo}" if len(archivos) == 1 else f"Detectados entre los {len(archivos)} PDF: {conteo}"
+    guardados = []  # (nombre, sha256, ruta)
+    for archivo, pdf in archivos:
+        sha256 = hashlib.sha256(pdf).hexdigest()
+        ruta = Path(str(audit_id)) / f"{sha256}.pdf"
+        destino = adjuntos_dir / ruta
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        if not destino.exists():
+            destino.write_bytes(pdf)
+        guardados.append((archivo, sha256, str(ruta)))
+
     with connect(db_path) as conn:
         conn.execute(
             "UPDATE nomina_imports SET estado = 'descartado' WHERE audit_id = ? AND estado = 'pendiente'",
@@ -58,20 +61,22 @@ def save_certificate(
                  advertencias_json, fecha_certificado, subido_por, subido_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (audit_id, archivo, sha256, str(ruta),
+            (audit_id, *("\n".join(columna) for columna in zip(*guardados)),
              *(json.dumps(analisis[clave], ensure_ascii=False) for clave in (*NOMINAS, "advertencias")),
              analisis["fecha_certificado"] or None, user_id, ts),
         )
-        # El mismo archivo subido dos veces no duplica la evidencia.
-        ya_registrado = conn.execute(
-            "SELECT 1 FROM sources WHERE audit_id = ? AND notes LIKE ?", (audit_id, f"%SHA-256: {sha256}%"),
-        ).fetchone()
-        if not ya_registrado:
-            conn.execute(
-                "INSERT INTO sources (audit_id, title, url, source_type, notes, created_by, created_at) "
-                "VALUES (?, ?, '', 'Supercias', ?, ?, ?)",
-                (audit_id, f"{TITULO_CERTIFICADO} (PDF adjunto)", notas, user_id, ts),
-            )
+        for archivo, sha256, _ in guardados:
+            # El mismo archivo subido dos veces no duplica la evidencia.
+            ya_registrado = conn.execute(
+                "SELECT 1 FROM sources WHERE audit_id = ? AND notes LIKE ?", (audit_id, f"%SHA-256: {sha256}%"),
+            ).fetchone()
+            if not ya_registrado:
+                conn.execute(
+                    "INSERT INTO sources (audit_id, title, url, source_type, notes, created_by, created_at) "
+                    "VALUES (?, ?, '', 'Supercias', ?, ?, ?)",
+                    (audit_id, f"{TITULO_CERTIFICADO} (PDF adjunto)",
+                     f"Archivo: {archivo} · SHA-256: {sha256} · {detectados}", user_id, ts),
+                )
         return int(cur.lastrowid)
 
 

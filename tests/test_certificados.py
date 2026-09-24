@@ -22,7 +22,7 @@ from database import (
     init_db,
     save_certificate,
 )
-from services.certificados import analizar_nomina, extraer_texto, fecha_del_certificado
+from services.certificados import analizar_nomina, analizar_nominas, extraer_texto, fecha_del_certificado
 from views.auditor.radar.certificado import assisted_panel, review_panel
 
 RUC_EMPRESA = "0190444619001"
@@ -71,6 +71,25 @@ def _pdf_con_texto(lineas: list[str]) -> bytes:
 
 
 class TestAnalizador(unittest.TestCase):
+    def test_varios_pdf_se_combinan_en_una_propuesta(self):
+        """Supercias puede entregar administradores y accionistas en documentos separados."""
+        admins, socios = NOMINA.split("NÓMINA DE ACCIONISTAS / SOCIOS")
+        socios = f"Fecha: 20/09/2026 RUC: {RUC_EMPRESA}\nNÓMINA DE ACCIONISTAS / SOCIOS" + socios
+        resultado = analizar_nominas([("admins.pdf", admins), ("socios.pdf", socios)], RUC_EMPRESA)
+        self.assertEqual(len(resultado["administradores"]), 2)
+        self.assertEqual(len(resultado["accionistas"]), 2)
+        self.assertEqual(resultado["fecha_certificado"], "2026-09-20", "La del certificado más reciente")
+        self.assertEqual(resultado["advertencias"], [], "Entre los dos no falta ninguna nómina")
+
+    def test_filas_repetidas_entre_pdf_se_proponen_una_vez(self):
+        resultado = analizar_nominas([("a.pdf", NOMINA), ("b.pdf", NOMINA)], RUC_EMPRESA)
+        self.assertEqual((len(resultado["administradores"]), len(resultado["accionistas"])), (2, 2))
+
+    def test_advertencias_de_varios_pdf_indican_el_archivo(self):
+        resultado = analizar_nominas([("a.pdf", NOMINA), ("escaneado.pdf", "")], RUC_EMPRESA)
+        self.assertEqual(len(resultado["advertencias"]), 1)
+        self.assertTrue(resultado["advertencias"][0].startswith("escaneado.pdf: "))
+
     def test_un_certificado_llena_ambas_nominas(self):
         resultado = analizar_nomina(NOMINA, RUC_EMPRESA)
         self.assertEqual(resultado["advertencias"], [])
@@ -154,7 +173,17 @@ class TestParseMultipart(unittest.TestCase):
         ).encode() + b"%PDF-1.4 \x00\xff binario\r\n" + f"--{limite}--\r\n".encode()
         form = parse_multipart(f"multipart/form-data; boundary={limite}", cuerpo)
         self.assertEqual(form["tipo"], ["accionistas"])
-        self.assertEqual(form.files["archivo"], ("Nómina.pdf", b"%PDF-1.4 \x00\xff binario"))
+        self.assertEqual(form.files["archivo"], [("Nómina.pdf", b"%PDF-1.4 \x00\xff binario")])
+
+    def test_varios_archivos_en_el_mismo_campo(self):
+        limite = "----atlas"
+        cuerpo = b"".join(
+            (f"--{limite}\r\nContent-Disposition: form-data; name=\"archivo\"; filename=\"{n}\"\r\n"
+             "Content-Type: application/pdf\r\n\r\n").encode() + c + b"\r\n"
+            for n, c in (("a.pdf", b"%PDF-a"), ("b.pdf", b"%PDF-b"))
+        ) + f"--{limite}--\r\n".encode()
+        form = parse_multipart(f"multipart/form-data; boundary={limite}", cuerpo)
+        self.assertEqual(form.files["archivo"], [("a.pdf", b"%PDF-a"), ("b.pdf", b"%PDF-b")])
 
     def test_archivo_vacio_se_ignora(self):
         limite = "x"
@@ -179,7 +208,7 @@ class TestGuardarCertificado(unittest.TestCase):
 
     def _guardar(self, pdf: bytes | None = None) -> int:
         return save_certificate(
-            self.audit_id, "nomina.pdf", pdf or self.pdf, self.analisis,
+            self.audit_id, [("nomina.pdf", pdf or self.pdf)], self.analisis,
             self.auditor["id"], self.db, self.adjuntos,
         )
 
@@ -207,6 +236,21 @@ class TestGuardarCertificado(unittest.TestCase):
         self.assertEqual(get_certificate_import(self.audit_id, primero, self.db)["estado"], "descartado")
         self.assertEqual(get_certificate_import(self.audit_id, segundo, self.db)["estado"], "pendiente")
 
+    def test_varios_pdf_una_propuesta_y_una_evidencia_por_archivo(self):
+        otro = _pdf_con_texto(["accionistas"])
+        import_id = save_certificate(
+            self.audit_id, [("admins.pdf", self.pdf), ("socios.pdf", otro)], self.analisis,
+            self.auditor["id"], self.db, self.adjuntos,
+        )
+        propuesta = get_certificate_import(self.audit_id, import_id, self.db)
+        self.assertEqual(propuesta["archivo"].splitlines(), ["admins.pdf", "socios.pdf"])
+        self.assertEqual([(self.adjuntos / r).read_bytes() for r in propuesta["ruta"].splitlines()], [self.pdf, otro])
+        evidencia = self._evidencias()
+        self.assertEqual(len(evidencia), 2)
+        self.assertIn("Detectados entre los 2 PDF", evidencia[0]["notes"])
+        html = review_panel(self.audit_id, propuesta, "admins", "tok")
+        self.assertIn("admins.pdf · socios.pdf", html)
+
     def test_cerrar_la_propuesta(self):
         import_id = self._guardar()
         close_certificate_import(self.audit_id, import_id, "importado", self.db)
@@ -230,6 +274,7 @@ class TestGuardarCertificado(unittest.TestCase):
         html = assisted_panel(self.audit_id, audit, [], "admins", "tok")
         self.assertIn("https://www.supercias.gob.ec/portalscvs/index.htm", html)
         self.assertIn('enctype="multipart/form-data"', html)
+        self.assertIn('accept="application/pdf,.pdf" multiple', html, "La nómina puede venir en varios PDF")
         self.assertNotIn('name="tipo"', html, "Un solo adjunto sirve para las dos nóminas")
         self.assertIn("Certificado aún no registrado", html)
 

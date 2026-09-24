@@ -265,9 +265,10 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         return match.group(1) if match else ""
 
     def test_certificate_pdf_upload_review_and_import(self):
-        """Un solo certificado PDF, adjuntado en Administradores, propone ambas
-        nóminas; el auditor revisa e importa administradores y accionistas en un
-        paso. Las filas quedan con la fuente del certificado y el PDF como evidencia."""
+        """La nómina, adjuntada en Administradores en dos PDF (administradores y
+        accionistas por separado), se propone en una sola revisión; el auditor
+        importa ambas nóminas en un paso. Las filas quedan con la fuente del
+        certificado y cada PDF como evidencia."""
         import http.client
         from tests.test_certificados import _pdf_con_texto
 
@@ -287,26 +288,31 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         self.addCleanup(cleanup_company)
 
         page = f"/auditor/radar?audit_id={audit_id}&tab=admins"
-        pdf = _pdf_con_texto([
-            "ADMINISTRADORES",
-            "0102030405 TORRES VEGA ANA ECUADOR GERENTE GENERAL",
-            "0912345678 PEREZ LUIS ECUADOR PRESIDENTE",
-            "ACCIONISTAS",
-            "0102030405 TORRES VEGA ANA ECUADOR 800,00",
-        ])
+        pdfs = {
+            "administradores.pdf": _pdf_con_texto([
+                "ADMINISTRADORES",
+                "0102030405 TORRES VEGA ANA ECUADOR GERENTE GENERAL",
+                "0912345678 PEREZ LUIS ECUADOR PRESIDENTE",
+            ]),
+            "accionistas.pdf": _pdf_con_texto(["ACCIONISTAS", "0102030405 TORRES VEGA ANA ECUADOR 800,00"]),
+        }
         limite = "----atlastest"
         campos = {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), "return_tab": "admins"}
         cuerpo = b"".join(
             f"--{limite}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
             for k, v in campos.items()
-        ) + (f"--{limite}\r\nContent-Disposition: form-data; name=\"archivo\"; filename=\"nomina.pdf\"\r\n"
-             "Content-Type: application/pdf\r\n\r\n").encode() + pdf + f"\r\n--{limite}--\r\n".encode()
+        ) + b"".join(
+            (f"--{limite}\r\nContent-Disposition: form-data; name=\"archivo\"; filename=\"{nombre}\"\r\n"
+             "Content-Type: application/pdf\r\n\r\n").encode() + pdf + b"\r\n"
+            for nombre, pdf in pdfs.items()
+        ) + f"--{limite}--\r\n".encode()
         conn = http.client.HTTPConnection(SERVER_HOST, SERVER_PORT, timeout=5)
         conn.request("POST", "/auditor/radar/certificado", body=cuerpo, headers={
             "Content-Type": f"multipart/form-data; boundary={limite}", "Cookie": self.cookie,
         })
         resp = conn.getresponse()
         self.assertEqual(resp.status, 303)
+        self.assertIn("2+certificados+registrados", resp.getheader("Location", ""))
         self.assertIn("2+administrador", resp.getheader("Location", ""))
         self.assertIn("1+accionista", resp.getheader("Location", ""))
 

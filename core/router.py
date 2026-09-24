@@ -57,7 +57,7 @@ from database import (
     update_shareholder,
     upsert_financial_statement,
 )
-from services.certificados import NOMINAS, analizar_nomina, extraer_texto
+from services.certificados import MAX_CERTIFICADOS, NOMINAS, analizar_nominas, extraer_texto
 from services.financial import CAMPOS_FINANCIEROS, compute_indicators
 from services.company_search import source_map_from_context
 from services.company_research import research_company_by_ruc
@@ -313,18 +313,27 @@ def _shareholder(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
 
 
 def _upload_certificate(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
-    """Adjunta el certificado PDF de nómina: queda como evidencia y su
-    propuesta de administradores y accionistas espera la revisión del auditor."""
-    archivo = getattr(form, "files", {}).get("archivo")
-    if not archivo:
+    """Adjunta los certificados PDF de nómina (uno o varios: Supercias puede
+    entregar administradores y accionistas por separado). Quedan como
+    evidencia y una sola propuesta de ambas nóminas espera la revisión del auditor."""
+    archivos = getattr(form, "files", {}).get("archivo", [])
+    if not archivos:
         raise ValueError("Seleccione el certificado en PDF")
-    nombre, pdf = archivo
-    analisis = analizar_nomina(extraer_texto(pdf), audit["ruc"] or "")
-    save_certificate(audit["id"], nombre, pdf, analisis, user["id"])
+    if len(archivos) > MAX_CERTIFICADOS:
+        raise ValueError(f"Adjunte como máximo {MAX_CERTIFICADOS} PDF a la vez")
+    documentos = []
+    for nombre, pdf in archivos:
+        try:
+            documentos.append((nombre, extraer_texto(pdf)))
+        except ValueError as exc:
+            raise ValueError(f"{nombre}: {exc}") from exc
+    analisis = analizar_nominas(documentos, audit["ruc"] or "")
+    save_certificate(audit["id"], archivos, analisis, user["id"])
+    registrado = "Certificado registrado" if len(archivos) == 1 else f"{len(archivos)} certificados registrados"
     adm, acc = (len(analisis[n]) for n in NOMINAS)
     if not adm and not acc:
-        return "Certificado registrado como evidencia. No se detectaron filas: registre la nómina manualmente."
-    return (f"Certificado registrado como evidencia. Detectados {adm} administrador(es) y "
+        return f"{registrado} como evidencia. No se detectaron filas: registre la nómina manualmente."
+    return (f"{registrado} como evidencia. Detectados {adm} administrador(es) y "
             f"{acc} accionista(s): revíselos y confirme la importación.")
 
 

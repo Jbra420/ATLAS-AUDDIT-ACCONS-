@@ -4,7 +4,7 @@ administradores y accionistas: el panel es el mismo en las dos pestañas."""
 from __future__ import annotations
 
 from providers.supercias import SuperciasProvider
-from services.certificados import NOMINAS
+from services.certificados import MAX_CERTIFICADOS, NOMINAS
 from services.company_search import find_certificate_evidence
 from ui.components import fecha_consulta_field
 from ui.helpers import esc, hidden_inputs
@@ -50,8 +50,8 @@ def assisted_panel(
       </div>
       <p class="cert-help">
         El Directorio de Compañías solo trae el representante legal actual. Descargue el
-        certificado de nómina desde los enlaces y adjúntelo una sola vez, aquí o en la otra
-        pestaña: Atlas extrae administradores y accionistas para que los revise antes de
+        certificado de nómina desde los enlaces y adjúntelo una sola vez (uno o varios PDF),
+        aquí o en la otra pestaña: Atlas extrae administradores y accionistas para que los revise antes de
         importarlos. También puede registrarlos manualmente más abajo.
       </p>
       <div class="cert-links">{estado}{enlaces}</div>
@@ -63,16 +63,18 @@ def assisted_panel(
 
 
 def upload_form(audit_id: int, return_tab: str, csrf_token: str) -> str:
-    """Formulario para adjuntar el certificado PDF y extraer la nómina."""
+    """Formulario para adjuntar los certificados PDF (uno o varios) y extraer la nómina."""
     return f"""
     <form method="post" action="/auditor/radar/certificado" enctype="multipart/form-data" class="cert-upload">
       {hidden_inputs(csrf_token, audit_id=audit_id, return_tab=return_tab)}
-      <label>Adjuntar certificado de nómina de administradores y accionistas (PDF, máx. 10 MB)</label>
+      <label>Adjuntar certificados de nómina de administradores y accionistas
+        (PDF, hasta {MAX_CERTIFICADOS} archivos de máx. 10 MB)</label>
       <div class="cert-upload-row">
-        <input type="file" name="archivo" accept="application/pdf,.pdf" required>
+        <input type="file" name="archivo" accept="application/pdf,.pdf" multiple required>
         <button type="submit" class="btn btn-sm btn-primary">{SVG_FILE} Adjuntar y extraer</button>
       </div>
-      <small>El PDF queda como evidencia. Revise lo extraído antes de importarlo.</small>
+      <small>Si la nómina viene en varios documentos, selecciónelos juntos (Ctrl o ⌘ + clic):
+        se revisan en una sola propuesta. Cada PDF queda como evidencia.</small>
     </form>
     """
 
@@ -121,7 +123,7 @@ def review_panel(audit_id: int, propuesta: dict | None, return_tab: str, csrf_to
     <section class="cert-review">
       <div class="people-editor-head">
         <span class="workflow-eyebrow">Certificado adjunto — revisión</span>
-        <h4>{esc(propuesta["archivo"])}</h4>
+        <h4>{esc(" · ".join(propuesta["archivo"].splitlines()))}</h4>
         <p>Corrija lo necesario y desmarque lo que no corresponda. Se importa a las dos pestañas.</p>
       </div>
       {f'<ul class="cert-warnings">{advertencias}</ul>' if advertencias else ''}

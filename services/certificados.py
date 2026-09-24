@@ -24,6 +24,7 @@ from services.normalizacion import normalizar_texto
 NOMINAS = ("administradores", "accionistas")
 TITULO_CERTIFICADO = "Certificado de nómina de administradores y accionistas"
 MAX_PDF_BYTES = 10 * 1024 * 1024
+MAX_CERTIFICADOS = 5  # PDF por envío
 
 # Cargos de administración más frecuentes; los compuestos van antes que sus
 # versiones cortas para que "GERENTE GENERAL" no se lea como "GERENTE".
@@ -231,7 +232,14 @@ def _fila(identificacion: str, lineas: list[str], seccion: str) -> tuple[str, di
     return (tipo, fila) if fila["nombre"] else None
 
 
-def analizar_nomina(texto: str, ruc_empresa: str = "") -> dict:
+def _faltantes(nomina: dict[str, list[dict]]) -> list[str]:
+    return [
+        f"No se reconocieron {tipo} con cédula o RUC: regístrelos manualmente si corresponde."
+        for tipo in NOMINAS if not nomina[tipo]
+    ]
+
+
+def analizar_nomina(texto: str, ruc_empresa: str = "", avisar_faltantes: bool = True) -> dict:
     """Propuesta de administradores y accionistas del certificado para que el
     auditor la revise. Un mismo PDF alimenta las dos nóminas.
 
@@ -266,9 +274,36 @@ def analizar_nomina(texto: str, ruc_empresa: str = "") -> dict:
         if a["participacion_porcentaje"] is None and a["capital"] and total:
             a["participacion_porcentaje"] = round(a["capital"] * 100 / total, 4)
 
-    if normal_doc:
-        advertencias += [
-            f"No se reconocieron {tipo} con cédula o RUC: regístrelos manualmente si corresponde."
-            for tipo, filas in nomina.items() if not filas
-        ]
+    if normal_doc and avisar_faltantes:
+        advertencias += _faltantes(nomina)
     return nomina | {"fecha_certificado": fecha_del_certificado(texto), "advertencias": advertencias}
+
+
+def _clave(tipo: str, fila: dict) -> tuple:
+    """Identidad de una fila para no repetirla cuando dos PDF la traen: un
+    administrador puede tener más de un cargo; un accionista, una sola fila."""
+    return (fila["identificacion"], fila.get("cargo", "")) if tipo == "administradores" else (fila["identificacion"],)
+
+
+def analizar_nominas(documentos: list[tuple[str, str]], ruc_empresa: str = "") -> dict:
+    """Propuesta combinada de varios PDF [(nombre, texto)]: Supercias puede
+    entregar la nómina de administradores y la de accionistas en documentos
+    separados. Misma forma que analizar_nomina(); las filas repetidas entre
+    documentos se proponen una sola vez y la fecha es la del certificado más
+    reciente."""
+    nomina: dict[str, list[dict]] = {tipo: [] for tipo in NOMINAS}
+    vistas: set[tuple] = set()
+    advertencias, fechas = [], []
+    for nombre, texto in documentos:
+        parcial = analizar_nomina(texto, ruc_empresa, avisar_faltantes=False)
+        prefijo = f"{nombre}: " if len(documentos) > 1 else ""
+        advertencias += [prefijo + a for a in parcial["advertencias"]]
+        fechas.append(parcial["fecha_certificado"])
+        for tipo in NOMINAS:
+            for fila in parcial[tipo]:
+                if (tipo, *_clave(tipo, fila)) not in vistas:
+                    vistas.add((tipo, *_clave(tipo, fila)))
+                    nomina[tipo].append(fila)
+    if any(normalizar_texto(texto) for _, texto in documentos):
+        advertencias += _faltantes(nomina)
+    return nomina | {"fecha_certificado": max(fechas, default=""), "advertencias": advertencias}

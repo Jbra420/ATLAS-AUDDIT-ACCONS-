@@ -227,7 +227,9 @@ CREATE TABLE IF NOT EXISTS financial_statements (
 );
 
 -- ── Certificado de nómina adjunto (administradores y accionistas) ────
--- Un PDF trae las dos nóminas. Queda como evidencia con su SHA-256, y
+-- Un PDF trae las dos nóminas, o vienen en varios PDF que se adjuntan
+-- juntos (archivo, sha256 y ruta guardan uno por línea). Cada PDF queda
+-- como evidencia con su SHA-256, y
 -- administradores_json / accionistas_json son la propuesta del analizador:
 -- nada entra a la nómina hasta que el auditor la confirma.
 CREATE TABLE IF NOT EXISTS nomina_imports (
