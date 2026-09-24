@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any, Union
 
+from services.financial import formato_moneda
 from services.rowutil import row_get as _get
 
 
@@ -37,7 +38,7 @@ def _money(value: Any) -> str:
     if value is None or value == "":
         return "Pendiente de confirmar"
     try:
-        return f"${float(value):,.2f}"
+        return formato_moneda(float(value))
     except (TypeError, ValueError):
         return str(value)
 
@@ -72,14 +73,13 @@ def _source_rows(sources: list[RowLike]) -> list[dict[str, str]]:
     return rows
 
 
-def _document_rows(docs: list[RowLike]) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    for doc in docs or []:
-        rows.append({
-            "name": _clean(_get(doc, "nombre"), "Documento sin nombre"),
-            "status": _clean(_get(doc, "estado"), "pendiente"),
-        })
-    return rows
+def _fiscal_year_label(snapshot: RowLike) -> str:
+    anio = _get(snapshot, "anio_fiscal", None)
+    if anio:
+        return f"{anio} (EEFF al {_get(snapshot, 'fecha_corte')})"
+    if snapshot:
+        return "Pendiente de confirmar (cifras sin año fiscal)"
+    return "Pendiente de confirmar"
 
 
 def build_dossier_model(
@@ -89,7 +89,6 @@ def build_dossier_model(
     location: RowLike,
     admins: list[RowLike],
     shareholders: list[RowLike],
-    docs: list[RowLike],
     snapshot: RowLike,
     indicators: dict[str, Any],
     source_map: dict[str, Any],
@@ -97,15 +96,21 @@ def build_dossier_model(
 ) -> dict[str, Any]:
     """Construye un modelo compacto para vista y exportacion de la ficha final."""
     totals = source_map.get("totals", {})
-    reviewed_docs = sum(1 for doc in docs or [] if _get(doc, "estado") == "revisado")
-    total_docs = len(docs or [])
     source_rows = _source_rows(sources)
     financial_alerts = [
         str(alert.get("mensaje", "")).strip()
         for alert in indicators.get("alertas", [])
         if alert.get("tipo") in {"alto", "medio"} and str(alert.get("mensaje", "")).strip()
     ]
-    risk_items = _manual_risks(research) + financial_alerts
+    validacion = source_map.get("validacion") or {}
+    validation_risks = [
+        f"{alert['mensaje']}" + (f" Tratamiento: {alert['tratamiento']}" if alert.get("tratamiento") else "")
+        for alert in validacion.get("alertas", [])
+    ] + [
+        f"{cruce['regla']}: no coincide. {cruce['detalle']}"
+        for cruce in validacion.get("cruces", []) if cruce["estado"] == "no_coincide"
+    ]
+    risk_items = validation_risks + _manual_risks(research) + financial_alerts
     if not totals.get("ready_for_summary"):
         risk_items.append("La base de fuentes aun requiere soporte antes de una conclusion definitiva.")
     pending_items = _pending_from_source_map(source_map)
@@ -128,8 +133,6 @@ def build_dossier_model(
             "partial_sources": int(totals.get("partial_cards", 0) or 0),
             "pending_sources": int(totals.get("pending_cards", 0) or 0),
             "evidence_count": len(source_rows),
-            "reviewed_docs": reviewed_docs,
-            "total_docs": total_docs,
             "risk_count": len(risk_items),
             "pending_count": len(pending_items),
         },
@@ -153,8 +156,8 @@ def build_dossier_model(
             for card in source_map.get("cards", [])
         ],
         "evidence": source_rows[:10],
-        "documents": _document_rows(docs)[:10],
         "financial": [
+            {"label": "Año fiscal", "value": _fiscal_year_label(snapshot)},
             {"label": "Activo total", "value": indicators.get("fmt_activo", _money(_get(snapshot, "activo_total")))},
             {"label": "Pasivo total", "value": indicators.get("fmt_pasivo", _money(_get(snapshot, "pasivo_total")))},
             {"label": "Patrimonio neto", "value": indicators.get("fmt_patrimonio", _money(_get(snapshot, "patrimonio_neto")))},
@@ -209,21 +212,16 @@ def build_dossier_text(dossier: dict[str, Any]) -> str:
     if not dossier.get("evidence"):
         lines.append("Sin evidencias registradas.")
 
-    lines += ["", "4. DOCUMENTOS ECONOMICOS", "-" * 72]
-    lines.append(f"Revisados: {metrics.get('reviewed_docs', 0)}/{metrics.get('total_docs', 0)}")
-    for row in dossier.get("documents", []):
-        lines.append(f"- {row['name']}: {row['status']}")
-
-    lines += ["", "5. INDICADORES FINANCIEROS", "-" * 72]
+    lines += ["", "4. INDICADORES FINANCIEROS", "-" * 72]
     for item in dossier.get("financial", []):
         lines.append(f"{item['label']}: {item['value']}")
 
-    lines += ["", "6. RIESGOS Y PENDIENTES", "-" * 72, "Riesgos:"]
+    lines += ["", "5. RIESGOS Y PENDIENTES", "-" * 72, "Riesgos:"]
     for item in dossier.get("risks", []):
         lines.append(f"- {item}")
     lines.append("Pendientes:")
     for item in dossier.get("pending", []):
         lines.append(f"- {item}")
 
-    lines += ["", "7. CIERRE PRELIMINAR", "-" * 72, dossier.get("closing", "Pendiente de confirmar.")]
+    lines += ["", "6. CIERRE PRELIMINAR", "-" * 72, dossier.get("closing", "Pendiente de confirmar.")]
     return "\n".join(lines)

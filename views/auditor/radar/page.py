@@ -13,213 +13,122 @@ from database import (
     get_audit_context,
 )
 from services.financial import compute_indicators
-from services.company_search import build_source_map, find_source_check
+from services.company_search import find_source_check, source_map_from_context
 from services.dossier import build_dossier_model
-from ui.components import ruc_banner_html
-from ui.helpers import esc, form_value, csrf_input
+from services.normalizacion import anio_fiscal_sugerido
+from services.rowutil import row_get
+from services.ruc_validator import validate_ruc
+from ui.helpers import esc, form_value, hidden_inputs
 from ui.icons import (
-    SVG_ALERT,
-    SVG_ARROW_RIGHT,
     SVG_BUILDING,
-    SVG_CHECK,
-    SVG_CLOCK,
     SVG_DOLLAR,
     SVG_DOWNLOAD,
     SVG_FILE,
     SVG_INFO,
     SVG_MAP_PIN,
     SVG_RADAR,
+    SVG_REFRESH,
     SVG_SEARCH,
     SVG_USERS,
 )
 from ui.layout import layout
 
 
-def _tab_href(audit_id: int, tab_id: str, read_only: bool) -> str:
-    route = "/admin/audit" if read_only else "/auditor/radar"
-    return f"{route}?audit_id={audit_id}&tab={tab_id}#radar-tabs-main"
-
-
-def _render_readiness_panel(readiness: dict, read_only: bool, audit_id: int) -> str:
-    blockers = readiness.get("blockers", [])
-    warnings = readiness.get("warnings", [])
-    ready = bool(readiness.get("ready"))
-
-    def item_html(item: dict, item_class: str) -> str:
-        target_tab = item["tab"]
-        return f"""
-          <li class="readiness-item {item_class}">
-            <span><strong>{esc(item["label"])}</strong><small>{esc(item["source"])}</small></span>
-            <a href="{_tab_href(audit_id, target_tab, read_only)}"
-               onclick="return switchTab('{target_tab}')">
-              Revisar {SVG_ARROW_RIGHT}
-            </a>
-          </li>
-        """
-
-    blocker_items = "".join(item_html(item, "is-blocker") for item in blockers)
-    warning_items = "".join(item_html(item, "is-warning") for item in warnings)
-    if ready:
-        title = "Validación mínima completa"
-        description = (
-            "El auditor puede generar el resumen preliminar."
-            if not read_only else
-            "El expediente cumple los requisitos para que el auditor genere el resumen."
-        )
-        icon = SVG_CHECK
-        status_class = "is-ready"
-    else:
-        title = f"{len(blockers)} requisito(s) pendiente(s)"
-        description = (
-            "Complete los datos obligatorios antes de generar el resumen."
-            if not read_only else
-            "El auditor debe completar estos datos antes de generar el resumen."
-        )
-        icon = SVG_ALERT
-        status_class = "is-blocked"
-
-    blockers_column = ""
-    if blockers:
-        blockers_column = f"""
-        <div class="readiness-group">
-          <span class="readiness-group-title">Obligatorios</span>
-          <ul>{blocker_items}</ul>
-        </div>
-        """
-    warnings_column = ""
-    if warnings:
-        warnings_column = f"""
-        <div class="readiness-group">
-          <span class="readiness-group-title">Recomendados</span>
-          <ul>{warning_items}</ul>
-        </div>
-        """
-
-    return f"""
-    <div class="readiness-panel {status_class}">
-      <div class="readiness-head">
-        <span class="readiness-icon">{icon}</span>
-        <div>
-          <h3>{esc(title)}</h3>
-          <p>{esc(description)}</p>
-        </div>
-        <div class="readiness-count">
-          <strong>{readiness.get('required_completed', 0)}/{readiness.get('required_total', 0)}</strong>
-          <span>requisitos</span>
-        </div>
-      </div>
-      <div class="readiness-groups">
-        {blockers_column}
-        {warnings_column}
-      </div>
-    </div>
-    """
-
-
-def _render_source_map(source_map: dict, read_only: bool, audit_id: int) -> str:
-    totals = source_map["totals"]
-    readiness = source_map["readiness"]
-
-    # Identify individual card statuses (assuming only 2 cards: SRI and Supercias)
-    sri_card = next((c for c in source_map["cards"] if c["key"] == "sri"), None)
-    sup_card = next((c for c in source_map["cards"] if c["key"] == "supercias"), None)
-
-    def step_html(num: int, card: dict | None, tab_id: str, title: str, btn_txt: str) -> str:
-        if not card:
-            return ""
-        st = card["status"]  # 'complete', 'partial', 'pending'
-        icon = SVG_CHECK if st == 'complete' else (SVG_CLOCK if st == 'partial' else SVG_ALERT)
-        color_cls = f"step-{st}"
-
-        found = card["completed"]
-        tot = card["total"]
-
-        return f"""
-        <div class="step-item {color_cls}">
-          <div class="step-indicator">
-            <span class="step-num">{num}</span>
-            <span class="step-icon">{icon}</span>
-          </div>
-          <div class="step-content">
-            <div class="step-header">
-              <h4>{esc(title)}</h4>
-              <span class="step-badge {color_cls}">{esc(card["status_label"])}</span>
-            </div>
-            <p class="step-meta">{found} de {tot} datos validados</p>
-            <a class="btn-step-action" href="{_tab_href(audit_id, tab_id, read_only)}"
-               onclick="return switchTab('{tab_id}')">
-              {esc(btn_txt)} {SVG_ARROW_RIGHT}
-            </a>
-          </div>
-        </div>
-        """
-
-    # Generamos los 3 pasos: SRI, Supercias, Resumen
-    step1 = step_html(1, sri_card, "sri", "Validación SRI", "Ir a SRI")
-    step2 = step_html(2, sup_card, "supercias", "Societario (Supercias)", "Ir a Supercias")
-
-    # Paso 3 (Resumen) depende de que los otros 2 estén completos
-    is_ready = readiness["ready"]
-    s3_st = "complete" if is_ready else "pending"
-    s3_icon = SVG_CHECK if is_ready else SVG_RADAR
-    s3_label = "Listo para generar" if is_ready else "Faltan datos obligatorios"
-    s3_btn = "Abrir resumen" if is_ready else "Revisar pendientes"
-    first_pending_tab = (
-        readiness.get("blockers", [{}])[0].get("tab", "resumen")
-        if readiness.get("blockers") else "resumen"
+def _render_search_bar(
+    audit_id: int, company_name: str, ruc: str | None, read_only: bool,
+    csrf_token: str, sri_check, supercias_check, financial_years: int,
+) -> str:
+    has_ruc = bool(ruc)
+    valid_ruc = validate_ruc(ruc)[0] if has_ruc else False
+    ruc_state = (
+        '<span class="radar-lookup-ruc-state is-valid">RUC válido</span>' if valid_ruc else
+        '<span class="radar-lookup-ruc-state is-invalid">RUC por verificar</span>' if has_ruc else
+        '<span class="radar-lookup-ruc-state">RUC pendiente</span>'
     )
-    s3_tab = "resumen" if is_ready else first_pending_tab
+    ruc_line = (
+        f'<span class="radar-lookup-ruc">RUC <strong>{esc(ruc)}</strong></span>{ruc_state}'
+        if has_ruc else ruc_state
+    )
 
-    step3 = f"""
-        <div class="step-item step-{s3_st}">
-          <div class="step-indicator">
-            <span class="step-num">3</span>
-            <span class="step-icon">{s3_icon}</span>
+    sri_ready = bool(sri_check and sri_check["estado"] == "consultada")
+    supercias_ready = bool(supercias_check and supercias_check["estado"] == "consultada")
+
+    def source_state(label: str, ready: bool, detail: str = "consultado") -> str:
+        state = detail if ready else "pendiente"
+        css = "is-ready" if ready else "is-pending"
+        return (
+            f'<span class="radar-lookup-source {css}">'
+            f'<span class="radar-lookup-dot" aria-hidden="true"></span>'
+            f'{esc(label)} {esc(state)}</span>'
+        )
+
+    sources = ""
+    if has_ruc:
+        years_label = f'{financial_years} año(s) disponible(s)' if financial_years else "pendiente"
+        sources = f"""
+      <div class="radar-lookup-sources" aria-label="Estado de las fuentes">
+        {source_state('SRI', sri_ready)}
+        {source_state('Supercias', supercias_ready, 'consultada')}
+        {source_state('Financiero', financial_years > 0, years_label)}
+      </div>"""
+
+    if read_only:
+        action = '<span class="radar-lookup-readonly">Solo lectura</span>'
+    else:
+        ruc_field = (
+            f'<input type="hidden" name="search_ruc" value="{esc(ruc)}">' if has_ruc else
+            """<div class="radar-lookup-entry">
+              <label for="rs_ruc">RUC de la empresa</label>
+              <input id="rs_ruc" name="search_ruc" placeholder="13 dígitos" maxlength="13"
+                     inputmode="numeric" pattern="[0-9]{13}" required
+                     aria-describedby="ruc-hint-text" autocomplete="off">
+              <span id="ruc-hint-text" class="radar-lookup-hint" aria-live="polite">Ingrese 13 dígitos</span>
+            </div>"""
+        )
+        button_icon = SVG_REFRESH if sri_ready or supercias_ready or financial_years else SVG_SEARCH
+        button_label = "Actualizar búsqueda" if sri_ready or supercias_ready or financial_years else "Iniciar búsqueda"
+        refresh_available = bool(sri_ready or supercias_ready or financial_years)
+        refresh_attribute = 'data-confirm-refresh="true"' if refresh_available else ""
+        refresh_dialog = f"""
+      <dialog id="radar-refresh-dialog" class="radar-refresh-dialog"
+              aria-labelledby="radar-refresh-title" aria-describedby="radar-refresh-description">
+        <div class="radar-refresh-content">
+          <span class="radar-refresh-icon" aria-hidden="true">{SVG_INFO}</span>
+          <h2 id="radar-refresh-title">Actualizar datos de la empresa</h2>
+          <p id="radar-refresh-description">
+            Atlas volverá a consultar los catálogos locales para este RUC.
+          </p>
+          <div class="radar-refresh-note">
+            <strong>Antes de continuar</strong>
+            <span>La consulta puede reemplazar ajustes manuales en SRI, Supercias y datos financieros.</span>
           </div>
-          <div class="step-content">
-            <div class="step-header">
-              <h4>Resumen Final</h4>
-              <span class="step-badge step-{s3_st}">{s3_label}</span>
-            </div>
-            <p class="step-meta">Generación del dossier automático</p>
-            <a class="btn-step-action" href="{_tab_href(audit_id, s3_tab, read_only)}"
-               onclick="return switchTab('{s3_tab}')">
-              {s3_btn} {SVG_ARROW_RIGHT}
-            </a>
+          <div class="radar-refresh-actions">
+            <form method="dialog"><button type="submit" class="radar-refresh-cancel" autofocus>Cancelar</button></form>
+            <button type="button" id="radar-refresh-confirm" class="radar-refresh-confirm">Actualizar datos</button>
           </div>
         </div>
-    """
-
-    ready_icon = SVG_CHECK if is_ready else SVG_ALERT
-    ready_color = "status-ready" if is_ready else "status-warning"
-    ready_text = "Expediente listo" if is_ready else "Requiere atención"
+      </dialog>""" if refresh_available else ""
+        action = f"""
+      <form method="post" action="/auditor/radar/investigate" class="radar-search-form">
+        {hidden_inputs(csrf_token, audit_id=audit_id)}
+        {ruc_field}
+        <button type="submit" class="btn-radar-search" data-running-label="Buscando..." {refresh_attribute}>
+          {button_icon}<span>{button_label}</span>
+        </button>
+      </form>{refresh_dialog}"""
 
     return f"""
-    <section class="radar-workflow-stepper">
-      <div class="workflow-header">
-        <div class="workflow-titles">
-          <span class="workflow-eyebrow">Progreso de la Auditoría</span>
-          <h2>Flujo de validación del expediente</h2>
+    <section class="radar-lookup" aria-label="Búsqueda de empresa">
+      <div class="radar-lookup-main">
+        <div class="radar-lookup-identity">
+          <span class="radar-lookup-kicker">Expediente de auditoría</span>
+          <h1>{esc(company_name)}</h1>
+          <div class="radar-lookup-meta">{ruc_line}</div>
         </div>
-        <div class="workflow-global-status {ready_color}">
-          {ready_icon}
-          <span>{ready_text}</span>
-          <div class="workflow-meter">
-            <span style="width: {readiness['required_percent']}%;"></span>
-          </div>
-        </div>
+        {action}
       </div>
-
-      <div class="stepper-container">
-        {step1}
-        <div class="step-connector"></div>
-        {step2}
-        <div class="step-connector"></div>
-        {step3}
-      </div>
-      {_render_readiness_panel(readiness, read_only, audit_id)}
-    </section>
-    """
+      {sources}
+    </section>"""
 
 
 def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "") -> str:
@@ -240,19 +149,16 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     admins, shareholders = ctx["admins"], ctx["shareholders"]
     docs, snapshot = ctx["docs"], ctx["snapshot"]
     src_checks, sources = ctx["source_checks"], ctx["sources"]
+    provenance = ctx["provenance"]
     is_read_only = user["role"] == "admin"
     readonly_class = "readonly-mode" if is_read_only else ""
-    source_map = build_source_map(
-        audit, research, profile, location, admins, shareholders,
-        docs, snapshot, src_checks, sources,
-    )
-    source_map_panel = _render_source_map(source_map, is_read_only, audit_id)
+    source_map = source_map_from_context(audit, ctx)
 
     # ── Indicadores financieros ───────────────────────────────────────────
     indicators = compute_indicators(dict(snapshot) if snapshot else None)
     dossier = build_dossier_model(
         audit, research, profile, location, admins, shareholders,
-        docs, snapshot, indicators, source_map, sources,
+        snapshot, indicators, source_map, sources,
     )
     # ── Progress ──────────────────────────────────────────────────────────
     company_name = audit["company_name"]
@@ -272,31 +178,42 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     from .tab_resumen import build as build_resumen
 
     # Fuentes guiadas: SRI y Supercias (portal) se resuelven aquí para pasarle
-    # a cada tab solo su propia fila de source_checks; el resto (Supercias —
-    # documentos, SERCOP, búsqueda web) queda para el tab "Documentos".
+    # a cada tab solo su propia fila de source_checks.
     sri_check = find_source_check(src_checks, ("sri",))
     supercias_check = find_source_check(src_checks, ("supercias",), ("documento",))
-    resolved_ids = {row["id"] for row in (sri_check, supercias_check) if row}
-    other_checks = [c for c in src_checks if c["id"] not in resolved_ids]
 
     tab_sri = build_sri(
         audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok,
-        source_check=sri_check,
+        source_check=sri_check, provenance=provenance,
+        alertas=source_map["validacion"]["alertas"],
     )
     tab_supercias = build_supercias(
         audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok,
-        source_check=supercias_check,
+        source_check=supercias_check, provenance=provenance,
     )
-    tab_ubicacion = build_ubicacion(audit_id, audit, location, read_only=is_read_only, csrf_token=csrf_tok)
+    tab_ubicacion = build_ubicacion(
+        audit_id, audit, location, read_only=is_read_only, csrf_token=csrf_tok, provenance=provenance,
+    )
     tab_admins = build_admins(
         audit_id, audit, admins, read_only=is_read_only, csrf_token=csrf_tok, sources=sources,
+        provenance=provenance, certificado=ctx["certificado"],
     )
     tab_accionistas = build_accionistas(
         audit_id, audit, shareholders, read_only=is_read_only, csrf_token=csrf_tok, sources=sources,
+        provenance=provenance, certificado=ctx["certificado"],
     )
-    tab_financiero = build_financiero(audit_id, indicators, read_only=is_read_only, csrf_token=csrf_tok)
+    fin_anio = form_value(query, "fin_anio")
+    tab_financiero = build_financiero(
+        audit_id, indicators, read_only=is_read_only, csrf_token=csrf_tok,
+        anio_sugerido=anio_fiscal_sugerido(row_get(profile, "ultimo_anio_balance")),
+        financial=ctx["financial"],
+        ruc=ruc or "",
+        # Ejercicio a editar elegido en la pestaña; se ignora si no es un año válido.
+        anio_edicion=int(fin_anio) if fin_anio.isdigit() and 1990 <= int(fin_anio) <= 2100 else None,
+        provenance=provenance,
+    )
     tab_documentos = build_documentos(
-        audit_id, docs, other_checks, sources, read_only=is_read_only, csrf_token=csrf_tok,
+        audit_id, sources, read_only=is_read_only, csrf_token=csrf_tok,
     )
     tab_resumen = build_resumen(
         audit_id,
@@ -309,68 +226,11 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
 
     # Panel lateral de señales eliminado a petición del usuario para mejor uso del espacio horizontal.
 
-    # ── Panel de búsqueda ─────────────────────────────────────────────────
-    ruc_banner = ruc_banner_html(ruc)
-    if is_read_only:
-        search_panel = f"""
-    <div class="radar-search-panel">
-      <div class="radar-search-eyebrow"><span>Supervisión de expediente</span></div>
-      <h1 class="radar-search-title">Vista de solo lectura</h1>
-      <p class="radar-search-subtitle">
-        El jefe auditor puede ver el avance completo del auditor asignado, sin ejecutar consultas ni modificar información.
-      </p>
-      {ruc_banner}
-      <div class="radar-search-fields">
-        <div>
-          <label>RUC de la empresa</label>
-          <input value="{esc(ruc or 'Pendiente')}" readonly>
-        </div>
-        <div>
-          <label>Razón social registrada</label>
-          <input value="{esc(company_name)}" readonly>
-        </div>
-      </div>
-    </div>
-    """
-    else:
-        search_panel = f"""
-    <div class="radar-search-panel">
-      <div class="radar-search-eyebrow"><span>Búsqueda inicial por RUC</span></div>
-      <h1 class="radar-search-title">Buscar información de la empresa</h1>
-      <p class="radar-search-subtitle">
-        Valide el RUC y ejecute la búsqueda automática para cargar la ficha inicial de investigación.
-      </p>
-      {ruc_banner}
-      <form method="post" action="/auditor/radar/search" class="radar-search-form">
-        {csrf_input(csrf_tok)}
-        <input type="hidden" name="audit_id" value="{audit_id}">
-        <div class="radar-search-fields">
-          <div>
-            <label for="rs_ruc">RUC de la empresa</label>
-            <input id="rs_ruc" name="search_ruc" value="{esc(ruc or '')}"
-                   placeholder="1234567890001" maxlength="13" inputmode="numeric"
-                   pattern="\\d{{13}}" required>
-            <div class="radar-ruc-hint" id="ruc-hint-text">
-              <span class="ruc-status-warn">Ingrese el RUC de 13 dígitos</span>
-            </div>
-          </div>
-          <div>
-            <label>Razón social registrada</label>
-            <input value="{esc(company_name)}" readonly>
-          </div>
-          <div class="radar-search-actions">
-            <button type="submit" class="btn-radar-validate" data-running-label="Validando...">
-              {SVG_CHECK} Validar RUC
-            </button>
-            <button type="submit" class="btn-radar-search"
-                    formaction="/auditor/radar/investigate" data-running-label="Buscando...">
-              {SVG_SEARCH} Iniciar búsqueda
-            </button>
-          </div>
-        </div>
-      </form>
-    </div>
-    """
+    # ── Búsqueda y estado de fuentes ──────────────────────────────────────
+    search_panel = _render_search_bar(
+        audit_id, company_name, ruc, is_read_only, csrf_tok,
+        sri_check, supercias_check, len(ctx["financial"]["years"]),
+    )
 
     # ── Ensamble de tabs ──────────────────────────────────────────────────
     tabs = [
@@ -401,6 +261,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     # ── Barra de acción flotante ────────────────────────────────────
     if is_read_only:
         action_bar_right = f"""
+          {'<span class="badge badge-amber" title="' + esc(audit["archive_reason"] or "") + '">Empresa archivada</span>' if audit["archived_at"] else ''}
           <span class="badge badge-gray">{SVG_INFO} Modo solo lectura</span>
           <a class="btn btn-sm" href="/export/summary?audit_id={audit_id}" title="Descargar resumen en .txt">
             {SVG_DOWNLOAD} Exportar .txt
@@ -481,27 +342,42 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
         const v = this.value.replace(/\\D/g,'');
         this.value = v;
         if (v.length === 13) {
-          rucHint.innerHTML = '<span class="ruc-status-valid">✓ RUC de 13 dígitos listo</span>';
-          this.classList.add('ruc-valid'); this.classList.remove('ruc-invalid');
+          rucHint.textContent = '13 dígitos ingresados; se validará al buscar';
         } else if (v.length > 0) {
-          rucHint.innerHTML = `<span class="ruc-status-warn">${v.length}/13 dígitos</span>`;
-          this.classList.remove('ruc-valid','ruc-invalid');
+          rucHint.textContent = `${v.length}/13 dígitos`;
         } else {
-          rucHint.innerHTML = '<span class="ruc-status-warn">Ingrese el RUC de 13 dígitos</span>';
-          this.classList.remove('ruc-valid','ruc-invalid');
+          rucHint.textContent = 'Ingrese 13 dígitos';
         }
       });
     }
 
     const researchForm = document.querySelector('.radar-search-form');
     if (researchForm) {
+      const refreshDialog = document.getElementById('radar-refresh-dialog');
+      const searchButton = researchForm.querySelector('.btn-radar-search');
       researchForm.addEventListener('submit', function(event) {
-        const submitter = event.submitter;
+        if (researchForm.dataset.submitting === 'true') {
+          event.preventDefault();
+          return;
+        }
+        const submitter = event.submitter || searchButton;
         if (!submitter) return;
+        if (submitter.dataset.confirmRefresh === 'true' &&
+            researchForm.dataset.refreshConfirmed !== 'true' && refreshDialog) {
+          event.preventDefault();
+          refreshDialog.showModal();
+          return;
+        }
+        researchForm.dataset.submitting = 'true';
         window.requestAnimationFrame(() => {
           submitter.disabled = true;
-          submitter.textContent = submitter.dataset.runningLabel || 'Procesando...';
+          submitter.querySelector('span').textContent = submitter.dataset.runningLabel || 'Procesando...';
         });
+      });
+      document.getElementById('radar-refresh-confirm')?.addEventListener('click', function() {
+        refreshDialog.close();
+        researchForm.dataset.refreshConfirmed = 'true';
+        researchForm.requestSubmit(searchButton);
       });
     }
     </script>
@@ -511,7 +387,6 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     content = f"""
     <div class="{readonly_class}">
       {search_panel}
-      {source_map_panel}
       <div class="radar-layout">
         <div style="min-width: 0;">
           {tabs_block}

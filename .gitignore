@@ -12,3 +12,7 @@ cookies.txt
 # Insumos crudos de catastro (SRI) usados por scripts/update_catastro.py:
 # pueden pesar cientos de MB y no deben entrar al historial de git.
 SRI_RUC_*.csv
+
+# Certificados PDF adjuntados en los expedientes y muestras para calibrar el lector.
+adjuntos/
+muestras_supercias/

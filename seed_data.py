@@ -4,12 +4,12 @@ seed_data.py — Datos de demostración de Atlas (empresa GRUCANQUI CIA. LTDA).
 Se usan solo la primera vez que se ejecuta init_db() (tabla users vacía) y
 cuando un auditor registra el RUC de demo. No es parte del modelo de datos
 real de la aplicación: es un fixture para poder usar Atlas sin cargar
-información real, separado de database.py para no mezclar datos de ejemplo
+información real, separado del paquete database para no mezclar datos de ejemplo
 con la lógica de persistencia.
 
 Los imports de database (create_user, now_iso, DEFAULT_ECONOMIC_DOCUMENTS)
 se hacen dentro de las funciones, no al nivel del módulo, porque
-database.py importa este módulo: un import a nivel de módulo aquí crearía
+el paquete database importa este módulo: un import a nivel de módulo aquí crearía
 un ciclo de importación.
 """
 from __future__ import annotations

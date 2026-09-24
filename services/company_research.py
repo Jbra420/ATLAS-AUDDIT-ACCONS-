@@ -5,11 +5,14 @@ from pathlib import Path
 
 from database import (
     DB_PATH,
+    apply_balances_catalog_result,
     apply_sri_research_result,
     apply_supercias_research_result,
+    lookup_balances_catalog,
     lookup_catastro,
     lookup_supercias_catalog,
 )
+from services.normalizacion import regimen_desde_clase
 from services.supercias_catalog import build_supercias_result
 
 
@@ -31,11 +34,20 @@ def build_sri_result(record: dict[str, str]) -> dict[str, dict[str, str]]:
     canton = (record.get("canton") or record.get("city") or "").strip()
     parish = (record.get("parish") or "").strip()
     trade_name = (record.get("trade_name") or "").strip()
+    clase = (record.get("taxpayer_class") or "").strip()
+    regimen = regimen_desde_clase(clase)
+    if regimen:
+        regimen_line = f"Régimen: {regimen} (clase {clase})"
+    elif clase:
+        regimen_line = f"Régimen: pendiente de confirmar (clase {clase} sin equivalencia confirmada)"
+    else:
+        regimen_line = ""
 
     sri_lines = [
         f"RUC: {ruc}",
         f"Estado del contribuyente: {(record.get('taxpayer_status') or '').strip()}",
         f"Tipo de contribuyente: {(record.get('taxpayer_type') or '').strip()}",
+        regimen_line,
         f"Código CIIU: {(record.get('ciiu_code') or '').strip()}",
         f"Ubicación registrada: {', '.join(part for part in (parish, canton, province) if part)}",
         "Fuente: Catastro RUC SRI cargado localmente.",
@@ -51,15 +63,18 @@ def build_sri_result(record: dict[str, str]) -> dict[str, dict[str, str]]:
         "profile": {
             "ruc": ruc,
             "razon_social": name,
+            "razon_social_sri": name,
             "estado_contribuyente": (record.get("taxpayer_status") or "").strip(),
             "tipo_contribuyente": (record.get("taxpayer_type") or "").strip(),
-            "categoria": (record.get("taxpayer_class") or "").strip(),
+            "regimen": regimen,
+            "categoria": clase,
             "obligado_contabilidad": _yes_no(record.get("accounting_required", "")),
             "agente_retencion": _yes_no(record.get("withholding_agent", "")),
             "contribuyente_especial": _yes_no(record.get("special_taxpayer", "")),
             "fecha_inicio_actividades": _clean_date(record.get("start_date", "")),
             "fecha_actualizacion": _clean_date(record.get("update_date", "")),
             "actividad_economica": activity,
+            "ciiu_sri": (record.get("ciiu_code") or "").strip(),
         },
         "location": {
             "provincia": province,
@@ -69,7 +84,7 @@ def build_sri_result(record: dict[str, str]) -> dict[str, dict[str, str]]:
         "research": {
             "commercial_name": trade_name,
             "economic_activity": activity,
-            "sri_info": "\n".join(line for line in sri_lines if not line.endswith(": ")),
+            "sri_info": "\n".join(line for line in sri_lines if line and not line.endswith(": ")),
         },
     }
 
@@ -80,23 +95,18 @@ def research_company_by_ruc(
     user_id: int,
     db_path: Path | str = DB_PATH,
 ) -> dict[str, object]:
-    """Consulta el catastro SRI y el catálogo local de Supercías de forma
-    independiente, guarda lo que cada uno tenga y reporta el alcance real.
+    """Consulta SRI, Directorio Supercias y balances por RUC de forma independiente.
 
-    Ninguna de las dos fuentes es un requisito para la otra: si el RUC solo
-    consta en una de ellas, la búsqueda igual se completa con un resultado
-    parcial. Solo se lanza una excepción si NINGUNA de las dos lo tiene, en
-    cuyo caso no hay nada que guardar. Antes, el catastro SRI era un gate
-    absoluto (si faltaba, Supercías nunca llegaba a consultarse); esto
-    replica el flujo original de la propuesta: "Consultar SRI local →
-    Consultar Supercías" como pasos independientes, no encadenados.
+    Un resultado parcial es util; falla solo si ninguno de los tres catalogos
+    contiene el RUC. El año financiero se confirma despues en el expediente.
     """
     sri_record = lookup_catastro(ruc)
     supercias_record = lookup_supercias_catalog(ruc)
+    balances = lookup_balances_catalog(ruc)
 
-    if not sri_record and not supercias_record:
+    if not sri_record and not supercias_record and not balances:
         raise ValueError(
-            "El RUC no consta ni en el catastro SRI local ni en el catálogo de Supercías. "
+            "El RUC no consta en los catálogos locales SRI, Supercías ni balances. "
             "Actualiza los catálogos locales antes de continuar."
         )
 
@@ -125,7 +135,11 @@ def research_company_by_ruc(
             if value
         )
 
-    if not sri_found:
+    financial_years = apply_balances_catalog_result(audit_id, user_id, balances, db_path)
+
+    if not sri_found and not supercias_found:
+        pending_source = "SRI y Supercias"
+    elif not sri_found:
         pending_source = "SRI"
     elif not supercias_found:
         pending_source = "Supercias"
@@ -138,5 +152,6 @@ def research_company_by_ruc(
         "populated_fields": populated,
         "supercias_found": supercias_found,
         "supercias_populated_fields": supercias_populated,
+        "financial_years": financial_years,
         "pending_source": pending_source,
     }

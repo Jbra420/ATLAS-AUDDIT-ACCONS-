@@ -63,7 +63,7 @@ class TestDossier(unittest.TestCase):
         )
         return build_dossier_model(
             audit, research, profile, location, admins, shareholders,
-            docs, snapshot, indicators, source_map, sources,
+            snapshot, indicators, source_map, sources,
         )
 
     def test_dossier_model_contains_core_sections(self):
@@ -105,12 +105,10 @@ class TestDossier(unittest.TestCase):
         self.assertIn("En construccion", text)
         self.assertGreater(dossier["metrics"]["pending_count"], 0)
 
-    def test_document_rows_use_real_document_names(self):
+    def test_dossier_has_no_document_checklist(self):
         dossier = self._build()
-        names = [row["name"] for row in dossier["documents"]]
-
-        self.assertIn("Balance / Estado de Situación Financiera", names)
-        self.assertNotIn("Documento sin nombre", names)
+        self.assertNotIn("documents", dossier)
+        self.assertNotIn("DOCUMENTOS ECONOMICOS", build_dossier_text(dossier))
 
     def test_demo_loaded_dossier_uses_company_profile(self):
         load_demo_if_ruc_matches(self.audit_id, "0190377210001", self.db)

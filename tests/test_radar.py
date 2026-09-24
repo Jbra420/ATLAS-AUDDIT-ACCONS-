@@ -99,7 +99,8 @@ class TestRadarEmpresarial(unittest.TestCase):
         inds = compute_indicators(dict(financial)) if financial else {}
         
         summary = generate_summary(audit, research, source_count=0, profile=dict(get_company_profile(self.audit_id, self.db)), location=None, admins=[], shareholders=[], snapshot=dict(financial) if financial else None, indicators=inds, source_checks=[])
-        self.assertIn("INDICADORES FINANCIEROS", summary)
+        self.assertIn("INFORMACIÓN FINANCIERA", summary)
+        self.assertIn("Indicadores calculados", summary)
         self.assertIn("Razón endeudamiento", summary)
         self.assertIn("Margen neto", summary)
 

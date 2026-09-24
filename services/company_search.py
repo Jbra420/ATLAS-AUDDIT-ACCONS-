@@ -10,6 +10,7 @@ import sqlite3
 from typing import Any, Union
 
 from services.rowutil import row_get as _get
+from services.validaciones import evaluar_levantamiento
 
 
 RowLike = Union[sqlite3.Row, dict[str, Any], None]
@@ -134,8 +135,15 @@ def build_source_map(
     snapshot: RowLike,
     source_checks: list[RowLike],
     sources: list[RowLike],
+    alert_treatments: list[RowLike] | None = None,
 ) -> dict[str, Any]:
-    """Construye el mapa interpretado de fuentes para el Radar Empresarial."""
+    """Construye el mapa interpretado de fuentes para el Radar Empresarial.
+
+    Los requisitos del resumen son dos controles de proceso (fuente SRI y
+    fuente Supercias marcadas como consultadas) más los campos obligatorios
+    del levantamiento de información, que evalúa services/validaciones.py.
+    Las tarjetas por fuente siguen mostrando el avance de cada fuente.
+    """
     sri_consulted = "Consultada" if _consulted(source_checks, ("sri",)) else ""
     supercias_consulted = "Consultada" if _consulted(source_checks, ("supercias",), ("documento",)) else ""
 
@@ -155,12 +163,7 @@ def build_source_map(
                 ("Obligado a contabilidad", _get(profile, "obligado_contabilidad")),
                 ("Actividad economica", _get(profile, "actividad_economica") or _get(research, "economic_activity")),
             ],
-            required_labels=(
-                "RUC validado",
-                "Fuente SRI consultada",
-                "Estado contribuyente",
-                "Actividad economica",
-            ),
+            required_labels=("Fuente SRI consultada",),
             next_action="Confirmar estado, regimen y obligaciones tributarias.",
         ),
         _card(
@@ -176,13 +179,7 @@ def build_source_map(
                 ("Administradores registrados", f"{admin_count} registro(s)" if admin_count else ""),
                 ("Accionistas registrados", f"{shareholder_count} registro(s)" if shareholder_count else ""),
             ],
-            required_labels=(
-                "Fuente Supercias consultada",
-                "Situacion legal",
-                "Representante legal",
-                "Administradores registrados",
-                "Accionistas registrados",
-            ),
+            required_labels=("Fuente Supercias consultada",),
             next_action="Cruzar estado societario, representantes y estructura accionaria.",
         ),
     ]
@@ -194,36 +191,27 @@ def build_source_map(
     partial_cards = sum(1 for card in cards if card["status"] == "partial")
     pending_cards = sum(1 for card in cards if card["status"] == "pending")
 
-    blockers = [
+    validacion = evaluar_levantamiento(
+        audit, profile, location, admins, shareholders, snapshot, alert_treatments,
+    )
+    process_blockers = [
         _readiness_item(label, card["title"], card["tab"])
         for card in cards
         for label in card["blocking_missing"]
     ]
-    warnings = [
-        _readiness_item(label, card["title"], card["tab"])
-        for card in cards
-        for label in card["warning_missing"]
-    ]
+    blockers = process_blockers + validacion["pendientes"]
+    warnings = list(validacion["recomendaciones"])
+    if not _present(_get(research, "observations")):
+        warnings.append(_readiness_item("Observaciones del auditor", "Complementario", "resumen"))
 
-    location_checks = (
-        ("Provincia de la empresa", _get(location, "provincia"), "ubicacion"),
-        ("Ciudad o canton de la empresa", _get(location, "ciudad") or _get(location, "canton"), "ubicacion"),
-        ("Direccion principal", _get(location, "calle") or _get(research, "address"), "ubicacion"),
-        ("Informacion financiera", _get(snapshot, "activo_total"), "indicadores"),
-        ("Observaciones del auditor", _get(research, "observations"), "resumen"),
-    )
-    warnings.extend(
-        _readiness_item(label, "Complementario", tab)
-        for label, value, tab in location_checks
-        if not _present(value)
-    )
-
-    required_total = sum(card["required_total"] for card in cards)
-    required_completed = sum(card["required_completed"] for card in cards)
+    process_total = sum(card["required_total"] for card in cards)
+    required_total = process_total + validacion["requisitos_total"]
+    required_completed = (process_total - len(process_blockers)) + validacion["requisitos_cumplidos"]
     required_percent = int(round((required_completed / required_total) * 100)) if required_total else 0
     ready_for_summary = not blockers
 
     return {
+        "validacion": validacion,
         "cards": cards,
         "readiness": {
             "ready": ready_for_summary,
@@ -246,3 +234,12 @@ def build_source_map(
             "required_percent": required_percent,
         },
     }
+
+
+def source_map_from_context(audit: RowLike, ctx: dict[str, Any]) -> dict[str, Any]:
+    """build_source_map() a partir del contexto de database.get_audit_context()."""
+    return build_source_map(
+        audit, ctx["research"], ctx["profile"], ctx["location"], ctx["admins"],
+        ctx["shareholders"], ctx["docs"], ctx["snapshot"], ctx["source_checks"],
+        ctx["sources"], alert_treatments=ctx["alert_treatments"],
+    )

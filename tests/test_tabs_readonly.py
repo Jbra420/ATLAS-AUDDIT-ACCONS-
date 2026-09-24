@@ -19,7 +19,9 @@ from database import (
     get_audit,
     init_db,
     load_demo_if_ruc_matches,
+    get_financial_context,
     get_financial_snapshot,
+    set_audit_fiscal_year,
 )
 from services.financial import compute_indicators
 
@@ -35,8 +37,6 @@ def _sample_dossier() -> dict:
             "partial_sources": 2,
             "pending_sources": 2,
             "evidence_count": 1,
-            "reviewed_docs": 3,
-            "total_docs": 8,
             "risk_count": 1,
             "pending_count": 2,
         },
@@ -78,48 +78,6 @@ def _make_db() -> Path:
     db_path = Path(tmp) / "test_tabs.db"
     init_db(db_path)
     return db_path
-
-
-class TestRadarWorkflowNavigation(unittest.TestCase):
-
-    def setUp(self):
-        self.source_map = {
-            "totals": {"percent": 10},
-            "cards": [
-                {
-                    "key": "sri", "status": "partial", "status_label": "En avance",
-                    "completed": 1, "total": 6,
-                },
-                {
-                    "key": "supercias", "status": "pending", "status_label": "Pendiente",
-                    "completed": 0, "total": 7,
-                },
-            ],
-            "readiness": {
-                **_blocked_readiness(),
-                "required_percent": 22,
-            },
-        }
-
-    def test_auditor_workflow_links_to_tabs_with_visible_anchor(self):
-        from views.auditor.radar.page import _render_source_map
-        html = _render_source_map(self.source_map, read_only=False, audit_id=42)
-
-        self.assertIn(
-            '/auditor/radar?audit_id=42&tab=sri#radar-tabs-main', html,
-        )
-        self.assertIn(
-            '/auditor/radar?audit_id=42&tab=supercias#radar-tabs-main', html,
-        )
-        self.assertIn("onclick=\"return switchTab('sri')\"", html)
-        self.assertIn("Revisar pendientes", html)
-
-    def test_admin_workflow_uses_read_only_route(self):
-        from views.auditor.radar.page import _render_source_map
-        html = _render_source_map(self.source_map, read_only=True, audit_id=42)
-
-        self.assertIn('/admin/audit?audit_id=42&tab=sri#radar-tabs-main', html)
-        self.assertNotIn('/auditor/radar?audit_id=42', html)
 
 
 class TestTabSriSourceCheckReadOnly(unittest.TestCase):
@@ -179,7 +137,7 @@ class TestTabSuperciasSourceCheckReadOnly(unittest.TestCase):
 
 
 class TestTabDocumentosReadOnly(unittest.TestCase):
-    """tab_documentos: checklist de documentos, fuentes restantes y bitácora de evidencia."""
+    """tab_documentos: solo la bitácora de evidencia."""
 
     def setUp(self):
         self.db = _make_db()
@@ -189,35 +147,27 @@ class TestTabDocumentosReadOnly(unittest.TestCase):
             "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
             "Consultoría", "2026", self.auditor["id"], self.admin["id"], self.db,
         )
-        self.docs = [{"id": 1, "nombre": "RUC", "fecha": "2026", "estado": "pendiente"}]
-        self.checks = [{"id": 4, "fuente": "SERCOP", "uso": "Verificar contratos", "estado": "pendiente"}]
-        self.sources = []
+        self.sources = [{"title": "Consulta SERCOP", "source_type": "SERCOP", "notes": "Sin contratos"}]
 
     def test_read_only_has_no_forms(self):
         from views.auditor.radar.tab_documentos import build
-        html = build(self.audit_id, self.docs, self.checks, self.sources, read_only=True)
+        html = build(self.audit_id, self.sources, read_only=True)
         self.assertNotIn("<form", html)
-        self.assertNotIn("/auditor/radar/document", html)
-        self.assertNotIn("/auditor/source", html)
-        self.assertNotIn("/auditor/radar/source-check", html)
+        self.assertIn("Consulta SERCOP", html)
 
-    def test_auditor_mode_has_document_and_evidence_forms(self):
+    def test_auditor_mode_has_only_the_evidence_form(self):
         from views.auditor.radar.tab_documentos import build
-        html = build(
-            self.audit_id, self.docs, self.checks, self.sources,
-            read_only=False, csrf_token="token",
-        )
-        self.assertIn("/auditor/radar/document", html)
-        self.assertIn("/auditor/source", html)
-        self.assertIn("/auditor/radar/source-check", html)
+        html = build(self.audit_id, self.sources, read_only=False, csrf_token="token")
+        self.assertIn('action="/auditor/source"', html)
         self.assertIn('name="_csrf" value="token"', html)
+        self.assertNotIn("/auditor/radar/document", html)
+        self.assertNotIn("/auditor/radar/source-check", html)
+        self.assertNotIn("Documentos económicos", html)
+        self.assertNotIn("Otras fuentes guiadas", html)
 
-    def test_empty_state_placeholders(self):
+    def test_empty_state_placeholder(self):
         from views.auditor.radar.tab_documentos import build
-        html = build(self.audit_id, [], [], [], read_only=True)
-        self.assertIn("Sin documentos registrados", html)
-        self.assertIn("No hay fuentes adicionales configuradas", html)
-        self.assertIn("Sin evidencias registradas", html)
+        self.assertIn("Sin evidencias registradas", build(self.audit_id, [], read_only=True))
 
 
 class TestTabAdminsReadOnly(unittest.TestCase):
@@ -374,8 +324,8 @@ class TestTabResumenReadOnly(unittest.TestCase):
         self.assertNotIn('/auditor/radar/summary', html,
                          "read_only=True no debe mostrar el formulario de generación de resumen")
 
-    def test_read_only_checklist_uses_view_actions(self):
-        """El jefe navega a los pendientes sin recibir acciones operativas."""
+    def test_read_only_has_no_pending_modal(self):
+        """El jefe no genera el resumen: no recibe el modal de pendientes."""
         from views.auditor.radar.tab_resumen import build
         html = build(
             self.audit_id,
@@ -383,9 +333,8 @@ class TestTabResumenReadOnly(unittest.TestCase):
             readiness=_blocked_readiness(),
             read_only=True,
         )
-        self.assertIn(">Ver</a>", html)
-        self.assertIn(f'/admin/audit?audit_id={self.audit_id}&tab=sri#radar-tabs-main', html)
-        self.assertNotIn(">Completar</a>", html)
+        self.assertNotIn("summaryPendingModal", html)
+        self.assertNotIn("Completar", html)
 
     def test_auditor_mode_has_generate_button(self):
         """El auditor sí debe ver el botón para generar el resumen."""
@@ -393,9 +342,11 @@ class TestTabResumenReadOnly(unittest.TestCase):
         html = build(self.audit_id, self.research, read_only=False)
         self.assertIn('/auditor/radar/summary', html,
                       "read_only=False debe mostrar el formulario de generación")
+        self.assertNotIn("summaryPendingModal", html, "Sin pendientes se genera directo")
 
-    def test_blocked_readiness_suppresses_generate_form(self):
-        """Los faltantes obligatorios bloquean el formulario también para el auditor."""
+    def test_pending_items_open_modal_with_option_to_continue(self):
+        """Con puntos pendientes, "Generar resumen" abre un modal que los lista
+        y permite generar igual (confirmar_pendientes=1)."""
         from views.auditor.radar.tab_resumen import build
         html = build(
             self.audit_id,
@@ -403,11 +354,13 @@ class TestTabResumenReadOnly(unittest.TestCase):
             readiness=_blocked_readiness(),
             read_only=False,
         )
-        self.assertIn("Resumen bloqueado", html)
+        self.assertIn("openModal('summaryPendingModal')", html)
         self.assertIn("Estado contribuyente", html)
-        self.assertNotIn('/auditor/radar/summary', html)
+        self.assertIn('name="confirmar_pendientes" value="1"', html)
+        self.assertIn("Generar de todas formas", html)
+        self.assertIn("Volver y completar", html)
 
-    def test_blocked_readiness_separates_warnings(self):
+    def test_pending_modal_separates_warnings(self):
         """Las recomendaciones se muestran separadas de los requisitos obligatorios."""
         from views.auditor.radar.tab_resumen import build
         html = build(
@@ -420,7 +373,7 @@ class TestTabResumenReadOnly(unittest.TestCase):
         self.assertIn("Recomendaciones", html)
         self.assertIn("Informacion financiera", html)
 
-    def test_auditor_pending_actions_have_real_navigation_targets(self):
+    def test_pending_items_have_real_navigation_targets(self):
         from views.auditor.radar.tab_resumen import build
         html = build(
             self.audit_id,
@@ -432,7 +385,7 @@ class TestTabResumenReadOnly(unittest.TestCase):
             f'/auditor/radar?audit_id={self.audit_id}&tab=sri#radar-tabs-main',
             html,
         )
-        self.assertIn("onclick=\"return switchTab('sri')\"", html)
+        self.assertIn("closeModal('summaryPendingModal'); return switchTab('sri')", html)
 
     def test_summary_content_visible_in_both_modes(self):
         """El contenido del resumen (si existe) debe verse en ambos modos."""
@@ -468,29 +421,44 @@ class TestTabFinancieroReadOnly(unittest.TestCase):
         load_demo_if_ruc_matches(self.audit_id, "0190377210001", self.db)
         snapshot = get_financial_snapshot(self.audit_id, self.db)
         self.indicators = compute_indicators(dict(snapshot) if snapshot else None)
+        # Mismos argumentos que usa page.py (Fase 4: año fiscal y RUC).
+        self.kwargs = {
+            "financial": get_financial_context(self.audit_id, self.db),
+            "ruc": "0190377210001",
+        }
 
     def test_read_only_suppresses_financial_form(self):
         """El formulario de datos financieros no debe aparecer para el jefe auditor."""
         from views.auditor.radar.tab_financiero import build
-        html = build(self.audit_id, self.indicators, read_only=True)
+        set_audit_fiscal_year(self.audit_id, 2025, db_path=self.db)
+        self.kwargs["financial"] = get_financial_context(self.audit_id, self.db)
+        html = build(self.audit_id, self.indicators, read_only=True, **self.kwargs)
+        self.assertNotIn("<form", html)
         self.assertNotIn('/auditor/radar/financial', html,
                          "read_only=True no debe mostrar el formulario de edición financiera")
 
     def test_auditor_mode_has_financial_form(self):
         """El auditor sí debe ver el formulario para ingresar datos financieros."""
         from views.auditor.radar.tab_financiero import build
-        html = build(self.audit_id, self.indicators, read_only=False)
-        self.assertIn('/auditor/radar/financial', html,
-                      "read_only=False debe mostrar el formulario financiero")
+        html = build(self.audit_id, self.indicators, read_only=False, **self.kwargs)
+        self.assertNotIn('/auditor/radar/financial-year', html,
+                         "No se pide el año fiscal antes de mostrar la información")
+        self.assertIn('action="/auditor/radar/financial"', html)
+        set_audit_fiscal_year(self.audit_id, 2025, db_path=self.db)
+        self.kwargs["financial"] = get_financial_context(self.audit_id, self.db)
+        html = build(self.audit_id, self.indicators, read_only=False, **self.kwargs)
+        self.assertIn('action="/auditor/radar/financial"', html,
+                      "Con año fiscal, read_only=False debe mostrar el formulario de casilleros")
 
     def test_indicators_visible_in_both_modes(self):
         """Los indicadores calculados deben aparecer para ambos roles."""
         from views.auditor.radar.tab_financiero import build
-        html_ro = build(self.audit_id, self.indicators, read_only=True)
-        html_aw = build(self.audit_id, self.indicators, read_only=False)
+        html_ro = build(self.audit_id, self.indicators, read_only=True, **self.kwargs)
+        html_aw = build(self.audit_id, self.indicators, read_only=False, **self.kwargs)
         # Ambos deben mostrar la sección de indicadores
         for html in (html_ro, html_aw):
-            self.assertIn("financiero", html.lower())
+            self.assertIn("Indicadores calculados", html)
+            self.assertIn("67.8%", html)
 
 
 if __name__ == "__main__":

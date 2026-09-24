@@ -30,6 +30,7 @@ def build_supercias_result(record: dict[str, str]) -> dict[str, dict[str, str]]:
     profile = {
         "expediente_supercias": (record.get("expediente") or "").strip(),
         "razon_social": (record.get("razon_social") or "").strip(),
+        "razon_social_supercias": (record.get("razon_social") or "").strip(),
         "situacion_legal": (record.get("situacion_legal") or "").strip(),
         "fecha_constitucion": _clean_date(record.get("fecha_constitucion", "")),
         "tipo_compania": (record.get("tipo_compania") or "").strip(),
@@ -61,9 +62,19 @@ def build_supercias_result(record: dict[str, str]) -> dict[str, dict[str, str]]:
         ),
         "Fuente: Directorio de Compañías Supercías (catálogo local).",
     ]
+    # El Directorio publica un solo administrador (el representante legal y su
+    # cargo). Se registra solo si trae ambos datos; la identificación y la
+    # nacionalidad no constan en el Directorio y quedan pendientes.
+    administradores = []
+    if profile["representante_legal"] and profile["representante_cargo"]:
+        administradores.append({
+            "nombre": profile["representante_legal"],
+            "cargo": profile["representante_cargo"],
+        })
     return {
         "profile": profile,
         "location": location,
+        "administradores": administradores,
         "research": {
             "legal_status": profile["situacion_legal"],
             "representative": profile["representante_legal"],

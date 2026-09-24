@@ -141,6 +141,32 @@ class TestGenerateSummary(unittest.TestCase):
         self.assertIn("Pendiente de confirmar", summary)
         self.assertNotIn("Juan", summary)  # No debe inventar representante
 
+    def test_supercias_representative_is_not_labeled_as_sri(self):
+        data = self._full_data()
+        data["representative"] = "Representante del Directorio"
+        summary = generate_summary(_make_audit(), data, source_count=2)
+        sri_section = summary.split("1. IDENTIFICACIÓN TRIBUTARIA (SRI)", 1)[1].split(
+            "2. INFORMACIÓN SOCIETARIA (SUPERCIAS)", 1
+        )[0]
+        self.assertIn("Representante legal (SRI)   : Pendiente de confirmar.", sri_section)
+        self.assertNotIn("Representante del Directorio", sri_section)
+
+    def test_financial_sources_match_selected_year(self):
+        provenance = [
+            {"bloque": "financiero", "campo": "2024.activo_total", "fuente": "Balance 2024",
+             "fecha_consulta": "2026-09-22"},
+            {"bloque": "financiero", "campo": "2025.activo_total", "fuente": "Balance 2025",
+             "fecha_consulta": "2026-09-22"},
+        ]
+        summary = generate_summary(_make_audit(), self._full_data(), source_count=2,
+                                   snapshot={"anio_fiscal": 2025, "fecha_corte": "2025-12-31"},
+                                   provenance=provenance)
+        financial_section = summary.split("6. INFORMACIÓN FINANCIERA", 1)[1].split(
+            "7. VALIDACIONES CRUZADAS Y ALERTAS", 1
+        )[0]
+        self.assertIn("Balance 2025", financial_section)
+        self.assertNotIn("Balance 2024", financial_section)
+
     def test_summary_contains_company_name(self):
         audit = _make_audit(company_name="ACME Cía. Ltda.")
         summary = generate_summary(audit, self._full_data(), source_count=2)

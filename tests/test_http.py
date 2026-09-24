@@ -1,12 +1,15 @@
 """
 tests/test_http.py — Pruebas de integración HTTP para Atlas · Auddit.
 
-Conecta al servidor ya en ejecución en localhost:8765 (debe estar corriendo).
+Conecta a un servidor Atlas ya en ejecución en el puerto ATLAS_HTTP_TEST_PORT.
 Si el servidor no está disponible, los tests se saltean automáticamente.
 
-Para correr:
-    1. Iniciar el servidor: python3 app.py
-    2. Correr los tests:    python3 -m unittest tests.test_http -v
+Escriben en auddit.db (crean empresas y registros de prueba), así que no se
+ejecutan salvo que se pida explícitamente con ATLAS_HTTP_TEST_PORT. Úselos
+sobre una copia del proyecto o una base desechable, nunca contra el servidor
+con datos reales:
+    1. Iniciar el servidor de la copia: python3 app.py --port 8799
+    2. Correr los tests desde la copia: ATLAS_HTTP_TEST_PORT=8799 python3 -m unittest tests.test_http -v
 
 Los tests verifican:
   - Rutas públicas responden correctamente.
@@ -18,24 +21,27 @@ Los tests verifican:
 from __future__ import annotations
 
 import json
+import os
 import re
 import socket
 import time
 import unittest
+from datetime import date, timedelta
 from urllib.request import urlopen, Request
-from urllib.parse import urlencode
+from urllib.parse import unquote_plus, urlencode
 from urllib.error import HTTPError, URLError
 
 from database import connect, create_company_audit
-from seed_data import DEMO_RUC
 
 SERVER_HOST = "127.0.0.1"
-SERVER_PORT = 8765
+SERVER_PORT = int(os.environ.get("ATLAS_HTTP_TEST_PORT", "0"))
 BASE_URL = f"http://{SERVER_HOST}:{SERVER_PORT}"
 
 
 def _server_available() -> bool:
     """Verifica si el servidor Atlas está disponible en el puerto configurado."""
+    if not SERVER_PORT:
+        return False
     try:
         with socket.create_connection((SERVER_HOST, SERVER_PORT), timeout=1):
             return True
@@ -109,9 +115,12 @@ def _csrf_token(path: str, cookie: str) -> str:
     return match.group(1) if match else ""
 
 
+_SKIP_REASON = "Defina ATLAS_HTTP_TEST_PORT y levante un servidor sobre una copia (ver docstring)"
+
+
 # ── Casos de prueba ───────────────────────────────────────────────────────────
 
-@unittest.skipUnless(_server_available(), "Servidor Atlas no disponible en localhost:8765 — inicia con: python3 app.py")
+@unittest.skipUnless(_server_available(), _SKIP_REASON)
 class TestHTTPPublicRoutes(unittest.TestCase):
     """Rutas públicas accesibles sin autenticación."""
 
@@ -174,7 +183,7 @@ class TestHTTPPublicRoutes(unittest.TestCase):
         self.assertEqual(resp.status, 404)
 
 
-@unittest.skipUnless(_server_available(), "Servidor Atlas no disponible en localhost:8765 — inicia con: python3 app.py")
+@unittest.skipUnless(_server_available(), _SKIP_REASON)
 class TestHTTPAuditorFlow(unittest.TestCase):
     """Flujo completo del auditor: login → dashboard → aislamiento de roles."""
 
@@ -255,13 +264,100 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         match = re.search(rf'id="tab-{tab_id}"(.*?)id="tab-{next_tab_id}"', html, re.S)
         return match.group(1) if match else ""
 
+    def test_certificate_pdf_upload_review_and_import(self):
+        """La nómina, adjuntada en Administradores en dos PDF (administradores y
+        accionistas por separado), se propone en una sola revisión; el auditor
+        importa ambas nóminas en un paso. Las filas quedan con la fuente del
+        certificado y cada PDF como evidencia."""
+        import http.client
+        from tests.test_certificados import _pdf_con_texto
+
+        with connect() as conn:
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+        audit_id = create_company_audit(
+            f"Empresa certificado {time.time_ns()}", "", "Cuenca", "", "2025", auditor_id, admin_id,
+        )
+        with connect() as conn:
+            company_id = conn.execute("SELECT company_id FROM audits WHERE id = ?", (audit_id,)).fetchone()["company_id"]
+
+        def cleanup_company() -> None:
+            with connect() as conn:
+                conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+
+        self.addCleanup(cleanup_company)
+
+        page = f"/auditor/radar?audit_id={audit_id}&tab=admins"
+        pdfs = {
+            "administradores.pdf": _pdf_con_texto([
+                "ADMINISTRADORES",
+                "0102030405 TORRES VEGA ANA ECUADOR GERENTE GENERAL",
+                "0912345678 PEREZ LUIS ECUADOR PRESIDENTE",
+            ]),
+            "accionistas.pdf": _pdf_con_texto(["ACCIONISTAS", "0102030405 TORRES VEGA ANA ECUADOR 800,00"]),
+        }
+        limite = "----atlastest"
+        campos = {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), "return_tab": "admins"}
+        cuerpo = b"".join(
+            f"--{limite}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
+            for k, v in campos.items()
+        ) + b"".join(
+            (f"--{limite}\r\nContent-Disposition: form-data; name=\"archivo\"; filename=\"{nombre}\"\r\n"
+             "Content-Type: application/pdf\r\n\r\n").encode() + pdf + b"\r\n"
+            for nombre, pdf in pdfs.items()
+        ) + f"--{limite}--\r\n".encode()
+        conn = http.client.HTTPConnection(SERVER_HOST, SERVER_PORT, timeout=5)
+        conn.request("POST", "/auditor/radar/certificado", body=cuerpo, headers={
+            "Content-Type": f"multipart/form-data; boundary={limite}", "Cookie": self.cookie,
+        })
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 303)
+        self.assertIn("2+certificados+registrados", resp.getheader("Location", ""))
+        self.assertIn("2+administrador", resp.getheader("Location", ""))
+        self.assertIn("1+accionista", resp.getheader("Location", ""))
+
+        _, body = _get(page, self.cookie)
+        admins_pane = self._pane_content(body, "admins", "accionistas")
+        accionistas_pane = self._pane_content(body, "accionistas", "indicadores")
+        self.assertIn("Certificado registrado como evidencia", admins_pane)
+        import_id = re.search(r'name="import_id" value="(\d+)"', admins_pane).group(1)
+        self.assertIn(f'name="import_id" value="{import_id}"', accionistas_pane,
+                      "La misma revisión aparece en la pestaña Accionistas")
+
+        # Se importa el gerente (sin el presidente) y el accionista, en un solo envío.
+        status, location, _ = _post_raw("/auditor/radar/certificado/importar", {
+            "audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), "import_id": import_id,
+            "return_tab": "admins", "fecha_consulta": "2026-09-01",
+            "incluir_administradores": "0", "incluir_accionistas": "0",
+            "administradores_identificacion_0": "0102030405", "administradores_nombre_0": "TORRES VEGA ANA",
+            "administradores_cargo_0": "GERENTE GENERAL", "administradores_nacionalidad_0": "ECUADOR",
+            "accionistas_identificacion_0": "0102030405", "accionistas_nombre_0": "TORRES VEGA ANA",
+            "accionistas_capital_0": "800", "accionistas_participacion_porcentaje_0": "100",
+        }, self.cookie)
+        self.assertEqual(status, 303)
+        self.assertIn("Importados+1+administrador", location)
+        self.assertIn("1+accionista", location)
+        with connect() as conn:
+            admins = list(conn.execute(
+                "SELECT nombre, cargo, fuente FROM company_administrators WHERE audit_id = ?", (audit_id,)))
+            socios = list(conn.execute(
+                "SELECT nombre, participacion_porcentaje, fuente FROM company_shareholders WHERE audit_id = ?",
+                (audit_id,)))
+        fuente = "Supercias — certificado de nómina (PDF adjunto)"
+        self.assertEqual([(r["nombre"], r["cargo"], r["fuente"]) for r in admins],
+                         [("TORRES VEGA ANA", "GERENTE GENERAL", fuente)])
+        self.assertEqual([(r["nombre"], r["participacion_porcentaje"], r["fuente"]) for r in socios],
+                         [("TORRES VEGA ANA", 100.0, fuente)])
+
     def test_complete_audit_via_ui_forms_can_generate_summary(self):
-        """Flujo feliz completo, exclusivamente vía las rutas/controles que la
-        UI expone: cubre la regresión donde no existía forma de marcar
-        'Fuente SRI/Supercias consultada' desde la interfaz (hallazgo crítico
-        del informe de arquitectura — tab_fuentes.py se eliminó sin dejar
-        reemplazo en commit 7b80504). El expediente demo se crea y limpia en
-        la propia prueba para no depender de IDs o asignaciones persistentes."""
+        """Flujo feliz completo del levantamiento de información, exclusivamente
+        vía las rutas y controles que la UI expone: marcar fuentes consultadas,
+        completar los bloques 1 a 6, revisar validaciones y generar el resumen.
+        También comprueba que una alerta crítica bloquea el resumen hasta que
+        el auditor registra su tratamiento. Usa un RUC ficticio para no escribir
+        ejercicios financieros de un cliente real; el expediente se crea y
+        limpia en la propia prueba."""
+        ruc = "0999999999001"
         with connect() as conn:
             auditor_id = conn.execute(
                 "SELECT id FROM users WHERE username = 'auditor'"
@@ -269,9 +365,11 @@ class TestHTTPAuditorFlow(unittest.TestCase):
             admin_id = conn.execute(
                 "SELECT id FROM users WHERE username = 'admin'"
             ).fetchone()["id"]
+            if conn.execute("SELECT COUNT(*) FROM financial_statements WHERE ruc = ?", (ruc,)).fetchone()[0]:
+                self.skipTest("La base local ya tiene ejercicios del RUC de prueba")
 
         audit_id = create_company_audit(
-            f"Empresa flujo HTTP {time.time_ns()}", DEMO_RUC, "Cuenca",
+            f"Empresa flujo HTTP {time.time_ns()}", ruc, "Cuenca",
             "Servicios de alojamiento", "2026", auditor_id, admin_id,
         )
         with connect() as conn:
@@ -281,48 +379,269 @@ class TestHTTPAuditorFlow(unittest.TestCase):
 
         def cleanup_company() -> None:
             with connect() as conn:
+                conn.execute("DELETE FROM financial_statements WHERE ruc = ?", (ruc,))
                 conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
 
         self.addCleanup(cleanup_company)
+        page = f"/auditor/radar?audit_id={audit_id}&tab=resumen"
 
+        def post(path: str, fields: dict) -> str:
+            status, location, _ = _post_raw(
+                path, {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), **fields}, self.cookie,
+            )
+            self.assertEqual(status, 303, path)
+            self.assertNotIn("err=", location, f"{path} rechazó {fields}: {location}")
+            return location
+
+        # Fuentes guiadas SRI y Supercias marcadas desde sus pestañas.
         _, body = _get(f"/auditor/radar?audit_id={audit_id}&tab=sri", self.cookie)
         sri_pane = self._pane_content(body, "sri", "supercias")
         sup_pane = self._pane_content(body, "supercias", "ubicacion")
-
         sri_match = re.search(r'action="/auditor/radar/source-check".*?check_id" value="(\d+)"', sri_pane, re.S)
         sup_match = re.search(r'action="/auditor/radar/source-check".*?check_id" value="(\d+)"', sup_pane, re.S)
         self.assertIsNotNone(sri_match, "El tab SRI debe tener un control para marcar la fuente como consultada")
         self.assertIsNotNone(sup_match, "El tab Supercias debe tener un control para marcar la fuente como consultada")
-
-        csrf_token = _csrf_token(f"/auditor/radar?audit_id={audit_id}&tab=sri", self.cookie)
         for check_id, tab in ((sri_match.group(1), "sri"), (sup_match.group(1), "supercias")):
-            status, location, _ = _post_raw(
-                "/auditor/radar/source-check",
-                {
-                    "audit_id": str(audit_id), "check_id": check_id, "accion": "consultar",
-                    "return_tab": tab, "observacion": "Verificado en prueba", "_csrf": csrf_token,
-                },
-                self.cookie,
-            )
-            self.assertEqual(status, 303)
-            self.assertIn(f"tab={tab}", location)
+            post("/auditor/radar/source-check", {
+                "check_id": check_id, "accion": "consultar", "return_tab": tab,
+                "observacion": "Verificado en prueba",
+            })
 
-        _, resumen_body = _get(f"/auditor/radar?audit_id={audit_id}&tab=resumen", self.cookie)
-        self.assertIn("Resumen habilitado", resumen_body,
-                      "Tras marcar SRI y Supercias como consultadas, el resumen debe habilitarse")
-        self.assertIn('action="/auditor/radar/summary"', resumen_body)
+        _, resumen_body = _get(page, self.cookie)
+        self.assertIn("openModal('summaryPendingModal')", resumen_body,
+                      "Con datos pendientes, generar el resumen abre el modal de pendientes")
+        self.assertNotIn("Validaciones cruzadas y alertas", resumen_body)
+        self.assertNotIn("Resumen bloqueado", resumen_body)
 
-        summary_csrf = _csrf_token(f"/auditor/radar?audit_id={audit_id}&tab=resumen", self.cookie)
+        # Sin confirmar, un POST directo sigue rechazado; confirmado, se genera
+        # y el resumen deja constancia de lo pendiente.
         status, location, _ = _post_raw(
-            "/auditor/radar/summary",
-            {"audit_id": str(audit_id), "_csrf": summary_csrf},
+            "/auditor/radar/summary", {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie)},
+            self.cookie,
+        )
+        self.assertIn("err=", location)
+        location = post("/auditor/radar/summary", {"confirmar_pendientes": "1"})
+        self.assertIn("pendiente", unquote_plus(location))
+        with connect() as conn:
+            borrador = conn.execute(
+                "SELECT generated_summary FROM research_notes WHERE audit_id = ?", (audit_id,)
+            ).fetchone()["generated_summary"]
+        self.assertIn("Obligatorio:", borrador)
+
+        # Bloques 1 a 6 del levantamiento.
+        post("/auditor/radar/profile", {
+            "return_tab": "sri", "razon_social_sri": "EMPRESA PRUEBA CIA. LTDA",
+            "estado_contribuyente": "ACTIVO", "tipo_contribuyente": "SOCIEDAD", "regimen": "GENERAL",
+            "agente_retencion": "SI", "fecha_inicio_actividades": "2011-08-24",
+            "representante_legal_sri": "TORRES ANA", "contribuyente_fantasma": "NO",
+            "transacciones_inexistentes": "NO", "fecha_consulta": "2026-09-01",
+        })
+        post("/auditor/radar/profile", {
+            "return_tab": "supercias", "razon_social_supercias": "EMPRESA PRUEBA CIA. LTDA.",
+            "expediente_supercias": "141528", "fecha_constitucion": "2011-08-24",
+            "tipo_compania": "RESPONSABILIDAD LIMITADA", "situacion_legal": "ACTIVA",
+            "objeto_social": "Servicios de alojamiento", "fecha_consulta": "2026-09-01",
+        })
+        post("/auditor/radar/profile", {
+            "return_tab": "ubicacion", "provincia": "AZUAY", "ciudad": "CUENCA",
+            "calle": "AV. DEL ESTADIO", "numero": "S/N", "interseccion": "FLORENCIA ASTUDILLO",
+            "fecha_consulta": "2026-09-01",
+        })
+        for nombre, cargo in (("Ana Torres", "Gerente General"), ("Luis Perez", "Presidente")):
+            post("/auditor/radar/administrator", {
+                "action": "add", "nombre": nombre, "cargo": cargo, "tipo_identificacion": "cedula",
+                "identificacion": "0102030400", "fecha_consulta": "2026-09-01",
+            })
+        post("/auditor/radar/shareholder", {
+            "action": "add", "nombre": "Ana Torres", "tipo_identificacion": "cedula",
+            "identificacion": "0102030400", "participacion_porcentaje": "100", "fecha_consulta": "2026-09-01",
+        })
+        post("/auditor/radar/financial-year", {"anio_fiscal": "2025"})
+        post("/auditor/radar/financial", {
+            "anio_fiscal": "2025", "activo_total": "100", "pasivo_total": "60", "patrimonio_neto": "40",
+            "ingresos_401": "50", "otros_ingresos_403": "0", "costo_ventas_501": "20", "gastos_502": "25",
+            "utilidad_neta_707": "3", "fecha_consulta": "2026-09-01",
+        })
+
+        _, resumen_body = _get(page, self.cookie)
+        self.assertIn('action="/auditor/radar/summary"', resumen_body)
+        self.assertNotIn("Obligatorios pendientes", resumen_body, "Solo quedan recomendaciones")
+
+        # Una alerta crítica bloquea el resumen hasta registrar su tratamiento.
+        post("/auditor/radar/profile", {"return_tab": "sri", "contribuyente_fantasma": "SI"})
+        _, body = _get(page, self.cookie)
+        self.assertIn('action="/auditor/radar/alert-treatment"', self._pane_content(body, "sri", "supercias"),
+                      "La alerta crítica y su tratamiento se registran en la pestaña SRI")
+        status, location, _ = _post_raw(
+            "/auditor/radar/summary", {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie)},
             self.cookie,
         )
         self.assertEqual(status, 303)
+        self.assertIn("err=", location)
+        self.assertIn("Tratamiento", unquote_plus(location))
+        post("/auditor/radar/alert-treatment", {
+            "codigo": "ALERTA_FANTASMA",
+            "observacion": "Se solicitará al cliente la resolución del SRI y se evaluará continuidad.",
+        })
+
+        location = post("/auditor/radar/summary", {})
         self.assertIn("msg=Resumen+generado", location)
+        with connect() as conn:
+            summary = conn.execute(
+                "SELECT generated_summary FROM research_notes WHERE audit_id = ?", (audit_id,)
+            ).fetchone()["generated_summary"]
+        self.assertIn("Tratamiento del auditor: Se solicitará al cliente", summary)
+        self.assertIn("Razón social SRI = Supercias: coincide", summary)
+
+    def test_administrator_capture_validates_and_records_source(self):
+        """Fase 3: la identificación se valida en el servidor, la fecha de
+        consulta no puede ser futura y cada cambio queda en la trazabilidad."""
+        with connect() as conn:
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+        audit_id = create_company_audit(
+            f"Empresa trazabilidad {time.time_ns()}", "", "Cuenca", "", "2025", auditor_id, admin_id,
+        )
+        with connect() as conn:
+            company_id = conn.execute("SELECT company_id FROM audits WHERE id = ?", (audit_id,)).fetchone()["company_id"]
+
+        def cleanup_company() -> None:
+            with connect() as conn:
+                conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+
+        self.addCleanup(cleanup_company)
+        page = f"/auditor/radar?audit_id={audit_id}&tab=admins"
+
+        def post(fields: dict) -> str:
+            status, location, _ = _post_raw(
+                "/auditor/radar/administrator",
+                {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), **fields},
+                self.cookie,
+            )
+            self.assertEqual(status, 303)
+            return location
+
+        base = {"action": "add", "nombre": "Ana Torres", "cargo": "Presidente", "tipo_identificacion": "cedula"}
+        self.assertIn("err=", post({**base, "identificacion": "12345"}))
+        tomorrow = (date.today() + timedelta(days=1)).isoformat()
+        self.assertIn("err=", post({**base, "identificacion": "0102030400", "fecha_consulta": tomorrow}))
+        with connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM company_administrators WHERE audit_id = ?", (audit_id,)
+            ).fetchone()[0]
+        self.assertEqual(count, 0, "Una entrada rechazada no debe guardarse")
+
+        self.assertIn("msg=", post({**base, "identificacion": "", "fecha_consulta": "2026-09-01"}))
+        with connect() as conn:
+            admin = conn.execute(
+                "SELECT * FROM company_administrators WHERE audit_id = ?", (audit_id,)
+            ).fetchone()
+        self.assertIn("msg=", post({
+            "action": "update", "administrator_id": str(admin["id"]), "tipo_identificacion": "cedula",
+            "identificacion": "0102030400", "nacionalidad": "Ecuatoriana", "fecha_consulta": "2026-09-02",
+        }))
+        with connect() as conn:
+            admin = conn.execute("SELECT * FROM company_administrators WHERE id = ?", (admin["id"],)).fetchone()
+            history = conn.execute(
+                "SELECT registrado_por, fecha_consulta FROM data_provenance WHERE audit_id = ? ORDER BY id",
+                (audit_id,),
+            ).fetchall()
+        self.assertEqual(admin["identificacion"], "0102030400")
+        self.assertEqual([h["fecha_consulta"] for h in history], ["2026-09-01", "2026-09-02"])
+        self.assertTrue(all(h["registrado_por"] == auditor_id for h in history))
+
+    def test_financial_statements_require_fiscal_year_and_keep_each_year(self):
+        """Fase 4: sin año fiscal no se registran cifras; cada ejercicio se
+        guarda aparte y no se sobrescribe."""
+        ruc = "0190314014001"
+        with connect() as conn:
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+            previous = conn.execute(
+                "SELECT COUNT(*) FROM financial_statements WHERE ruc = ?", (ruc,)
+            ).fetchone()[0]
+        if previous:
+            self.skipTest("La base local ya tiene ejercicios de este RUC; la prueba no los modifica")
+        audit_id = create_company_audit(
+            f"Empresa financiero {time.time_ns()}", ruc, "Cuenca", "", "2025", auditor_id, admin_id,
+        )
+        with connect() as conn:
+            company_id = conn.execute("SELECT company_id FROM audits WHERE id = ?", (audit_id,)).fetchone()["company_id"]
+
+        def cleanup() -> None:
+            with connect() as conn:
+                conn.execute("DELETE FROM financial_statements WHERE ruc = ?", (ruc,))
+                conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+
+        self.addCleanup(cleanup)
+        page = f"/auditor/radar?audit_id={audit_id}&tab=indicadores"
+
+        def post(path: str, fields: dict) -> str:
+            status, location, _ = _post_raw(
+                path, {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), **fields}, self.cookie,
+            )
+            self.assertEqual(status, 303)
+            return location
+
+        self.assertIn("err=", post("/auditor/radar/financial", {"activo_total": "100"}))
+        self.assertIn("err=", post("/auditor/radar/financial-year", {"anio_fiscal": str(date.today().year + 1)}))
+        self.assertIn("msg=", post("/auditor/radar/financial-year", {"anio_fiscal": "2025"}))
+        self.assertIn("msg=", post("/auditor/radar/financial", {"anio_fiscal": "2025", "activo_total": "110"}))
+        self.assertIn("msg=", post("/auditor/radar/financial", {"anio_fiscal": "2024", "activo_total": "100"}))
+
+        with connect() as conn:
+            rows = dict(conn.execute(
+                "SELECT anio_fiscal, activo_total FROM financial_statements WHERE ruc = ?", (ruc,)
+            ).fetchall())
+        self.assertEqual(rows, {2025: 110.0, 2024: 100.0})
+        _, body = _get(page, self.cookie)
+        self.assertIn("Variación 2025 vs 2024", body)
+
+    def test_saving_one_tab_does_not_erase_another(self):
+        """Regresión: /auditor/radar/profile guardaba perfil y ubicación con lo
+        que llegara en el formulario, así que guardar Ubicación vaciaba SRI y
+        Supercias, y guardar SRI vaciaba la ubicación."""
+        with connect() as conn:
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+        audit_id = create_company_audit(
+            f"Empresa guardado parcial {time.time_ns()}", "", "Cuenca", "", "2025", auditor_id, admin_id,
+        )
+        with connect() as conn:
+            company_id = conn.execute("SELECT company_id FROM audits WHERE id = ?", (audit_id,)).fetchone()["company_id"]
+
+        def cleanup_company() -> None:
+            with connect() as conn:
+                conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+
+        self.addCleanup(cleanup_company)
+
+        page = f"/auditor/radar?audit_id={audit_id}&tab=sri"
+        forms = [
+            {"return_tab": "sri", "estado_contribuyente": "ACTIVO", "regimen": "GENERAL"},
+            {"return_tab": "supercias", "situacion_legal": "ACTIVA", "plazo_social": "2061-08-24"},
+            {"return_tab": "ubicacion", "calle": "AV. DEL ESTADIO", "numero": "S/N"},
+        ]
+        for fields in forms:
+            status, _, _ = _post_raw(
+                "/auditor/radar/profile",
+                {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), **fields},
+                self.cookie,
+            )
+            self.assertEqual(status, 303)
+
+        with connect() as conn:
+            profile = conn.execute("SELECT * FROM company_profiles WHERE audit_id = ?", (audit_id,)).fetchone()
+            location = conn.execute("SELECT * FROM company_locations WHERE audit_id = ?", (audit_id,)).fetchone()
+        self.assertEqual(profile["estado_contribuyente"], "ACTIVO")
+        self.assertEqual(profile["regimen"], "GENERAL")
+        self.assertEqual(profile["situacion_legal"], "ACTIVA")
+        self.assertEqual(profile["plazo_social"], "2061-08-24")
+        self.assertEqual(location["calle"], "AV. DEL ESTADIO")
+        self.assertEqual(location["numero"], "S/N")
 
 
-@unittest.skipUnless(_server_available(), "Servidor Atlas no disponible en localhost:8765 — inicia con: python3 app.py")
+@unittest.skipUnless(_server_available(), _SKIP_REASON)
 class TestHTTPAdminFlow(unittest.TestCase):
     """Flujo completo del jefe auditor: login → dashboard → aislamiento de roles."""
 
@@ -344,6 +663,55 @@ class TestHTTPAdminFlow(unittest.TestCase):
         """Gestión de usuarios del admin debe responder 200."""
         status, _ = _get("/admin/users", self.cookie)
         self.assertEqual(status, 200)
+
+    def test_archivar_y_restaurar_empresa(self):
+        """El admin archiva una empresa: sale del directorio y el auditor pierde
+        el acceso (ver y editar); el admin la sigue viendo y puede restaurarla."""
+        with connect() as conn:
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+        nombre = f"Empresa archivable {time.time_ns()}"
+        audit_id = create_company_audit(nombre, "", "Cuenca", "", "2025", auditor_id, admin_id)
+
+        def cleanup_company() -> None:
+            with connect() as conn:
+                conn.execute("DELETE FROM companies WHERE id = "
+                             "(SELECT company_id FROM audits WHERE id = ?)", (audit_id,))
+
+        self.addCleanup(cleanup_company)
+        auditor_cookie = _login("auditor", "auditor123")
+        radar = f"/auditor/radar?audit_id={audit_id}"
+
+        status, location, _ = _post_raw("/admin/companies/archive", {
+            "audit_id": str(audit_id), "archive_reason": "Registrada por error",
+            "_csrf": _csrf_token("/admin/companies", self.cookie),
+        }, self.cookie)
+        self.assertEqual(status, 303)
+        self.assertIn("msg=Empresa+archivada", location)
+
+        _, body = _get("/admin/companies", self.cookie)
+        activas, archivadas = body.split("Empresas archivadas (")
+        self.assertNotIn(nombre, activas)
+        self.assertIn(nombre, archivadas)
+        self.assertIn("Registrada por error", archivadas)
+        _, body = _get(f"/admin/audit?audit_id={audit_id}", self.cookie)
+        self.assertIn("Empresa archivada", body)
+
+        _, body = _get("/auditor", auditor_cookie)
+        self.assertNotIn(nombre, body)
+        _, body = _get(radar, auditor_cookie)
+        self.assertIn("no disponible", body)
+        status, _, _ = _post_raw("/auditor/radar/profile", {
+            "audit_id": str(audit_id), "_csrf": _csrf_token("/auditor", auditor_cookie), "razon_social": "X",
+        }, auditor_cookie)
+        self.assertEqual(status, 403, "El auditor no puede editar una empresa archivada")
+
+        status, location, _ = _post_raw("/admin/companies/restore", {
+            "audit_id": str(audit_id), "_csrf": _csrf_token("/admin/companies", self.cookie),
+        }, self.cookie)
+        self.assertIn("msg=Empresa+restaurada", location)
+        _, body = _get("/auditor", auditor_cookie)
+        self.assertIn(nombre, body)
 
     def test_admin_cannot_post_to_auditor_search(self):
         """
@@ -472,7 +840,7 @@ class TestHTTPAdminFlow(unittest.TestCase):
         self.assertIn("propio+usuario", location)
 
 
-@unittest.skipUnless(_server_available(), "Servidor Atlas no disponible en localhost:8765 — inicia con: python3 app.py")
+@unittest.skipUnless(_server_available(), _SKIP_REASON)
 class TestHTTPSuperciasFlow(unittest.TestCase):
     """Fase 5 — pruebas integrales del catálogo local de Supercias y del
     flujo asistido de certificados, end-to-end contra el servidor real.

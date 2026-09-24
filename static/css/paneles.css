@@ -1,0 +1,75 @@
+/* ============================================================
+   paneles.css — Paneles del jefe y del auditor: progreso de expedientes y gestión de usuarios.
+   ============================================================ */
+
+/* ── Checklist status in auditor dashboard ──────────────── */
+.mini-progress {
+  height: 6px;
+  background: var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  width: 100px;
+  margin-top: 6px;
+}
+
+.mini-progress-fill {
+  height: 100%;
+  background: var(--grad-primary);
+  border-radius: 999px;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Ciclo de vida de usuarios ───────────────────────────── */
+.user-state-meta,
+.assignment-state {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.assignment-state .badge { margin-right: 4px; }
+.assignment-state + form { margin-top: 8px !important; }
+.user-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 76px;
+  min-height: 34px;
+}
+.user-inline-form { margin: 0; }
+/* Directorio de empresas: si la columna no alcanza, archivar pasa debajo de Seguimiento. */
+.company-actions { flex-wrap: wrap; }
+.user-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+.user-action-btn svg { width: 16px; height: 16px; }
+.user-action-warning { color: var(--amber-700); }
+.user-action-warning:hover { background: var(--amber-50); border-color: var(--amber-700); }
+.user-action-success { color: var(--green-700); }
+.user-action-success:hover { background: var(--green-50); border-color: var(--green-700); }
+.user-action-danger { color: var(--red-700); }
+.user-action-danger:hover { background: var(--red-50); border-color: var(--red-700); }
+.user-no-actions { color: var(--muted); }
+.user-confirm-warning {
+  border-color: var(--amber-700);
+  background: var(--amber-700);
+  color: white;
+}
+.user-confirm-danger {
+  border-color: var(--red-700);
+  background: var(--red-700);
+  color: white;
+}
+#deleteModal textarea { min-height: 84px; margin-bottom: 20px; }

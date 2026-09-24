@@ -1,0 +1,53 @@
+/* ============================================================
+   utilidades.css — Utilidades y modo solo lectura del jefe. Va último a propósito:
+   sus reglas deben ganar sobre los componentes y las pestañas.
+   ============================================================ */
+
+/* ── Utility ────────────────────────────────────────────── */
+.mt-0 { margin-top: 0; }
+.mb-0 { margin-bottom: 0; }
+.mb-16 { margin-bottom: 16px; }
+.flex { display: flex; }
+
+/* ── Readonly Mode (Admin) ───────────────────────────────── */
+.readonly-mode form button[type="submit"],
+.readonly-mode .actions {
+  display: none !important;
+}
+.readonly-mode input,
+.readonly-mode textarea,
+.readonly-mode select {
+  pointer-events: none;
+  background-color: var(--line-2) !important;
+  color: var(--muted) !important;
+  border-color: transparent !important;
+}
+
+/*
+ * Marca de agua de Auddit: centrada y nítida (sin desenfoque ni rotación),
+ * en escala de grises y muy baja opacidad para que se lea con claridad si
+ * uno se fija, pero sin competir con el contenido ni con el color de marca.
+ */
+body.has-auddit-bg {
+  position: relative;
+  overflow-x: hidden;
+  background-color: var(--bg-auddit);
+}
+
+body.has-auddit-bg::after {
+  content: "";
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(50vw, 560px);
+  height: min(50vw, 560px);
+  background-image: url("/static/logoauddit.jpeg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  opacity: 0.05;
+  pointer-events: none;
+  z-index: 0;
+  filter: grayscale(100%);
+}

@@ -6,9 +6,9 @@ from __future__ import annotations
 import sqlite3
 
 from database import list_admin_audits, list_auditors
-from ui.components import badge
-from ui.helpers import esc, form_value, csrf_input
-from ui.icons import SVG_ALERT, SVG_ARROW_RIGHT
+from ui.components import badge, modal
+from ui.helpers import esc, form_value, csrf_input, hidden_inputs
+from ui.icons import SVG_ALERT, SVG_ARCHIVE, SVG_ARROW_RIGHT, SVG_REFRESH
 from ui.layout import layout
 
 
@@ -16,6 +16,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     """Genera el HTML de la página de gestión de empresas."""
     auditors = list_auditors()
     audits = list_admin_audits()
+    archived = list_admin_audits(archived=True)
     err = form_value(query, "err")
 
     options = "".join(
@@ -49,9 +50,8 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
         if reassign_options:
             reassign_form = f"""
             <form method="post" action="/admin/companies/reassign" style="display:inline; margin:0;" title="Reasignar">
-              {csrf_input(csrf_token)}
-              <input type="hidden" name="audit_id" value="{a['id']}">
-              <select name="new_auditor_id" onchange="this.form.submit()" class="form-control form-control-sm" style="width:auto; display:inline-block; padding: 2px 4px; font-size: 12px;">
+              {hidden_inputs(csrf_token, audit_id=a['id'])}
+              <select name="new_auditor_id" onchange="this.form.submit()" style="width:auto; display:inline-block; padding: 2px 4px; font-size: 12px;">
                 <option value="" disabled selected>Reasignar...</option>
                 {reassign_options}
               </select>
@@ -68,12 +68,79 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
           <td>{esc(a['period'])}</td>
           <td>{auditor_label}{reassign_form}</td>
           <td>{badge(a['status'])}</td>
-          <td>
+          <td><div class="user-actions company-actions">
             <a class="btn btn-sm" href="/admin/audit?audit_id={a['id']}">{SVG_ARROW_RIGHT} Seguimiento</a>
-          </td>
+            <button type="button" class="user-action-btn user-action-warning"
+                    data-audit-id="{a['id']}" data-company-name="{esc(a['company_name'])}"
+                    title="Archivar empresa" aria-label="Archivar empresa"
+                    onclick="openArchiveModal(this)">{SVG_ARCHIVE}</button>
+          </div></td>
         </tr>""")
     
     rows_html = "".join(rows_html)
+
+    archived_rows = "".join(f"""<tr>
+          <td class="td-company">
+            <strong>{esc(a['company_name'])}</strong>
+            <span>RUC: {esc(a['ruc'] or '—')}</span>
+          </td>
+          <td>{esc(a['period'])}</td>
+          <td>{esc(a['auditor_name'])}</td>
+          <td>
+            <span class="badge badge-gray">Archivada</span>
+            <span class="user-state-meta">{esc(a['archived_at'][:16])} · por {esc(a['archived_by_name'] or 'Administrador')}</span>
+            <span class="user-state-meta">{esc(a['archive_reason'] or '')}</span>
+          </td>
+          <td><div class="user-actions company-actions">
+            <a class="btn btn-sm" href="/admin/audit?audit_id={a['id']}">{SVG_ARROW_RIGHT} Ver expediente</a>
+            <form method="post" action="/admin/companies/restore" class="user-inline-form">
+              {hidden_inputs(csrf_token, audit_id=a['id'])}
+              <button type="submit" class="user-action-btn user-action-success"
+                      title="Restaurar empresa" aria-label="Restaurar empresa">{SVG_REFRESH}</button>
+            </form>
+          </div></td>
+        </tr>""" for a in archived)
+    archived_panel = f"""
+      <div class="panel col-12">
+        <h2>Empresas archivadas ({len(archived)})</h2>
+        <p class="muted">No aparecen en los listados ni para el auditor. El expediente y su evidencia
+          se conservan; restaure la empresa para retomarla.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Empresa</th><th>Período</th><th>Auditor</th><th>Archivo</th><th>Acción</th></tr></thead>
+            <tbody>{archived_rows}</tbody>
+          </table>
+        </div>
+      </div>
+    """ if archived else ""
+
+    archive_modal = modal("archiveModal", "Archivar empresa", f"""
+        <div class="modal-desc">
+          <strong id="archiveCompanyName"></strong> dejará de aparecer en los listados y el auditor
+          asignado ya no podrá abrir el expediente. No se borra nada: el expediente, la evidencia y los
+          PDF adjuntos se conservan, y puede restaurarla desde "Empresas archivadas".
+        </div>
+        <form method="post" action="/admin/companies/archive" style="margin:0;">
+          {csrf_input(csrf_token)}
+          <input type="hidden" name="audit_id" id="archiveAuditId">
+          <label for="archiveReason">Motivo *</label>
+          <textarea id="archiveReason" name="archive_reason" minlength="5" maxlength="250"
+                    required placeholder="Ej. Registrada por error / cliente no continuó"></textarea>
+          <div class="modal-actions">
+            <button type="button" class="btn" onclick="closeModal('archiveModal')">Cancelar</button>
+            <button type="submit" class="btn user-confirm-warning">Archivar</button>
+          </div>
+        </form>
+    """) + """
+    <script>
+    function openArchiveModal(button) {
+      document.getElementById('archiveAuditId').value = button.dataset.auditId;
+      document.getElementById('archiveCompanyName').textContent = button.dataset.companyName;
+      document.getElementById('archiveReason').value = '';
+      openModal('archiveModal');
+    }
+    </script>
+    """
 
     content = f"""
     <div class="mb-16">
@@ -92,7 +159,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
             <label for="comp_ruc">RUC de la empresa *</label>
             <div style="display:flex; gap:8px;">
                 <input id="comp_ruc" name="ruc" placeholder="13 dígitos numéricos" maxlength="13" pattern="\\d{{13}}" title="El RUC debe tener exactamente 13 dígitos numéricos" required style="flex:1;">
-                <button type="button" id="btn-search-ruc" class="btn btn-secondary">Buscar</button>
+                <button type="button" id="btn-search-ruc" class="btn">Buscar</button>
             </div>
             <div class="field-hint" id="ruc-hint">Ingrese el RUC para autocompletar los datos.</div>
           </div>
@@ -178,7 +245,9 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
           </table>
         </div>
       </div>
+      {archived_panel}
     </div>
+    {archive_modal}
     """
 
     flash = form_value(query, "msg")

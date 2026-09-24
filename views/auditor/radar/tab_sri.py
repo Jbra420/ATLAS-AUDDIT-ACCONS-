@@ -1,14 +1,90 @@
 """views/auditor/radar/tab_sri.py — Tab de identidad tributaria (SRI)."""
 from __future__ import annotations
-from ui.helpers import esc, csrf_input
+from ui.helpers import esc, hidden_inputs
 from ui.icons import SVG_EXTERNAL, SVG_SAVE
 from providers.sri import SriProvider
 from services.rowutil import row_get
-from ui.components import info_card as _ic, source_check_control
+from services.trazabilidad import BLOQUE_SRI, etiqueta_traza, ultimo_por_campo
+from ui.components import (
+    edit_panel,
+    form_field,
+    info_card as _ic,
+    provenance_history,
+    source_check_control,
+)
+
+# (campo, etiqueta, clase CSS de la tarjeta) — bloque 1 del levantamiento.
+CAMPOS = (
+    ("razon_social_sri", "Razón social (SRI)", "full-width"),
+    ("estado_contribuyente", "Estado contribuyente", ""),
+    ("tipo_contribuyente", "Tipo contribuyente", ""),
+    ("regimen", "Régimen", ""),
+    ("agente_retencion", "Agente de retención", ""),
+    ("fecha_inicio_actividades", "Inicio de actividades", ""),
+    ("obligado_contabilidad", "Obligado contabilidad", ""),
+    ("contribuyente_especial", "Contribuyente especial", ""),
+    ("contribuyente_fantasma", "Contribuyente fantasma", ""),
+    ("transacciones_inexistentes", "Transacciones inexistentes", ""),
+    ("fecha_actualizacion", "Última actualización", ""),
+    ("representante_legal_sri", "Representante legal (SRI)", ""),
+    ("ciiu_sri", "Código CIIU (SRI)", ""),
+    ("actividad_economica", "Actividad económica", "full-width"),
+)
+ETIQUETAS = {campo: etiqueta for campo, etiqueta, _css in CAMPOS} | {"categoria": "Clase de contribuyente (código)"}
+PLACEHOLDERS = {
+    "estado_contribuyente": "ACTIVO / SUSPENDIDO",
+    "tipo_contribuyente": "SOCIEDAD",
+    "regimen": "GENERAL",
+    "obligado_contabilidad": "SI / NO",
+    "agente_retencion": "SI / NO",
+    "contribuyente_especial": "SI / NO",
+    "ciiu_sri": "I551001",
+}
+# Alertas del SRI que se capturan con un selector Sí / No / Sin consultar.
+_SI_NO = {"contribuyente_fantasma", "transacciones_inexistentes"}
 
 
 def _pval(profile, key: str) -> str:
     return str(row_get(profile, key, "")).strip()
+
+
+def _si_no_select(name: str, current: str) -> str:
+    options = "".join(
+        f'<option value="{value}"{" selected" if current == value else ""}>{label}</option>'
+        for value, label in (("", "Sin consultar"), ("NO", "No"), ("SI", "Sí"))
+    )
+    return f'<select name="{name}">{options}</select>'
+
+
+def _critical_alerts(alertas: list[dict], audit_id: int, read_only: bool, csrf_token: str) -> str:
+    """Alertas críticas del SRI (contribuyente fantasma o transacciones
+    inexistentes) con el tratamiento que el auditor debe registrar."""
+    items = ""
+    for alerta in (a for a in alertas if a["nivel"] == "critica"):
+        tratamiento = alerta.get("tratamiento") or ""
+        body = (
+            f'<p class="validation-treatment"><strong>Tratamiento del auditor:</strong> {esc(tratamiento)}</p>'
+            if tratamiento else
+            '<p class="validation-treatment">Tratamiento pendiente de registro por el auditor.</p>'
+            if read_only else ""
+        )
+        if not read_only:
+            label = "Actualizar tratamiento" if tratamiento else "Registrar tratamiento"
+            body += f"""
+            <form method="post" action="/auditor/radar/alert-treatment" class="validation-treatment-form">
+              {hidden_inputs(csrf_token, audit_id=audit_id, codigo=alerta["codigo"])}
+              <label>{label}</label>
+              <textarea name="observacion" minlength="15" maxlength="2000" required>{esc(tratamiento)}</textarea>
+              <button type="submit" class="btn btn-sm btn-primary">{SVG_SAVE} Guardar tratamiento</button>
+            </form>
+            """
+        items += f"""
+        <li class="validation-alert is-critica">
+          <div><span class="badge badge-red">Alerta crítica</span> {esc(alerta["mensaje"])}</div>
+          {body}
+        </li>
+        """
+    return f'<ul class="validation-alerts">{items}</ul>' if items else ""
 
 
 def build(
@@ -19,74 +95,48 @@ def build(
     read_only: bool = False,
     csrf_token: str = "",
     source_check: object | None = None,
+    provenance: list | None = None,
+    alertas: list[dict] | None = None,
 ) -> str:
     ruc = audit["ruc"] or ""
     company_name = audit["company_name"]
     pv = lambda k: _pval(profile, k)
     check_html = "" if read_only else source_check_control(audit_id, source_check, csrf_token, return_tab="sri")
+    historial = [r for r in provenance or [] if row_get(r, "bloque") == BLOQUE_SRI]
+    trazas = ultimo_por_campo(historial)
 
     sri_links_html = ""
     if not read_only:
         for lnk in SriProvider().get_links(ruc, company_name)[:2]:
             sri_links_html += f'<a class="btn-ext-link" href="{esc(lnk.url)}" target="_blank" rel="noopener">{SVG_EXTERNAL} {esc(lnk.name)}</a>'
 
+    edit_fields = "".join(
+        form_field(
+            campo, etiqueta, pv(campo), col="col-12" if css else "col-6",
+            placeholder=PLACEHOLDERS.get(campo, ""),
+        ) if campo not in _SI_NO else
+        f'<div class="col-6"><label>{esc(etiqueta)}</label>{_si_no_select(campo, pv(campo))}</div>'
+        for campo, etiqueta, css in CAMPOS if campo != "fecha_actualizacion"
+    )
     edit_block = "" if read_only else f"""
     <div class="external-links-row">{sri_links_html}</div>
     <hr class="section-divider">
-    <details style="margin-top:0">
-      <summary style="font-size:13px;font-weight:600;color:var(--accent-base);cursor:pointer;margin-bottom:14px;">
-        ✎ Editar datos SRI manualmente
-      </summary>
-      <form method="post" action="/auditor/radar/profile">
-        {csrf_input(csrf_token)}
-        <input type="hidden" name="audit_id" value="{audit_id}">
-        <input type="hidden" name="return_tab" value="sri">
-        <div class="grid">
-          <div class="col-6"><label>Estado contribuyente</label>
-            <input name="estado_contribuyente" value="{esc(pv('estado_contribuyente'))}" placeholder="ACTIVO / SUSPENDIDO"></div>
-          <div class="col-6"><label>Tipo contribuyente</label>
-            <input name="tipo_contribuyente" value="{esc(pv('tipo_contribuyente'))}" placeholder="SOCIEDAD"></div>
-          <div class="col-6"><label>Régimen</label>
-            <input name="regimen" value="{esc(pv('regimen'))}" placeholder="GENERAL"></div>
-          <div class="col-6"><label>Obligado contabilidad</label>
-            <input name="obligado_contabilidad" value="{esc(pv('obligado_contabilidad'))}" placeholder="SI / NO"></div>
-          <div class="col-6"><label>Agente retención</label>
-            <input name="agente_retencion" value="{esc(pv('agente_retencion'))}" placeholder="SI / NO"></div>
-          <div class="col-6"><label>Contribuyente especial</label>
-            <input name="contribuyente_especial" value="{esc(pv('contribuyente_especial'))}" placeholder="SI / NO"></div>
-          <div class="col-6"><label>Fecha inicio actividades</label>
-            <input name="fecha_inicio_actividades" value="{esc(pv('fecha_inicio_actividades'))}"></div>
-          <div class="col-6"><label>Representante legal</label>
-            <input name="representante_legal" value="{esc(pv('representante_legal'))}"></div>
-          <div class="col-12"><label>Actividad económica</label>
-            <input name="actividad_economica" value="{esc(pv('actividad_economica'))}"></div>
-          <input type="hidden" name="ruc" value="{esc(ruc)}">
-          <input type="hidden" name="razon_social" value="{esc(company_name)}">
-          {"".join(f'<input type="hidden" name="{k}" value="{esc(pv(k))}">' for k in ["expediente_supercias","nacionalidad","tipo_compania","situacion_legal","fecha_constitucion","plazo_social","oficina_control","objeto_social","categoria","fecha_actualizacion","telefono","representante_cargo","capital_suscrito","ciiu_nivel1","ciiu_nivel6","ultimo_anio_balance"])}
-        </div>
-        <div class="actions" style="justify-content:flex-end;margin-top:12px;">
-          <button type="submit" class="btn btn-primary btn-sm">{SVG_SAVE} Guardar SRI</button>
-        </div>
-      </form>
-    </details>
+    {edit_panel("Editar datos SRI manualmente", csrf_token, audit_id, "sri", edit_fields, "Guardar SRI")}
     """
 
+    cards = "".join(
+        _ic(etiqueta, pv(campo), css, trace=etiqueta_traza(trazas.get((BLOQUE_SRI, campo))))
+        for campo, etiqueta, css in CAMPOS
+    )
     return f"""
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <h3 style="margin:0;font-size:15px;">Identidad tributaria — SRI</h3>
       {check_html}
     </div>
+    {_critical_alerts(alertas or [], audit_id, read_only, csrf_token)}
     <div class="info-grid">
-      {_ic("Estado contribuyente", pv("estado_contribuyente"))}
-      {_ic("Tipo contribuyente", pv("tipo_contribuyente"))}
-      {_ic("Régimen", pv("regimen"))}
-      {_ic("Obligado contabilidad", pv("obligado_contabilidad"))}
-      {_ic("Agente de retención", pv("agente_retencion"))}
-      {_ic("Contribuyente especial", pv("contribuyente_especial"))}
-      {_ic("Inicio de actividades", pv("fecha_inicio_actividades"))}
-      {_ic("Última actualización", pv("fecha_actualizacion"))}
-      {_ic("Representante legal", pv("representante_legal"))}
-      {_ic("Actividad económica", pv("actividad_economica"), "full-width")}
+      {cards}
     </div>
     {edit_block}
+    {provenance_history(historial, ETIQUETAS, "Historial de datos SRI")}
     """

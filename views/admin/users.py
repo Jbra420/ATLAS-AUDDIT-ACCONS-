@@ -6,7 +6,8 @@ from __future__ import annotations
 import sqlite3
 
 from database import list_users
-from ui.helpers import esc, form_value, csrf_input
+from ui.components import modal
+from ui.helpers import esc, form_value, csrf_input, hidden_inputs
 from ui.icons import SVG_ALERT, SVG_PAUSE, SVG_REFRESH, SVG_TRASH
 from ui.layout import layout
 
@@ -49,8 +50,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
             if not is_self:
                 actions_html = f"""
                   <form method="post" action="/admin/users/reactivate" class="user-inline-form">
-                    {csrf_input(csrf_token)}
-                    <input type="hidden" name="user_id" value="{u['id']}">
+                    {hidden_inputs(csrf_token, user_id=u['id'])}
                     <button type="submit" class="user-action-btn user-action-success"
                             title="Reactivar usuario" aria-label="Reactivar usuario">{SVG_REFRESH}</button>
                   </form>
@@ -68,10 +68,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
           <td><div class="user-actions">{actions_html}</div></td>
         </tr>"""
 
-    modal_html = f"""
-    <div id="deactivateModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="deactivateModalTitle">
-      <div class="modal-content">
-        <div class="modal-title" id="deactivateModalTitle">Desactivar usuario</div>
+    modal_html = modal("deactivateModal", "Desactivar usuario", f"""
         <div class="modal-desc">
           Se suspenderá el acceso de <strong id="deactivateUserName"></strong> y se cerrarán sus sesiones.
           Sus empresas, expedientes y registros se conservarán sin cambios.
@@ -80,16 +77,11 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
           {csrf_input(csrf_token)}
           <input type="hidden" name="user_id" id="deactivateUserId">
           <div class="modal-actions">
-            <button type="button" class="btn btn-outline" onclick="closeModal('deactivateModal')">Cancelar</button>
+            <button type="button" class="btn" onclick="closeModal('deactivateModal')">Cancelar</button>
             <button type="submit" class="btn user-confirm-warning">Desactivar</button>
           </div>
         </form>
-      </div>
-    </div>
-
-    <div id="deleteModal" class="modal-overlay">
-      <div class="modal-content">
-        <div class="modal-title">Registrar baja definitiva</div>
+    """) + modal("deleteModal", "Registrar baja definitiva", f"""
         <div class="modal-desc">
           <strong id="deleteUserName"></strong> no podrá reactivarse. La cuenta no se borrará:
           sus empresas, expedientes y autoría permanecerán en el historial.
@@ -101,40 +93,23 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
           <textarea id="deletionReason" name="deletion_reason" minlength="5" maxlength="250"
                     required placeholder="Ej. Finalización de relación laboral"></textarea>
           <div class="modal-actions">
-            <button type="button" class="btn btn-outline" onclick="closeModal('deleteModal')">Cancelar</button>
+            <button type="button" class="btn" onclick="closeModal('deleteModal')">Cancelar</button>
             <button type="submit" class="btn user-confirm-danger">Confirmar baja</button>
           </div>
         </form>
-      </div>
-    </div>
-    """ + """
+    """) + """
     <script>
     function openDeactivateModal(button) {
       document.getElementById('deactivateUserId').value = button.dataset.userId;
       document.getElementById('deactivateUserName').textContent = button.dataset.userName;
-      document.getElementById('deactivateModal').classList.add('active');
+      openModal('deactivateModal');
     }
     function openDeleteModal(button) {
       document.getElementById('deleteUserId').value = button.dataset.userId;
       document.getElementById('deleteUserName').textContent = button.dataset.userName;
       document.getElementById('deletionReason').value = '';
-      document.getElementById('deleteModal').classList.add('active');
-      document.getElementById('deletionReason').focus();
+      openModal('deleteModal');
     }
-    function closeModal(id) {
-      document.getElementById(id).classList.remove('active');
-    }
-    document.querySelectorAll('.modal-overlay').forEach(function(modal) {
-      modal.addEventListener('click', function(event) {
-        if (event.target === modal) closeModal(modal.id);
-      });
-    });
-    document.addEventListener('keydown', function(event) {
-      if (event.key === 'Escape') {
-        closeModal('deactivateModal');
-        closeModal('deleteModal');
-      }
-    });
     </script>
     """
 

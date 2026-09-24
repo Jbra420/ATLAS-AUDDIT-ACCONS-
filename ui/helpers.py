@@ -29,3 +29,10 @@ def _now() -> str:
 def csrf_input(csrf_token: str) -> str:
     """Genera el hidden input que lleva el CSRF token en cada formulario POST."""
     return f'<input type="hidden" name="_csrf" value="{esc(csrf_token)}">'
+
+
+def hidden_inputs(csrf_token: str, **fields: object) -> str:
+    """CSRF + un hidden input por campo: el encabezado común de todo formulario POST."""
+    return csrf_input(csrf_token) + "".join(
+        f'<input type="hidden" name="{name}" value="{esc(value)}">' for name, value in fields.items()
+    )

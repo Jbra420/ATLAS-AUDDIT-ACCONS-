@@ -42,7 +42,12 @@ CREATE TABLE IF NOT EXISTS audits (
     status TEXT NOT NULL DEFAULT 'pendiente',
     created_by INTEGER NOT NULL REFERENCES users(id),
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    -- Archivar oculta la empresa de los listados y del auditor sin borrar el
+    -- expediente ni su evidencia; el administrador puede restaurarla.
+    archived_at TEXT,
+    archived_by INTEGER REFERENCES users(id),
+    archive_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS audit_assignments (
@@ -178,4 +183,83 @@ CREATE TABLE IF NOT EXISTS source_checks (
     observacion TEXT,
     consultada_por INTEGER REFERENCES users(id),
     consultada_at TEXT
+);
+
+-- ── Levantamiento de información: trazabilidad por dato ────────────────
+-- Historial de solo inserción (los triggers de _migrate() impiden editar o
+-- borrar filas). Cada fila registra un cambio de un dato del expediente con
+-- su fuente, la fecha en que se consultó esa fuente y quién lo registró.
+CREATE TABLE IF NOT EXISTS data_provenance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+    bloque TEXT NOT NULL,
+    campo TEXT NOT NULL,
+    valor_anterior TEXT,
+    valor_nuevo TEXT,
+    fuente TEXT NOT NULL,
+    fecha_consulta TEXT NOT NULL,
+    registrado_por INTEGER REFERENCES users(id),
+    registrado_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_data_provenance_audit
+ON data_provenance(audit_id, bloque, campo, id);
+
+-- ── Levantamiento de información: estados financieros por año fiscal ──
+-- Una fila por cliente (RUC) y año fiscal. Un año nuevo nunca sobrescribe
+-- otro, y las auditorías del mismo RUC comparten sus ejercicios. Los totales
+-- de ingresos (401 + 403) y gastos (501 + 502) se calculan, no se guardan.
+CREATE TABLE IF NOT EXISTS financial_statements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ruc TEXT NOT NULL CHECK (length(ruc) = 13),
+    anio_fiscal INTEGER NOT NULL CHECK (anio_fiscal BETWEEN 1990 AND 2100),
+    fecha_corte TEXT NOT NULL,
+    activo_total REAL,
+    pasivo_total REAL,
+    patrimonio_neto REAL,
+    ingresos_401 REAL,
+    otros_ingresos_403 REAL,
+    costo_ventas_501 REAL,
+    gastos_502 REAL,
+    utilidad_antes_part_imp REAL,
+    utilidad_neta_707 REAL,
+    fecha_junta_aprobacion TEXT,
+    fuente TEXT,
+    fecha_consulta TEXT,
+    registrado_por INTEGER REFERENCES users(id),
+    updated_at TEXT NOT NULL,
+    UNIQUE (ruc, anio_fiscal)
+);
+
+-- ── Certificado de nómina adjunto (administradores y accionistas) ────
+-- Un PDF trae las dos nóminas, o vienen en varios PDF que se adjuntan
+-- juntos (archivo, sha256 y ruta guardan uno por línea). Cada PDF queda
+-- como evidencia con su SHA-256, y
+-- administradores_json / accionistas_json son la propuesta del analizador:
+-- nada entra a la nómina hasta que el auditor la confirma.
+CREATE TABLE IF NOT EXISTS nomina_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+    archivo TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    ruta TEXT NOT NULL,
+    administradores_json TEXT NOT NULL DEFAULT '[]',
+    accionistas_json TEXT NOT NULL DEFAULT '[]',
+    advertencias_json TEXT NOT NULL DEFAULT '[]',
+    fecha_certificado TEXT,
+    estado TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'importado', 'descartado')),
+    subido_por INTEGER REFERENCES users(id),
+    subido_at TEXT NOT NULL
+);
+
+-- ── Levantamiento de información: tratamiento de alertas críticas ────
+-- Una alerta crítica (p. ej. contribuyente fantasma) no bloquea el trabajo,
+-- pero el resumen exige que el auditor registre cómo la trató.
+CREATE TABLE IF NOT EXISTS alert_treatments (
+    audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+    codigo TEXT NOT NULL,
+    observacion TEXT NOT NULL,
+    registrado_por INTEGER REFERENCES users(id),
+    registrado_at TEXT NOT NULL,
+    PRIMARY KEY (audit_id, codigo)
 );

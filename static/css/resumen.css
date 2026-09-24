@@ -1,0 +1,81 @@
+/* ============================================================
+   resumen.css — Pestaña Resumen: resumen preliminar y modal de puntos
+   pendientes antes de generarlo.
+   ============================================================ */
+
+/* ── Modal de pendientes ─────────────────────────────────── */
+.summary-pending-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px 24px;
+  margin-bottom: 20px;
+}
+.summary-check-title {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.summary-check-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.summary-check-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line-2);
+}
+.summary-check-item:first-child { border-top: 0; }
+.summary-check-item > span { min-width: 0; }
+.summary-check-item strong {
+  display: block;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.summary-check-item small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+}
+.summary-check-item button,
+.summary-check-item a {
+  margin-left: auto;
+  padding: 4px 7px;
+  border: 0;
+  background: transparent;
+  color: var(--accent-base);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.summary-check-item button:hover,
+.summary-check-item a:hover { text-decoration: underline; }
+
+/* ── Resumen estructurado ────────────────────────────────── */
+.summary-box-v3 {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 20px 24px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+@media (max-width: 860px) {
+  .summary-pending-groups { grid-template-columns: 1fr; }
+}
