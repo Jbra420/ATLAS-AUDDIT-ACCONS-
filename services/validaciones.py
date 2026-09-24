@@ -131,14 +131,16 @@ def _item(label: str, fuente: str, tab: str) -> dict[str, str]:
     return {"label": label, "source": fuente, "tab": tab}
 
 
-def _requisitos(audit, profile, location, admins, shareholders, snapshot) -> tuple[list, list]:
+def _requisitos(audit, profile, location, admins, shareholders, snapshot) -> tuple[list, list, list]:
     requisitos: list[tuple[dict, bool]] = []
     recomendaciones: list[dict] = []
+    recomendaciones_todas: list[tuple[dict, bool]] = []
 
     def req(label: str, fuente: str, tab: str, ok: bool) -> None:
         requisitos.append((_item(label, fuente, tab), ok))
 
     def rec(label: str, fuente: str, tab: str, ok: bool) -> None:
+        recomendaciones_todas.append((_item(label, fuente, tab), ok))
         if not ok:
             recomendaciones.append(_item(label, fuente, tab))
 
@@ -209,7 +211,7 @@ def _requisitos(audit, profile, location, admins, shareholders, snapshot) -> tup
             _FUENTE_FINANCIERO, "indicadores", not faltan)
         rec("Utilidad antes de participación e impuestos", _FUENTE_FINANCIERO, "indicadores",
             _num(snapshot, "utilidad_antes_part_imp") is not None)
-    return requisitos, recomendaciones
+    return requisitos, recomendaciones, recomendaciones_todas
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +347,9 @@ def evaluar_levantamiento(
     tratamientos son las observaciones registradas por el auditor para
     alertas críticas (filas con "codigo" y "observacion").
     """
-    requisitos, recomendaciones = _requisitos(audit, profile, location, admins, shareholders, snapshot)
+    requisitos, recomendaciones, recomendaciones_todas = _requisitos(
+        audit, profile, location, admins, shareholders, snapshot,
+    )
     cruces = _cruces(profile, admins, snapshot)
     alertas = _alertas(profile, cruces)
     por_codigo = {row_get(t, "codigo"): t for t in tratamientos or []}
@@ -362,6 +366,7 @@ def evaluar_levantamiento(
         "requisitos": [{**item, "ok": ok} for item, ok in requisitos],
         "pendientes": pendientes + sin_tratamiento,
         "recomendaciones": recomendaciones,
+        "recomendaciones_todas": [{**item, "ok": ok} for item, ok in recomendaciones_todas],
         "cruces": cruces,
         "alertas": alertas,
         "requisitos_total": len(requisitos) + len(sin_tratamiento),

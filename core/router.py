@@ -37,6 +37,9 @@ from database import (
     get_audit_context,
     get_certificate_import,
     get_research,
+    lookup_balance_details,
+    lookup_catastro,
+    lookup_supercias_catalog,
     mark_document_pending,
     mark_document_reviewed,
     mark_matching_source_checked,
@@ -330,13 +333,17 @@ def _upload_certificate(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> st
         raise ValueError("Seleccione el certificado en PDF")
     if len(archivos) > MAX_CERTIFICADOS:
         raise ValueError(f"Adjunte como máximo {MAX_CERTIFICADOS} PDF a la vez")
+    if not audit["ruc"]:
+        raise ValueError("Registre el RUC del expediente antes de adjuntar el certificado: "
+                         "se usa para verificar que el documento sea de esta compañía")
     documentos = []
     for nombre, pdf in archivos:
         try:
             documentos.append((nombre, extraer_texto(pdf)))
         except ValueError as exc:
             raise ValueError(f"{nombre}: {exc}") from exc
-    analisis = analizar_nominas(documentos, audit["ruc"] or "")
+    # Verifica que cada documento sea de esta compañía antes de guardar o extraer nada.
+    analisis = analizar_nominas(documentos, audit["ruc"])
     save_certificate(audit["id"], archivos, analisis, user["id"])
     registrado = "Certificado registrado" if len(archivos) == 1 else f"{len(archivos)} certificados registrados"
     adm, acc = (len(analisis[n]) for n in NOMINAS)
@@ -441,7 +448,13 @@ def _summary_txt(audit: sqlite3.Row) -> str:
 
 
 def _levantamiento_xlsx(audit: sqlite3.Row) -> bytes:
-    return build_resumen_xlsx(audit, get_audit_context(audit["id"]))
+    ruc = audit["ruc"]
+    return build_resumen_xlsx(
+        audit, get_audit_context(audit["id"]),
+        catalog_sri=lookup_catastro(ruc),
+        catalog_supercias=lookup_supercias_catalog(ruc),
+        balance_details=lookup_balance_details(ruc),
+    )
 
 
 EXPORTS = {

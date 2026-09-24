@@ -348,7 +348,10 @@ def _load_radar_context(conn: sqlite3.Connection, audit_id: int) -> dict[str, An
             "SELECT * FROM company_shareholders WHERE audit_id = ? ORDER BY numero, id", (audit_id,)
         )),
         "docs": list(conn.execute(
-            "SELECT * FROM economic_documents WHERE audit_id = ? ORDER BY id", (audit_id,)
+            """SELECT d.*, u.full_name AS revisado_por_nombre
+               FROM economic_documents d
+               LEFT JOIN users u ON u.id = d.revisado_por
+               WHERE d.audit_id = ? ORDER BY d.id""", (audit_id,)
         )),
 
         "source_checks": list(conn.execute(

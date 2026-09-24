@@ -295,8 +295,9 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         with connect() as conn:
             auditor_id = conn.execute("SELECT id FROM users WHERE username = 'http_auditor'").fetchone()["id"]
             admin_id = conn.execute("SELECT id FROM users WHERE username = 'http_admin'").fetchone()["id"]
+        ruc = "1790000001001"
         audit_id = create_company_audit(
-            f"Empresa certificado {time.time_ns()}", "", "Cuenca", "", "2025", auditor_id, admin_id,
+            f"Empresa certificado {time.time_ns()}", ruc, "Cuenca", "", "2025", auditor_id, admin_id,
         )
         with connect() as conn:
             company_id = conn.execute("SELECT company_id FROM audits WHERE id = ?", (audit_id,)).fetchone()["company_id"]
@@ -310,31 +311,48 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         page = f"/auditor/radar?audit_id={audit_id}&tab=admins"
         pdfs = {
             "administradores.pdf": _pdf_con_texto([
+                f"RUC: {ruc}",
                 "ADMINISTRADORES",
-                "0102030405 TORRES VEGA ANA ECUADOR GERENTE GENERAL",
-                "0912345678 PEREZ LUIS ECUADOR PRESIDENTE",
+                "0102030400 TORRES VEGA ANA ECUADOR GERENTE GENERAL",
+                "0912345675 PEREZ LUIS ECUADOR PRESIDENTE",
             ]),
-            "accionistas.pdf": _pdf_con_texto(["ACCIONISTAS", "0102030405 TORRES VEGA ANA ECUADOR 800,00"]),
+            "accionistas.pdf": _pdf_con_texto([f"RUC: {ruc}", "ACCIONISTAS", "0102030400 TORRES VEGA ANA ECUADOR 800,00"]),
         }
-        limite = "----atlastest"
-        campos = {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), "return_tab": "admins"}
-        cuerpo = b"".join(
-            f"--{limite}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
-            for k, v in campos.items()
-        ) + b"".join(
-            (f"--{limite}\r\nContent-Disposition: form-data; name=\"archivo\"; filename=\"{nombre}\"\r\n"
-             "Content-Type: application/pdf\r\n\r\n").encode() + pdf + b"\r\n"
-            for nombre, pdf in pdfs.items()
-        ) + f"--{limite}--\r\n".encode()
-        conn = http.client.HTTPConnection(SERVER_HOST, SERVER_PORT, timeout=5)
-        conn.request("POST", "/auditor/radar/certificado", body=cuerpo, headers={
-            "Content-Type": f"multipart/form-data; boundary={limite}", "Cookie": self.cookie,
-        })
-        resp = conn.getresponse()
-        self.assertEqual(resp.status, 303)
-        self.assertIn("2+certificados+registrados", resp.getheader("Location", ""))
-        self.assertIn("2+administrador", resp.getheader("Location", ""))
-        self.assertIn("1+accionista", resp.getheader("Location", ""))
+
+        def subir(archivos: dict[str, bytes]) -> str:
+            limite = "----atlastest"
+            campos = {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), "return_tab": "admins"}
+            cuerpo = b"".join(
+                f"--{limite}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
+                for k, v in campos.items()
+            ) + b"".join(
+                (f"--{limite}\r\nContent-Disposition: form-data; name=\"archivo\"; filename=\"{nombre}\"\r\n"
+                 "Content-Type: application/pdf\r\n\r\n").encode() + pdf + b"\r\n"
+                for nombre, pdf in archivos.items()
+            ) + f"--{limite}--\r\n".encode()
+            conn = http.client.HTTPConnection(SERVER_HOST, SERVER_PORT, timeout=5)
+            conn.request("POST", "/auditor/radar/certificado", body=cuerpo, headers={
+                "Content-Type": f"multipart/form-data; boundary={limite}", "Cookie": self.cookie,
+            })
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 303)
+            return unquote_plus(resp.getheader("Location", ""))
+
+        # Un PDF de otra compañía se rechaza sin guardar evidencia ni propuesta.
+        ajeno = _pdf_con_texto(["RUC: 0190444619001", "ACCIONISTAS", "0102030400 TORRES VEGA ANA ECUADOR 800,00"])
+        location = subir({"otra_empresa.pdf": ajeno})
+        self.assertIn("err=otra_empresa.pdf: El documento corresponde al RUC 0190444619001", location)
+        with connect() as conn:
+            guardado = conn.execute(
+                "SELECT (SELECT COUNT(*) FROM sources WHERE audit_id = ? AND title LIKE 'Certificado%') "
+                "+ (SELECT COUNT(*) FROM nomina_imports WHERE audit_id = ?)", (audit_id, audit_id),
+            ).fetchone()[0]
+        self.assertEqual(guardado, 0)
+
+        location = subir(pdfs)
+        self.assertIn("2 certificados registrados", location)
+        self.assertIn("2 administrador", location)
+        self.assertIn("1 accionista", location)
 
         _, body = _get(page, self.cookie)
         admins_pane = self._pane_content(body, "admins", "accionistas")
@@ -349,9 +367,9 @@ class TestHTTPAuditorFlow(unittest.TestCase):
             "audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), "import_id": import_id,
             "return_tab": "admins", "fecha_consulta": "2026-09-01",
             "incluir_administradores": "0", "incluir_accionistas": "0",
-            "administradores_identificacion_0": "0102030405", "administradores_nombre_0": "TORRES VEGA ANA",
+            "administradores_identificacion_0": "0102030400", "administradores_nombre_0": "TORRES VEGA ANA",
             "administradores_cargo_0": "GERENTE GENERAL", "administradores_nacionalidad_0": "ECUADOR",
-            "accionistas_identificacion_0": "0102030405", "accionistas_nombre_0": "TORRES VEGA ANA",
+            "accionistas_identificacion_0": "0102030400", "accionistas_nombre_0": "TORRES VEGA ANA",
             "accionistas_capital_0": "800", "accionistas_participacion_porcentaje_0": "100",
         }, self.cookie)
         self.assertEqual(status, 303)

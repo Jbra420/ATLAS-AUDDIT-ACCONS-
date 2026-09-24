@@ -1,16 +1,19 @@
 """Importa estados financieros por ramo de Supercias a un catalogo local.
 
 Uso: python3 scripts/update_balances_catalog.py /ruta/estadosFinancieros_2025
-Los TXT son tabulados, usan cp1252 y coma decimal. Solo se almacenan los
-ocho casilleros exigidos por el levantamiento; el catalogo conserva sus nombres.
+Los TXT son tabulados, usan cp1252 y coma decimal. Se conservan los ocho
+casilleros del resumen y todas las cuentas del reporte. Los ceros se
+reconstruyen desde el catalogo de cuentas; el blob guarda solo importes no cero.
 """
 from __future__ import annotations
 
 import argparse
 import csv
 import hashlib
+import json
 import re
 import sqlite3
+import zlib
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -79,6 +82,9 @@ def load_catalog(source_dir: Path, db_path: Path = DB_PATH) -> tuple[int, int, i
         missing = required - set(header)
         if missing or len(header) != len(set(header)):
             raise ValueError(f"Encabezado invalido; faltan {sorted(missing)}")
+        account_positions = [(part[7:], i) for i, part in enumerate(header) if part.startswith("CUENTA_")]
+        if {code for code, _i in account_positions} != labels.keys():
+            raise ValueError("Las cuentas del balance no coinciden con el catalogo de descripciones")
         positions = {name: header.index(name) for name in required}
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(db_path) as conn:
@@ -89,8 +95,12 @@ def load_catalog(source_dir: Path, db_path: Path = DB_PATH) -> tuple[int, int, i
                 ingresos_401 REAL, otros_ingresos_403 REAL, costo_ventas_501 REAL,
                 gastos_502 REAL, utilidad_neta_707 REAL,
                 PRIMARY KEY (ruc, anio_fiscal))""")
-            conn.execute("""CREATE TABLE IF NOT EXISTS catalogo_cuentas (
-                codigo TEXT PRIMARY KEY, descripcion TEXT NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS catalogo_cuentas_anio (
+                anio_fiscal INTEGER NOT NULL, codigo TEXT NOT NULL, descripcion TEXT NOT NULL,
+                PRIMARY KEY (anio_fiscal, codigo))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS balance_detalles (
+                ruc TEXT NOT NULL, anio_fiscal INTEGER NOT NULL, cuentas_blob BLOB NOT NULL,
+                PRIMARY KEY (ruc, anio_fiscal))""")
             conn.execute("""CREATE TABLE IF NOT EXISTS importaciones (
                 anio_fiscal INTEGER PRIMARY KEY, archivo TEXT NOT NULL,
                 sha256 TEXT NOT NULL, total_filas INTEGER NOT NULL,
@@ -113,6 +123,8 @@ def load_catalog(source_dir: Path, db_path: Path = DB_PATH) -> tuple[int, int, i
                 if year is None:
                     year = current_year
                     conn.execute("DELETE FROM balances WHERE anio_fiscal = ?", (year,))
+                    conn.execute("DELETE FROM balance_detalles WHERE anio_fiscal = ?", (year,))
+                    conn.execute("DELETE FROM catalogo_cuentas_anio WHERE anio_fiscal = ?", (year,))
                 elif current_year != year:
                     raise ValueError(f"Linea {line}: hay mas de un año fiscal en el archivo")
                 ruc = row[positions["RUC"]].strip()
@@ -120,11 +132,23 @@ def load_catalog(source_dir: Path, db_path: Path = DB_PATH) -> tuple[int, int, i
                     skipped += 1
                     continue
                 values = [_amount(row[positions[f"CUENTA_{code}"]], line, code) for code in FIELDS]
+                cuentas = {}
+                for code, index in account_positions:
+                    raw = row[index].strip()
+                    if raw in {"0", "0,00"}:
+                        continue
+                    value = _amount(raw, line, code)
+                    if value != 0:
+                        cuentas[code] = value
                 try:
                     conn.execute(
                         "INSERT INTO balances VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (ruc, year, row[positions["EXPEDIENTE"]].strip(),
                          row[positions["NOMBRE"]].strip(), row[positions["CIIU"]].strip(), *values),
+                    )
+                    conn.execute(
+                        "INSERT INTO balance_detalles VALUES (?, ?, ?)",
+                        (ruc, year, zlib.compress(json.dumps(cuentas, separators=(",", ":")).encode("utf-8"), 1)),
                     )
                 except sqlite3.IntegrityError as exc:
                     raise ValueError(f"Linea {line}: RUC/año duplicado: {ruc}/{year}") from exc
@@ -132,7 +156,8 @@ def load_catalog(source_dir: Path, db_path: Path = DB_PATH) -> tuple[int, int, i
             if not total:
                 raise ValueError("El archivo de balances no contiene registros")
             conn.executemany(
-                "INSERT OR REPLACE INTO catalogo_cuentas VALUES (?, ?)", labels.items()
+                "INSERT INTO catalogo_cuentas_anio VALUES (?, ?, ?)",
+                ((year, code, description) for code, description in labels.items()),
             )
             conn.execute(
                 """INSERT OR REPLACE INTO importaciones

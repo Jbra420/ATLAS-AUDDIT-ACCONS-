@@ -90,6 +90,7 @@ from database.catalogos import (
     lookup_supercias_catalog,
     apply_supercias_research_result,
     lookup_balances_catalog,
+    lookup_balance_details,
     apply_balances_catalog_result,
 )
 from database.expedientes import (

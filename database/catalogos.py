@@ -1,7 +1,9 @@
 """database/catalogos.py — Catálogos locales (catastro SRI, Directorio de Compañías y balances de Supercías) y su volcado al expediente."""
 from __future__ import annotations
 
+import json
 import sqlite3
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -484,6 +486,48 @@ def lookup_balances_catalog(
     except sqlite3.Error:
         import logging
         logging.exception("No se pudo consultar el catalogo local de balances Supercias")
+        return []
+
+
+def lookup_balance_details(
+    ruc: str, catalog_path: Path | str = BALANCES_CATALOG_PATH,
+) -> list[dict[str, Any]]:
+    """Cuentas completas del TXT por año; no mezcla cifras corregidas en Atlas."""
+    path = Path(catalog_path)
+    if not path.exists():
+        return []
+    try:
+        with sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            records = list(conn.execute(
+                """SELECT d.anio_fiscal, d.cuentas_blob, i.archivo, i.sha256, i.importado_at, i.url
+                   FROM balance_detalles d JOIN importaciones i ON i.anio_fiscal = d.anio_fiscal
+                   WHERE d.ruc = ? ORDER BY d.anio_fiscal DESC""", (_text(ruc),),
+            ))
+            years = [
+                (year, list(conn.execute(
+                    "SELECT codigo, descripcion FROM catalogo_cuentas_anio "
+                    "WHERE anio_fiscal = ? ORDER BY codigo", (year["anio_fiscal"],
+                ))))
+                for year in records
+            ]
+        result = []
+        for year, accounts in years:
+            if not accounts:
+                raise ValueError(f"El catálogo de cuentas del ejercicio {year['anio_fiscal']} no está importado")
+            values = json.loads(zlib.decompress(year["cuentas_blob"]))
+            result.append({
+                "anio_fiscal": year["anio_fiscal"],
+                "archivo": year["archivo"],
+                "sha256": year["sha256"],
+                "importado_at": year["importado_at"],
+                "url": year["url"],
+                "cuentas": [(row["codigo"], row["descripcion"], values.get(row["codigo"], 0)) for row in accounts],
+            })
+        return result
+    except (sqlite3.Error, ValueError, zlib.error):
+        import logging
+        logging.exception("No se pudo leer el detalle financiero del catalogo Supercias")
         return []
 
 

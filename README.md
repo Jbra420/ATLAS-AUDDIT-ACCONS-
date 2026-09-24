@@ -24,10 +24,15 @@ generar una ficha inicial de la empresa auditada.
   - extraccion basica de RUC, correos y telefonos;
   - validacion de requisitos obligatorios antes del resumen;
   - generacion de resumen preliminar por parte del auditor.
-- Descarga del resumen en texto y del levantamiento de información completo en
-  Excel (.xlsx): una hoja por bloque (SRI, Supercias, ubicación, administradores,
-  accionistas, financiero) con la fuente y fecha de consulta de cada dato, más
-  requisitos, validaciones y alertas, fuentes y evidencia, trazabilidad y hallazgos.
+- Descarga del resumen en texto y del expediente en Excel (.xlsx): la primera
+  hoja presenta los datos SRI, Supercias, ubicación, personas, cifras financieras,
+  validaciones, fuentes, pendientes y recomendación; las hojas siguientes contienen
+  seis bloques del expediente y registros originales
+  completos de los catálogos SRI y Supercias y estados de situación y resultados
+  con todos los casilleros del TXT por ramo, por año, incluidos saldos cero.
+  Incluye requisitos, validaciones, documentos, fuentes y trazabilidad. El
+  archivo distingue cifras del catálogo y correcciones del auditor: no presenta
+  el TXT como un estado financiero firmado ni una nómina parcial como completa.
 
 ## Levantamiento de información general del cliente
 
@@ -152,11 +157,23 @@ las pestañas "Administradores" y "Accionistas" muestran un flujo asistido:
    Las filas importadas llevan la fuente "Supercias — certificado de nómina
    (PDF adjunto)" y su fecha de consulta.
 
-El lector es heurístico: reconoce cada fila por su cédula (10 dígitos) o RUC
-(13). Un PDF escaneado, sin texto seleccionable, no se puede leer, y lo que no
-reconozca se registra a mano en el mismo formulario de siempre. Para
-calibrarlo con documentos reales, guarde muestras en `muestras_supercias/`
-(también excluida de Git).
+El lector prefiere descartar a adivinar:
+
+- Si el documento declara el RUC de otra compañía, se rechaza el archivo.
+- Una fila empieza en una identificación válida: cédula con provincia, tercer
+  dígito y dígito verificador correctos, o RUC con su dígito verificador. Así
+  un teléfono o un número de registro no se toman por cédula, y el RUC de la
+  propia compañía nunca es una fila.
+- Es administrador si trae un cargo reconocido y accionista si trae capital o
+  porcentaje o está en la sección de accionistas; una identificación sin esas
+  señales se omite con un aviso.
+- El nombre excluye encabezados, etiquetas, cargo y nacionalidad.
+
+Está calibrado con los documentos del portal de Supercias (información general
+y nómina de accionistas). Un PDF escaneado, sin texto seleccionable, no se
+puede leer, y lo que no reconozca se registra a mano en el mismo formulario de
+siempre. Para calibrarlo con más documentos, guarde muestras en
+`muestras_supercias/` (también excluida de Git).
 
 ## Estados financieros por ramo de Supercías
 
@@ -169,7 +186,8 @@ python3 scripts/update_balances_catalog.py /ruta/estadosFinancieros_2025
 ```
 
 El importador usa solo la biblioteca estándar de Python. Carga los casilleros
-1, 2, 3, 401, 403, 501, 502 y 707 por RUC y año en
+1, 2, 3, 401, 403, 501, 502 y 707 para la ficha del expediente y conserva
+la totalidad de cuentas del catálogo correspondiente por RUC y año para el Excel de detalle en
 `supercias_balances.db` (excluida de Git). Guarda también el catálogo de
 cuentas, el nombre del archivo, su SHA-256 y la fecha de importación. Puede
 repetirse para reemplazar un ejercicio sin borrar los demás. Filas con RUC

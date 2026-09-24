@@ -55,15 +55,24 @@ def assisted_panel(
         importarlos. También puede registrarlos manualmente más abajo.
       </p>
       <div class="cert-links">{estado}{enlaces}</div>
-      {upload_form(audit_id, return_tab, csrf_token)}
+      {upload_form(audit_id, return_tab, csrf_token, audit["ruc"] or "")}
       {review_panel(audit_id, propuesta, return_tab, csrf_token)}
     </section>
     <hr class="section-divider">
     """
 
 
-def upload_form(audit_id: int, return_tab: str, csrf_token: str) -> str:
-    """Formulario para adjuntar los certificados PDF (uno o varios) y extraer la nómina."""
+def upload_form(audit_id: int, return_tab: str, csrf_token: str, ruc: str) -> str:
+    """Formulario para adjuntar los certificados PDF (uno o varios) y extraer
+    la nómina. Sin RUC en el expediente no se puede verificar la compañía del
+    documento, así que no se ofrece."""
+    if not ruc:
+        return """
+    <div class="cert-upload">
+      <p class="cert-help">Registre el RUC del expediente (pestaña SRI) para adjuntar el certificado:
+        se usa para verificar que el documento sea de esta compañía.</p>
+    </div>
+    """
     return f"""
     <form method="post" action="/auditor/radar/certificado" enctype="multipart/form-data" class="cert-upload">
       {hidden_inputs(csrf_token, audit_id=audit_id, return_tab=return_tab)}
@@ -74,7 +83,8 @@ def upload_form(audit_id: int, return_tab: str, csrf_token: str) -> str:
         <button type="submit" class="btn btn-sm btn-primary">{SVG_FILE} Adjuntar y extraer</button>
       </div>
       <small>Si la nómina viene en varios documentos, selecciónelos juntos (Ctrl o ⌘ + clic):
-        se revisan en una sola propuesta. Cada PDF queda como evidencia.</small>
+        se revisan en una sola propuesta. Cada PDF queda como evidencia.
+        Solo se aceptan documentos del RUC {esc(ruc)}: un PDF de otra compañía se rechaza.</small>
     </form>
     """
 

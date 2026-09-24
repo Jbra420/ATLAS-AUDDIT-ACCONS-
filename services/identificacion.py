@@ -53,6 +53,21 @@ def _cedula_advertencia(cedula: str) -> str:
     return ""
 
 
+def cedula_valida(cedula: str) -> bool:
+    """Cédula que cumple todo el algoritmo: 10 dígitos, provincia, tercer
+    dígito de persona natural y dígito verificador. Más estricta que
+    validar_identificacion(), que solo advierte: la usa el lector de
+    certificados para no tomar por cédula un teléfono u otro número."""
+    return len(cedula) == 10 and cedula.isdigit() and not _cedula_advertencia(cedula)
+
+
+def ruc_valido(ruc: str) -> bool:
+    """RUC de 13 dígitos con dígito verificador correcto (estricto, como
+    cedula_valida)."""
+    valid, warn, _msg = validate_ruc(ruc)
+    return valid and not warn
+
+
 def inferir_tipo(valor: str | None) -> str:
     """Tipo probable para registros sin tipo declarado: 10 dígitos -> cédula,
     13 dígitos -> RUC, cualquier otro valor -> pasaporte."""
