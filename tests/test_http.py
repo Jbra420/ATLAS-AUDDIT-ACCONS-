@@ -664,6 +664,55 @@ class TestHTTPAdminFlow(unittest.TestCase):
         status, _ = _get("/admin/users", self.cookie)
         self.assertEqual(status, 200)
 
+    def test_archivar_y_restaurar_empresa(self):
+        """El admin archiva una empresa: sale del directorio y el auditor pierde
+        el acceso (ver y editar); el admin la sigue viendo y puede restaurarla."""
+        with connect() as conn:
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+        nombre = f"Empresa archivable {time.time_ns()}"
+        audit_id = create_company_audit(nombre, "", "Cuenca", "", "2025", auditor_id, admin_id)
+
+        def cleanup_company() -> None:
+            with connect() as conn:
+                conn.execute("DELETE FROM companies WHERE id = "
+                             "(SELECT company_id FROM audits WHERE id = ?)", (audit_id,))
+
+        self.addCleanup(cleanup_company)
+        auditor_cookie = _login("auditor", "auditor123")
+        radar = f"/auditor/radar?audit_id={audit_id}"
+
+        status, location, _ = _post_raw("/admin/companies/archive", {
+            "audit_id": str(audit_id), "archive_reason": "Registrada por error",
+            "_csrf": _csrf_token("/admin/companies", self.cookie),
+        }, self.cookie)
+        self.assertEqual(status, 303)
+        self.assertIn("msg=Empresa+archivada", location)
+
+        _, body = _get("/admin/companies", self.cookie)
+        activas, archivadas = body.split("Empresas archivadas (")
+        self.assertNotIn(nombre, activas)
+        self.assertIn(nombre, archivadas)
+        self.assertIn("Registrada por error", archivadas)
+        _, body = _get(f"/admin/audit?audit_id={audit_id}", self.cookie)
+        self.assertIn("Empresa archivada", body)
+
+        _, body = _get("/auditor", auditor_cookie)
+        self.assertNotIn(nombre, body)
+        _, body = _get(radar, auditor_cookie)
+        self.assertIn("no disponible", body)
+        status, _, _ = _post_raw("/auditor/radar/profile", {
+            "audit_id": str(audit_id), "_csrf": _csrf_token("/auditor", auditor_cookie), "razon_social": "X",
+        }, auditor_cookie)
+        self.assertEqual(status, 403, "El auditor no puede editar una empresa archivada")
+
+        status, location, _ = _post_raw("/admin/companies/restore", {
+            "audit_id": str(audit_id), "_csrf": _csrf_token("/admin/companies", self.cookie),
+        }, self.cookie)
+        self.assertIn("msg=Empresa+restaurada", location)
+        _, body = _get("/auditor", auditor_cookie)
+        self.assertIn(nombre, body)
+
     def test_admin_cannot_post_to_auditor_search(self):
         """
         HC-1: el admin (jefe auditor) NO debe poder ejecutar búsquedas de RUC

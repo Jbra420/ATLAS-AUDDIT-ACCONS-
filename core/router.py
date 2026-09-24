@@ -27,6 +27,7 @@ from database import (
     add_shareholder,
     add_source,
     append_research_source_note,
+    archive_audit,
     close_certificate_import,
     connect,
     create_company_audit,
@@ -46,6 +47,7 @@ from database import (
     reactivate_user,
     reassign_audit,
     refresh_summary,
+    restore_audit,
     save_certificate,
     register_alert_treatment,
     register_audit_ruc,
@@ -131,6 +133,11 @@ ADMIN_POSTS = {
     ),
     "/admin/companies": ("/admin/companies", _create_company),
     "/admin/companies/reassign": ("/admin/companies", _reassign),
+    "/admin/companies/archive": (
+        "/admin/companies",
+        lambda f, a: archive_audit(_int(f, "audit_id"), a["id"], form_value(f, "archive_reason")),
+    ),
+    "/admin/companies/restore": ("/admin/companies", lambda f, a: restore_audit(_int(f, "audit_id"), a["id"])),
 }
 
 

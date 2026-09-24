@@ -99,6 +99,8 @@ from database.expedientes import (
     register_audit_ruc,
     list_admin_audits,
     reassign_audit,
+    archive_audit,
+    restore_audit,
     list_auditor_audits,
     get_audit,
     get_audit_context,

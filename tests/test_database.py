@@ -11,6 +11,7 @@ from pathlib import Path
 from database import (
     add_administrator,
     add_shareholder,
+    archive_audit,
     authenticate,
     compute_progress,
     connect,
@@ -33,6 +34,7 @@ from database import (
     reassign_audit,
     refresh_summary,
     register_audit_ruc,
+    restore_audit,
     soft_delete_user,
     update_research,
     user_from_session,
@@ -537,6 +539,50 @@ class TestProgress(unittest.TestCase):
         progress = self._progress(source_count=2)
         self.assertTrue(progress["stages"]["has_summary"])
         self.assertNotIn("is_sent", progress["stages"])
+
+
+class TestArchivarEmpresa(unittest.TestCase):
+    def setUp(self):
+        self.db = _make_db()
+        self.auditor = _auditor_row(self.db)
+        self.admin = _admin_row(self.db)
+        self.audit_id = create_company_audit(
+            "Empresa Archivable", "", "Quito", "", "2026", self.auditor["id"], self.admin["id"], self.db,
+        )
+
+    def test_archivar_oculta_la_empresa_sin_borrar_el_expediente(self):
+        add_administrator(self.audit_id, "0102030405", "ANA TORRES", "ECUADOR", "GERENTE", db_path=self.db)
+        archive_audit(self.audit_id, self.admin["id"], "Registrada por error", self.db)
+
+        self.assertNotIn(self.audit_id, [a["id"] for a in list_admin_audits(self.db)])
+        self.assertNotIn(self.audit_id, [a["id"] for a in list_auditor_audits(self.auditor["id"], self.db)])
+        self.assertIsNone(get_audit(self.audit_id, self.auditor, self.db), "El auditor pierde el acceso")
+
+        archivada = list_admin_audits(self.db, archived=True)[0]
+        self.assertEqual(archivada["id"], self.audit_id)
+        self.assertEqual(archivada["archive_reason"], "Registrada por error")
+        self.assertEqual(archivada["archived_by_name"], self.admin["full_name"])
+        self.assertIsNotNone(get_audit(self.audit_id, self.admin, self.db), "El admin la consulta en lectura")
+        self.assertEqual(len(list_administrators(self.audit_id, self.db)), 1, "El expediente se conserva")
+
+    def test_restaurar_devuelve_la_empresa_al_auditor(self):
+        archive_audit(self.audit_id, self.admin["id"], "Registrada por error", self.db)
+        restore_audit(self.audit_id, self.admin["id"], self.db)
+        self.assertIn(self.audit_id, [a["id"] for a in list_auditor_audits(self.auditor["id"], self.db)])
+        self.assertEqual(list_admin_audits(self.db, archived=True), [])
+        with self.assertRaisesRegex(ValueError, "no está archivada"):
+            restore_audit(self.audit_id, self.admin["id"], self.db)
+
+    def test_reglas(self):
+        with self.assertRaisesRegex(ValueError, "motivo"):
+            archive_audit(self.audit_id, self.admin["id"], "  ", self.db)
+        with self.assertRaisesRegex(ValueError, "administrador activo"):
+            archive_audit(self.audit_id, self.auditor["id"], "Registrada por error", self.db)
+        archive_audit(self.audit_id, self.admin["id"], "Registrada por error", self.db)
+        with self.assertRaisesRegex(ValueError, "ya está archivada"):
+            archive_audit(self.audit_id, self.admin["id"], "Otra vez", self.db)
+        with self.assertRaisesRegex(ValueError, "Restaure"):
+            reassign_audit(self.audit_id, self.auditor["id"], self.admin["id"], self.db)
 
 
 if __name__ == "__main__":

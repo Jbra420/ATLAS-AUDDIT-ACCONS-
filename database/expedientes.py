@@ -169,21 +169,74 @@ def register_audit_ruc(
     return clean_ruc, msg
 
 
-def list_admin_audits(db_path: Path | str = DB_PATH) -> list[sqlite3.Row]:
+def list_admin_audits(db_path: Path | str = DB_PATH, *, archived: bool = False) -> list[sqlite3.Row]:
+    """Expedientes del directorio: los vigentes o, con archived=True, los archivados."""
     with connect(db_path) as conn:
         return list(
             conn.execute(
-                """
+                f"""
                 SELECT a.*, c.name AS company_name, c.ruc, c.city, c.activity_hint,
                        u.full_name AS auditor_name, u.username AS auditor_username,
-                       u.active AS auditor_active, u.deleted_at AS auditor_deleted_at
+                       u.active AS auditor_active, u.deleted_at AS auditor_deleted_at,
+                       ar.full_name AS archived_by_name
                 FROM audits a
                 JOIN companies c ON c.id = a.company_id
                 JOIN users u ON u.id = a.assigned_auditor_id
-                ORDER BY a.updated_at DESC, a.id DESC
+                LEFT JOIN users ar ON ar.id = a.archived_by
+                WHERE a.archived_at IS {"NOT NULL" if archived else "NULL"}
+                ORDER BY {"a.archived_at DESC" if archived else "a.updated_at DESC"}, a.id DESC
                 """
             )
         )
+
+
+def _require_active_admin(conn: sqlite3.Connection, user_id: int, accion: str) -> None:
+    actor = conn.execute(
+        "SELECT id FROM users WHERE id = ? AND role = 'admin' AND active = 1 AND deleted_at IS NULL",
+        (user_id,),
+    ).fetchone()
+    if not actor:
+        raise ValueError(f"Solo un administrador activo puede {accion}")
+
+
+def archive_audit(
+    audit_id: int, performed_by: int, reason: str, db_path: Path | str = DB_PATH,
+) -> str:
+    """Archiva la empresa: sale de los listados y el auditor pierde el acceso,
+    pero el expediente, su evidencia y los PDF adjuntos se conservan."""
+    reason = reason.strip()
+    if len(reason) < 5:
+        raise ValueError("Indica un motivo de al menos 5 caracteres para archivar")
+    if len(reason) > 250:
+        raise ValueError("El motivo no puede superar los 250 caracteres")
+    with connect(db_path) as conn:
+        _require_active_admin(conn, performed_by, "archivar empresas")
+        cur = conn.execute(
+            """
+            UPDATE audits SET archived_at = ?, archived_by = ?, archive_reason = ?
+            WHERE id = ? AND archived_at IS NULL
+            """,
+            (now_iso(), performed_by, reason, audit_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("La empresa no existe o ya está archivada")
+    return "Empresa archivada. El expediente y su evidencia se conservaron."
+
+
+def restore_audit(audit_id: int, performed_by: int, db_path: Path | str = DB_PATH) -> str:
+    """Devuelve una empresa archivada al directorio y a su auditor asignado."""
+    with connect(db_path) as conn:
+        _require_active_admin(conn, performed_by, "restaurar empresas")
+        cur = conn.execute(
+            """
+            UPDATE audits SET archived_at = NULL, archived_by = NULL, archive_reason = NULL, updated_at = ?
+            WHERE id = ? AND archived_at IS NOT NULL
+            """,
+            (now_iso(), audit_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("La empresa no existe o no está archivada")
+    return "Empresa restaurada"
 
 
 def reassign_audit(
@@ -194,15 +247,7 @@ def reassign_audit(
 ) -> None:
     ts = now_iso()
     with connect(db_path) as conn:
-        actor = conn.execute(
-            """
-            SELECT id FROM users
-            WHERE id = ? AND role = 'admin' AND active = 1 AND deleted_at IS NULL
-            """,
-            (performed_by,),
-        ).fetchone()
-        if not actor:
-            raise ValueError("Solo un administrador activo puede reasignar empresas")
+        _require_active_admin(conn, performed_by, "reasignar empresas")
 
         auditor = conn.execute(
             """
@@ -215,11 +260,13 @@ def reassign_audit(
             raise ValueError("El nuevo auditor no es válido o no está activo.")
 
         audit = conn.execute(
-            "SELECT assigned_auditor_id FROM audits WHERE id = ?",
+            "SELECT assigned_auditor_id, archived_at FROM audits WHERE id = ?",
             (audit_id,),
         ).fetchone()
         if not audit:
             raise ValueError("Auditoría no encontrada")
+        if audit["archived_at"]:
+            raise ValueError("Restaure la empresa antes de reasignarla")
         if audit["assigned_auditor_id"] == new_auditor_id:
             raise ValueError("La empresa ya está asignada a ese auditor")
 
@@ -252,7 +299,7 @@ def list_auditor_audits(auditor_id: int, db_path: Path | str = DB_PATH) -> list[
                 SELECT a.*, c.name AS company_name, c.ruc, c.city, c.activity_hint
                 FROM audits a
                 JOIN companies c ON c.id = a.company_id
-                WHERE a.assigned_auditor_id = ?
+                WHERE a.assigned_auditor_id = ? AND a.archived_at IS NULL
                 ORDER BY a.updated_at DESC, a.id DESC
                 """,
                 (auditor_id,),
@@ -272,7 +319,8 @@ def get_audit(audit_id: int, user: sqlite3.Row, db_path: Path | str = DB_PATH) -
         """
         params: list[Any] = [audit_id]
         if user["role"] == "auditor":
-            sql += " AND a.assigned_auditor_id = ?"
+            # Una empresa archivada solo la ve el administrador (en lectura).
+            sql += " AND a.assigned_auditor_id = ? AND a.archived_at IS NULL"
             params.append(user["id"])
         return conn.execute(sql, params).fetchone()
 

@@ -261,6 +261,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     # ── Barra de acción flotante ────────────────────────────────────
     if is_read_only:
         action_bar_right = f"""
+          {'<span class="badge badge-amber" title="' + esc(audit["archive_reason"] or "") + '">Empresa archivada</span>' if audit["archived_at"] else ''}
           <span class="badge badge-gray">{SVG_INFO} Modo solo lectura</span>
           <a class="btn btn-sm" href="/export/summary?audit_id={audit_id}" title="Descargar resumen en .txt">
             {SVG_DOWNLOAD} Exportar .txt

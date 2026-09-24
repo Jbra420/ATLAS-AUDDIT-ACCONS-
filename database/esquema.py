@@ -125,6 +125,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
     audit_cols = {row[1] for row in conn.execute("PRAGMA table_info(audits)")}
     if "anio_fiscal_eeff" not in audit_cols:
         conn.execute("ALTER TABLE audits ADD COLUMN anio_fiscal_eeff INTEGER")
+    # Empresas archivadas: se ocultan sin borrar el expediente.
+    for col, col_type in [
+        ("archived_at", "TEXT"),
+        ("archived_by", "INTEGER REFERENCES users(id)"),
+        ("archive_reason", "TEXT"),
+    ]:
+        if col not in audit_cols:
+            conn.execute(f"ALTER TABLE audits ADD COLUMN {col} {col_type}")
 
     # Documentos de respaldo agregados al requisito después de crear algunos
     # expedientes: se incorporan como pendientes, sin tocar los existentes.

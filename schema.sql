@@ -42,7 +42,12 @@ CREATE TABLE IF NOT EXISTS audits (
     status TEXT NOT NULL DEFAULT 'pendiente',
     created_by INTEGER NOT NULL REFERENCES users(id),
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    -- Archivar oculta la empresa de los listados y del auditor sin borrar el
+    -- expediente ni su evidencia; el administrador puede restaurarla.
+    archived_at TEXT,
+    archived_by INTEGER REFERENCES users(id),
+    archive_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS audit_assignments (

@@ -39,6 +39,8 @@
   min-height: 34px;
 }
 .user-inline-form { margin: 0; }
+/* Directorio de empresas: si la columna no alcanza, archivar pasa debajo de Seguimiento. */
+.company-actions { flex-wrap: wrap; }
 .user-action-btn {
   display: inline-flex;
   align-items: center;
