@@ -29,6 +29,7 @@ from database.usuarios import (
     session_hash,
     create_user,
     authenticate,
+    change_password,
     list_users,
     list_auditors,
     deactivate_user,
@@ -89,6 +90,7 @@ from database.catalogos import (
     lookup_supercias_catalog,
     apply_supercias_research_result,
     lookup_balances_catalog,
+    lookup_balance_details,
     apply_balances_catalog_result,
 )
 from database.expedientes import (

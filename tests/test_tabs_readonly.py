@@ -76,7 +76,7 @@ def _blocked_readiness() -> dict:
 def _make_db() -> Path:
     tmp = tempfile.mkdtemp()
     db_path = Path(tmp) / "test_tabs.db"
-    init_db(db_path)
+    init_db(db_path, demo=True)
     return db_path
 
 
@@ -397,12 +397,12 @@ class TestTabResumenReadOnly(unittest.TestCase):
         self.assertGreater(len(html_ro), 0)
 
     def test_dossier_visible_without_admin_generate_action(self):
-        """El jefe puede ver y exportar la ficha final sin generar resumen."""
+        """El jefe puede ver la ficha final y descargar el Excel sin generar resumen."""
         from views.auditor.radar.tab_resumen import build
         html = build(self.audit_id, self.research, _sample_dossier(), read_only=True)
 
         self.assertIn("Ficha final de resultados", html)
-        self.assertIn("/export/dossier", html)
+        self.assertIn("/export/xlsx", html)
         self.assertIn("Consulta SERCOP", html)
         self.assertNotIn("/auditor/radar/summary", html)
 

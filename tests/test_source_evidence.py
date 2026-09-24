@@ -24,7 +24,7 @@ from database import (
 def _make_db() -> Path:
     tmp_dir = tempfile.mkdtemp()
     db_path = Path(tmp_dir) / "test_source_evidence.db"
-    init_db(db_path)
+    init_db(db_path, demo=True)
     return db_path
 
 

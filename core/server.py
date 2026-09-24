@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 from database import (
     DB_PATH,
     authenticate,
+    change_password,
     create_session,
     destroy_session,
     get_audit,
@@ -48,6 +49,13 @@ _CSS_CONTENT: str = ""
 # Cuerpo máximo de un POST: los certificados PDF (hasta 5 de 10 MB) más los campos del formulario.
 MAX_BODY_BYTES = 51 * 1024 * 1024
 _QUIET_MODE: bool = False  # Se activa con --quiet; suprime el log de peticiones HTTP
+
+
+# Tipo de contenido de cada descarga de EXPORTS, por extensión.
+_CONTENT_TYPES = {
+    "txt": "text/plain; charset=utf-8",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
 
 
 class FormData(dict):
@@ -146,8 +154,8 @@ class AtlasHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
-    def send_download(self, content: str, filename: str, content_type: str = "text/plain; charset=utf-8") -> None:
-        encoded = content.encode("utf-8")
+    def send_download(self, content: str | bytes, filename: str, content_type: str = "text/plain; charset=utf-8") -> None:
+        encoded = content.encode("utf-8") if isinstance(content, str) else content
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-type", content_type)
         self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
@@ -377,6 +385,21 @@ class AtlasHandler(BaseHTTPRequestHandler):
         if self._reject_csrf():
             return
 
+        if path == "/cuenta/password":
+            # Cualquier usuario cambia su propia contraseña; su sesión actual sigue abierta.
+            current = self.require_user()
+            if not current:
+                return
+            try:
+                msg = change_password(
+                    current["id"], form_value(form, "current_password"), form_value(form, "new_password"),
+                    form_value(form, "confirm_password"), keep_session_token=self.get_cookie_token() or "",
+                )
+                self.redirect(f"/cuenta?msg={quote_plus(msg)}")
+            except ValueError as exc:
+                self.redirect(f"/cuenta?err={quote_plus(str(exc))}")
+            return
+
         if path in ADMIN_POSTS:
             admin = self.require_admin()
             if not admin:
@@ -437,8 +460,7 @@ class AtlasHandler(BaseHTTPRequestHandler):
         safe_name = "".join(
             ch for ch in audit["company_name"].lower().replace(" ", "_") if ch.isalnum() or ch == "_"
         )[:40]
-        content_type = "text/csv; charset=utf-8" if ext == "csv" else "text/plain; charset=utf-8"
-        self.send_download(build(audit), f"{prefix}_{safe_name}_{audit['period']}.{ext}", content_type)
+        self.send_download(build(audit), f"{prefix}_{safe_name}_{audit['period']}.{ext}", _CONTENT_TYPES[ext])
 
 
 def run() -> None:
@@ -500,7 +522,6 @@ def run() -> None:
     print("")
     print(f"  ▲ Atlas · Auddit v2.0 — {scheme}://{args.host}:{args.port}")
     print(f"  Base de datos     : {DB_PATH}")
-    print("  Credenciales demo : admin/admin123  ·  auditor/auditor123")
     if _QUIET_MODE:
         print("  Modo silencioso   : activo (peticiones HTTP no se imprimen)")
     print("  Ctrl+C para salir.")

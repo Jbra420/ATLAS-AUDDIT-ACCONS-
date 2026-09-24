@@ -74,7 +74,7 @@ SUPERCIAS_RECORD = {
 class _TempDbCase(unittest.TestCase):
     def setUp(self):
         self.db = Path(tempfile.mkdtemp()) / "atlas.db"
-        init_db(self.db)
+        init_db(self.db, demo=True)
         self.auditor = authenticate("auditor", "auditor123", self.db)
         self.admin = authenticate("admin", "admin123", self.db)
 
@@ -206,7 +206,7 @@ class TestNamesBySource(_TempDbCase):
         with mock.patch.object(database.esquema, "lookup_catastro", return_value={"name": "GRUCANQUI CIA. LTDA"}), \
              mock.patch.object(database.esquema, "lookup_supercias_catalog",
                                return_value={"razon_social": "GRUCANQUI CIA. LTDA."}):
-            init_db(self.db)
+            init_db(self.db, demo=True)
 
         profile = get_company_profile(self.audit_id, self.db)
         self.assertEqual(profile["razon_social_sri"], "GRUCANQUI CIA. LTDA")
@@ -222,7 +222,7 @@ class TestNamesBySource(_TempDbCase):
 
         with mock.patch.object(database.esquema, "lookup_catastro", return_value={"name": "X"}) as sri, \
              mock.patch.object(database.esquema, "lookup_supercias_catalog", return_value={"razon_social": "Y"}) as sup:
-            init_db(self.db)
+            init_db(self.db, demo=True)
 
         profile = get_company_profile(self.audit_id, self.db)
         self.assertIsNone(profile["razon_social_sri"])

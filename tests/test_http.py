@@ -11,6 +11,9 @@ con datos reales:
     1. Iniciar el servidor de la copia: python3 app.py --port 8799
     2. Correr los tests desde la copia: ATLAS_HTTP_TEST_PORT=8799 python3 -m unittest tests.test_http -v
 
+No dependen de las cuentas de la base: crean (si faltan) un jefe auditor y
+un auditor propios de prueba, http_admin y http_auditor.
+
 Los tests verifican:
   - Rutas públicas responden correctamente.
   - El flujo completo login → cookie → dashboard retorna 200 OK.
@@ -31,11 +34,24 @@ from urllib.request import urlopen, Request
 from urllib.parse import unquote_plus, urlencode
 from urllib.error import HTTPError, URLError
 
-from database import connect, create_company_audit
+from database import connect, create_company_audit, create_user
 
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = int(os.environ.get("ATLAS_HTTP_TEST_PORT", "0"))
 BASE_URL = f"http://{SERVER_HOST}:{SERVER_PORT}"
+
+
+# Cuentas propias de los tests: la base real ya no trae usuarios demo y el
+# jefe auditor cambia su contraseña.
+ADMIN = ("http_admin", "http-admin-123")
+AUDITOR = ("http_auditor", "http-auditor-123")
+
+
+def _asegurar_usuarios_de_prueba() -> None:
+    with connect() as conn:
+        for (username, password), role in ((ADMIN, "admin"), (AUDITOR, "auditor")):
+            if not conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+                create_user(conn, username, f"Prueba HTTP {role}", role, password)
 
 
 def _server_available() -> bool:
@@ -44,9 +60,11 @@ def _server_available() -> bool:
         return False
     try:
         with socket.create_connection((SERVER_HOST, SERVER_PORT), timeout=1):
-            return True
+            pass
     except OSError:
         return False
+    _asegurar_usuarios_de_prueba()
+    return True
 
 
 def _get(path: str, cookie: str = "") -> tuple[int, str]:
@@ -125,8 +143,10 @@ class TestHTTPPublicRoutes(unittest.TestCase):
     """Rutas públicas accesibles sin autenticación."""
 
     def test_login_page_returns_200(self):
-        status, _ = _get("/login")
+        status, body = _get("/login")
         self.assertEqual(status, 200, "GET /login debe retornar 200 OK")
+        for credencial in ("admin123", "auditor123", "Demo:"):
+            self.assertNotIn(credencial, body, "El login no muestra usuarios ni contraseñas")
 
     def test_root_without_auth_redirects(self):
         """Sin cookie → redirect (3xx) a /login."""
@@ -141,13 +161,13 @@ class TestHTTPPublicRoutes(unittest.TestCase):
 
     def test_unknown_route_returns_404(self):
         """Ruta inexistente → 404."""
-        cookie = _login("auditor", "auditor123")
+        cookie = _login(*AUDITOR)
         status, _ = _get("/ruta-que-no-existe-xyz", cookie)
         self.assertEqual(status, 404)
 
     def test_wrong_password_does_not_set_cookie(self):
         """Credenciales incorrectas no deben establecer sesión."""
-        cookie = _login("auditor", "clave_totalmente_incorrecta")
+        cookie = _login(AUDITOR[0], "clave_totalmente_incorrecta")
         self.assertEqual(cookie, "",
                          "Login fallido no debe devolver cookie de sesión")
 
@@ -189,7 +209,7 @@ class TestHTTPAuditorFlow(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.cookie = _login("auditor", "auditor123")
+        cls.cookie = _login(*AUDITOR)
 
     def test_auditor_login_sets_cookie(self):
         """Login exitoso del auditor debe retornar cookie de sesión."""
@@ -221,10 +241,10 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         """El servidor debe rechazar la generación aunque se omita el botón de la interfaz."""
         with connect() as conn:
             auditor_id = conn.execute(
-                "SELECT id FROM users WHERE username = 'auditor'"
+                "SELECT id FROM users WHERE username = 'http_auditor'"
             ).fetchone()["id"]
             admin_id = conn.execute(
-                "SELECT id FROM users WHERE username = 'admin'"
+                "SELECT id FROM users WHERE username = 'http_admin'"
             ).fetchone()["id"]
 
         audit_id = create_company_audit(
@@ -273,10 +293,11 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         from tests.test_certificados import _pdf_con_texto
 
         with connect() as conn:
-            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
-            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'http_auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'http_admin'").fetchone()["id"]
+        ruc = "1790000001001"
         audit_id = create_company_audit(
-            f"Empresa certificado {time.time_ns()}", "", "Cuenca", "", "2025", auditor_id, admin_id,
+            f"Empresa certificado {time.time_ns()}", ruc, "Cuenca", "", "2025", auditor_id, admin_id,
         )
         with connect() as conn:
             company_id = conn.execute("SELECT company_id FROM audits WHERE id = ?", (audit_id,)).fetchone()["company_id"]
@@ -290,31 +311,48 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         page = f"/auditor/radar?audit_id={audit_id}&tab=admins"
         pdfs = {
             "administradores.pdf": _pdf_con_texto([
+                f"RUC: {ruc}",
                 "ADMINISTRADORES",
-                "0102030405 TORRES VEGA ANA ECUADOR GERENTE GENERAL",
-                "0912345678 PEREZ LUIS ECUADOR PRESIDENTE",
+                "0102030400 TORRES VEGA ANA ECUADOR GERENTE GENERAL",
+                "0912345675 PEREZ LUIS ECUADOR PRESIDENTE",
             ]),
-            "accionistas.pdf": _pdf_con_texto(["ACCIONISTAS", "0102030405 TORRES VEGA ANA ECUADOR 800,00"]),
+            "accionistas.pdf": _pdf_con_texto([f"RUC: {ruc}", "ACCIONISTAS", "0102030400 TORRES VEGA ANA ECUADOR 800,00"]),
         }
-        limite = "----atlastest"
-        campos = {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), "return_tab": "admins"}
-        cuerpo = b"".join(
-            f"--{limite}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
-            for k, v in campos.items()
-        ) + b"".join(
-            (f"--{limite}\r\nContent-Disposition: form-data; name=\"archivo\"; filename=\"{nombre}\"\r\n"
-             "Content-Type: application/pdf\r\n\r\n").encode() + pdf + b"\r\n"
-            for nombre, pdf in pdfs.items()
-        ) + f"--{limite}--\r\n".encode()
-        conn = http.client.HTTPConnection(SERVER_HOST, SERVER_PORT, timeout=5)
-        conn.request("POST", "/auditor/radar/certificado", body=cuerpo, headers={
-            "Content-Type": f"multipart/form-data; boundary={limite}", "Cookie": self.cookie,
-        })
-        resp = conn.getresponse()
-        self.assertEqual(resp.status, 303)
-        self.assertIn("2+certificados+registrados", resp.getheader("Location", ""))
-        self.assertIn("2+administrador", resp.getheader("Location", ""))
-        self.assertIn("1+accionista", resp.getheader("Location", ""))
+
+        def subir(archivos: dict[str, bytes]) -> str:
+            limite = "----atlastest"
+            campos = {"audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), "return_tab": "admins"}
+            cuerpo = b"".join(
+                f"--{limite}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
+                for k, v in campos.items()
+            ) + b"".join(
+                (f"--{limite}\r\nContent-Disposition: form-data; name=\"archivo\"; filename=\"{nombre}\"\r\n"
+                 "Content-Type: application/pdf\r\n\r\n").encode() + pdf + b"\r\n"
+                for nombre, pdf in archivos.items()
+            ) + f"--{limite}--\r\n".encode()
+            conn = http.client.HTTPConnection(SERVER_HOST, SERVER_PORT, timeout=5)
+            conn.request("POST", "/auditor/radar/certificado", body=cuerpo, headers={
+                "Content-Type": f"multipart/form-data; boundary={limite}", "Cookie": self.cookie,
+            })
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 303)
+            return unquote_plus(resp.getheader("Location", ""))
+
+        # Un PDF de otra compañía se rechaza sin guardar evidencia ni propuesta.
+        ajeno = _pdf_con_texto(["RUC: 0190444619001", "ACCIONISTAS", "0102030400 TORRES VEGA ANA ECUADOR 800,00"])
+        location = subir({"otra_empresa.pdf": ajeno})
+        self.assertIn("err=otra_empresa.pdf: El documento corresponde al RUC 0190444619001", location)
+        with connect() as conn:
+            guardado = conn.execute(
+                "SELECT (SELECT COUNT(*) FROM sources WHERE audit_id = ? AND title LIKE 'Certificado%') "
+                "+ (SELECT COUNT(*) FROM nomina_imports WHERE audit_id = ?)", (audit_id, audit_id),
+            ).fetchone()[0]
+        self.assertEqual(guardado, 0)
+
+        location = subir(pdfs)
+        self.assertIn("2 certificados registrados", location)
+        self.assertIn("2 administrador", location)
+        self.assertIn("1 accionista", location)
 
         _, body = _get(page, self.cookie)
         admins_pane = self._pane_content(body, "admins", "accionistas")
@@ -329,9 +367,9 @@ class TestHTTPAuditorFlow(unittest.TestCase):
             "audit_id": str(audit_id), "_csrf": _csrf_token(page, self.cookie), "import_id": import_id,
             "return_tab": "admins", "fecha_consulta": "2026-09-01",
             "incluir_administradores": "0", "incluir_accionistas": "0",
-            "administradores_identificacion_0": "0102030405", "administradores_nombre_0": "TORRES VEGA ANA",
+            "administradores_identificacion_0": "0102030400", "administradores_nombre_0": "TORRES VEGA ANA",
             "administradores_cargo_0": "GERENTE GENERAL", "administradores_nacionalidad_0": "ECUADOR",
-            "accionistas_identificacion_0": "0102030405", "accionistas_nombre_0": "TORRES VEGA ANA",
+            "accionistas_identificacion_0": "0102030400", "accionistas_nombre_0": "TORRES VEGA ANA",
             "accionistas_capital_0": "800", "accionistas_participacion_porcentaje_0": "100",
         }, self.cookie)
         self.assertEqual(status, 303)
@@ -360,10 +398,10 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         ruc = "0999999999001"
         with connect() as conn:
             auditor_id = conn.execute(
-                "SELECT id FROM users WHERE username = 'auditor'"
+                "SELECT id FROM users WHERE username = 'http_auditor'"
             ).fetchone()["id"]
             admin_id = conn.execute(
-                "SELECT id FROM users WHERE username = 'admin'"
+                "SELECT id FROM users WHERE username = 'http_admin'"
             ).fetchone()["id"]
             if conn.execute("SELECT COUNT(*) FROM financial_statements WHERE ruc = ?", (ruc,)).fetchone()[0]:
                 self.skipTest("La base local ya tiene ejercicios del RUC de prueba")
@@ -497,8 +535,8 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         """Fase 3: la identificación se valida en el servidor, la fecha de
         consulta no puede ser futura y cada cambio queda en la trazabilidad."""
         with connect() as conn:
-            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
-            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'http_auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'http_admin'").fetchone()["id"]
         audit_id = create_company_audit(
             f"Empresa trazabilidad {time.time_ns()}", "", "Cuenca", "", "2025", auditor_id, admin_id,
         )
@@ -555,8 +593,8 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         guarda aparte y no se sobrescribe."""
         ruc = "0190314014001"
         with connect() as conn:
-            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
-            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'http_auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'http_admin'").fetchone()["id"]
             previous = conn.execute(
                 "SELECT COUNT(*) FROM financial_statements WHERE ruc = ?", (ruc,)
             ).fetchone()[0]
@@ -602,8 +640,8 @@ class TestHTTPAuditorFlow(unittest.TestCase):
         que llegara en el formulario, así que guardar Ubicación vaciaba SRI y
         Supercias, y guardar SRI vaciaba la ubicación."""
         with connect() as conn:
-            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
-            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'http_auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'http_admin'").fetchone()["id"]
         audit_id = create_company_audit(
             f"Empresa guardado parcial {time.time_ns()}", "", "Cuenca", "", "2025", auditor_id, admin_id,
         )
@@ -647,7 +685,7 @@ class TestHTTPAdminFlow(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.cookie = _login("admin", "admin123")
+        cls.cookie = _login(*ADMIN)
 
     def test_admin_login_sets_cookie(self):
         """Login exitoso del admin debe retornar cookie de sesión."""
@@ -668,8 +706,8 @@ class TestHTTPAdminFlow(unittest.TestCase):
         """El admin archiva una empresa: sale del directorio y el auditor pierde
         el acceso (ver y editar); el admin la sigue viendo y puede restaurarla."""
         with connect() as conn:
-            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
-            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'http_auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'http_admin'").fetchone()["id"]
         nombre = f"Empresa archivable {time.time_ns()}"
         audit_id = create_company_audit(nombre, "", "Cuenca", "", "2025", auditor_id, admin_id)
 
@@ -679,7 +717,7 @@ class TestHTTPAdminFlow(unittest.TestCase):
                              "(SELECT company_id FROM audits WHERE id = ?)", (audit_id,))
 
         self.addCleanup(cleanup_company)
-        auditor_cookie = _login("auditor", "auditor123")
+        auditor_cookie = _login(*AUDITOR)
         radar = f"/auditor/radar?audit_id={audit_id}"
 
         status, location, _ = _post_raw("/admin/companies/archive", {
@@ -807,10 +845,10 @@ class TestHTTPAdminFlow(unittest.TestCase):
 
         with connect() as conn:
             admin_id = conn.execute(
-                "SELECT id FROM users WHERE username = 'admin'"
+                "SELECT id FROM users WHERE username = 'http_admin'"
             ).fetchone()["id"]
             auditor_id = conn.execute(
-                "SELECT id FROM users WHERE username = 'auditor'"
+                "SELECT id FROM users WHERE username = 'http_auditor'"
             ).fetchone()["id"]
 
         # La ruta recibe un CSRF válido y llega a la regla de negocio: un
@@ -857,12 +895,12 @@ class TestHTTPSuperciasFlow(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.cookie = _login("auditor", "auditor123")
+        cls.cookie = _login(*AUDITOR)
 
     def setUp(self) -> None:
         with connect() as conn:
-            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'auditor'").fetchone()["id"]
-            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'http_auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'http_admin'").fetchone()["id"]
         self.audit_id = create_company_audit(
             f"Empresa Supercias HTTP {time.time_ns()}", self.RUC, "Cuenca",
             "Comercio", "2026", auditor_id, admin_id,
@@ -942,6 +980,110 @@ class TestHTTPSuperciasFlow(unittest.TestCase):
         match = re.search(r'id="tab-accionistas"(.*?)id="tab-indicadores"', body_after, re.S)
         accionistas_pane = match.group(1) if match else body_after
         self.assertIn("Certificado aún no registrado", accionistas_pane)
+
+
+@unittest.skipUnless(_server_available(), _SKIP_REASON)
+class TestHTTPCuenta(unittest.TestCase):
+    """Mi cuenta: todos los roles cambian su propia contraseña. El jefe
+    auditor solo crea auditores."""
+
+    def test_mi_cuenta_para_ambos_roles(self):
+        for usuario in (ADMIN, AUDITOR):
+            with self.subTest(usuario=usuario[0]):
+                status, body = _get("/cuenta", _login(*usuario))
+                self.assertEqual(status, 200)
+                self.assertIn('action="/cuenta/password"', body)
+                self.assertIn('href="/cuenta"', body, "El nombre del usuario lleva a Mi cuenta")
+
+    def test_cambiar_contrasena(self):
+        username = f"http_clave_{time.time_ns()}"
+        with connect() as conn:
+            create_user(conn, username, "Prueba cambio de clave", "auditor", "clave-inicial")
+        cookie = _login(username, "clave-inicial")
+        otra_sesion = _login(username, "clave-inicial")
+
+        def cambiar(actual: str, nueva: str, confirmacion: str) -> str:
+            _, location, _ = _post_raw("/cuenta/password", {
+                "_csrf": _csrf_token("/cuenta", cookie), "current_password": actual,
+                "new_password": nueva, "confirm_password": confirmacion,
+            }, cookie)
+            return unquote_plus(location)
+
+        self.assertIn("err=La contraseña actual no es correcta", cambiar("mala", "clave-nueva-1", "clave-nueva-1"))
+        self.assertIn("err=La nueva contraseña y su confirmación no coinciden",
+                      cambiar("clave-inicial", "clave-nueva-1", "otra"))
+        self.assertIn("msg=Contraseña actualizada", cambiar("clave-inicial", "clave-nueva-1", "clave-nueva-1"))
+
+        self.assertIn('action="/cuenta/password"', _get("/cuenta", cookie)[1],
+                      "La sesión de quien cambia sigue abierta")
+        self.assertNotIn('action="/cuenta/password"', _get("/cuenta", otra_sesion)[1],
+                         "Las demás sesiones se cierran (redirige al login)")
+        self.assertEqual(_login(username, "clave-inicial"), "")
+        self.assertIn("atlas_session=", _login(username, "clave-nueva-1"))
+
+    def test_cambiar_contrasena_exige_csrf(self):
+        status, _, _ = _post_raw("/cuenta/password", {
+            "current_password": AUDITOR[1], "new_password": "x" * 10, "confirm_password": "x" * 10,
+        }, _login(*AUDITOR))
+        self.assertEqual(status, 403)
+
+    def test_usuarios_crea_solo_auditores(self):
+        cookie = _login(*ADMIN)
+        _, body = _get("/admin/users", cookie)
+        self.assertNotIn('name="role"', body, "Sin selector de rol")
+        username = f"http_nuevo_{time.time_ns()}"
+        _post_raw("/admin/users", {
+            "_csrf": _csrf_token("/admin/users", cookie), "username": username,
+            "full_name": "Nuevo auditor", "password": "clave-temporal", "role": "admin",
+        }, cookie)
+        with connect() as conn:
+            rol = conn.execute("SELECT role FROM users WHERE username = ?", (username,)).fetchone()["role"]
+        self.assertEqual(rol, "auditor", "Aunque se envíe role=admin, se crea un auditor")
+
+
+@unittest.skipUnless(_server_available(), _SKIP_REASON)
+class TestHTTPExportaciones(unittest.TestCase):
+    """Descargas del expediente: el resumen en texto y el levantamiento en Excel."""
+
+    def test_descargas_disponibles_y_eliminadas(self):
+        import http.client
+        with connect() as conn:
+            auditor_id = conn.execute("SELECT id FROM users WHERE username = 'http_auditor'").fetchone()["id"]
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'http_admin'").fetchone()["id"]
+        audit_id = create_company_audit(
+            f"Empresa exportable {time.time_ns()}", "", "Cuenca", "", "2025", auditor_id, admin_id,
+        )
+
+        def cleanup_company() -> None:
+            with connect() as conn:
+                conn.execute("DELETE FROM companies WHERE id = "
+                             "(SELECT company_id FROM audits WHERE id = ?)", (audit_id,))
+
+        self.addCleanup(cleanup_company)
+
+        def descargar(path: str, cookie: str) -> tuple[int, str, bytes]:
+            conn = http.client.HTTPConnection(SERVER_HOST, SERVER_PORT, timeout=10)
+            conn.request("GET", f"{path}?audit_id={audit_id}", headers={"Cookie": cookie})
+            resp = conn.getresponse()
+            cuerpo = resp.read()
+            conn.close()
+            return resp.status, resp.getheader("Content-Type", ""), cuerpo
+
+        for usuario in (AUDITOR, ADMIN):
+            cookie = _login(*usuario)
+            with self.subTest(usuario=usuario[0]):
+                status, tipo, cuerpo = descargar("/export/xlsx", cookie)
+                self.assertEqual(status, 200)
+                self.assertEqual(tipo, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                self.assertTrue(cuerpo.startswith(b"PK"), "Un .xlsx es un archivo zip")
+                self.assertEqual(descargar("/export/summary", cookie)[0], 200)
+                for eliminada in ("/export/csv", "/export/dossier"):
+                    self.assertEqual(descargar(eliminada, cookie)[0], 404, eliminada)
+
+        _, body = _get(f"/auditor/radar?audit_id={audit_id}", _login(*AUDITOR))
+        self.assertIn("/export/xlsx", body)
+        self.assertNotIn("/export/csv", body)
+        self.assertNotIn("/export/dossier", body)
 
 
 if __name__ == "__main__":

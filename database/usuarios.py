@@ -84,6 +84,50 @@ def authenticate(username: str, password: str, db_path: Path | str = DB_PATH) ->
         return None
 
 
+PASSWORD_MIN = 8
+PASSWORD_MAX = 128
+
+
+def change_password(
+    user_id: int,
+    current_password: str,
+    new_password: str,
+    confirmation: str,
+    keep_session_token: str = "",
+    db_path: Path | str = DB_PATH,
+) -> str:
+    """Cambia la contraseña del propio usuario (cualquier rol). Exige la
+    actual y cierra las demás sesiones abiertas de la cuenta; la sesión
+    keep_session_token (la de quien hace el cambio) sigue activa."""
+    if not current_password or not new_password:
+        raise ValueError("Ingrese la contraseña actual y la nueva")
+    if new_password != confirmation:
+        raise ValueError("La nueva contraseña y su confirmación no coinciden")
+    if not PASSWORD_MIN <= len(new_password) <= PASSWORD_MAX:
+        raise ValueError(f"La nueva contraseña debe tener entre {PASSWORD_MIN} y {PASSWORD_MAX} caracteres")
+    if new_password.strip() != new_password:
+        raise ValueError("La nueva contraseña no puede empezar ni terminar con espacios")
+    with connect(db_path) as conn:
+        user = conn.execute(
+            "SELECT * FROM users WHERE id = ? AND active = 1 AND deleted_at IS NULL", (user_id,),
+        ).fetchone()
+        if user is None:
+            raise ValueError("Usuario no disponible")
+        if not verify_password(current_password, user["password_salt"], user["password_hash"]):
+            raise ValueError("La contraseña actual no es correcta")
+        if verify_password(new_password, user["password_salt"], user["password_hash"]):
+            raise ValueError("La nueva contraseña debe ser distinta de la actual")
+        salt, pw_hash = hash_password(new_password)
+        conn.execute(
+            "UPDATE users SET password_salt = ?, password_hash = ? WHERE id = ?", (salt, pw_hash, user_id),
+        )
+        conn.execute(
+            "DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",
+            (user_id, session_hash(keep_session_token) if keep_session_token else ""),
+        )
+    return "Contraseña actualizada. Se cerraron las demás sesiones de su cuenta."
+
+
 def list_users(db_path: Path | str = DB_PATH) -> list[sqlite3.Row]:
     with connect(db_path) as conn:
         return list(conn.execute(

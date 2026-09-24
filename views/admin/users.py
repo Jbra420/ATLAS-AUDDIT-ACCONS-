@@ -122,7 +122,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
 
     <div class="grid">
       <div class="panel col-4">
-        <h2>Nuevo usuario</h2>
+        <h2>Nuevo auditor</h2>
         <form method="post" action="/admin/users">
           {csrf_input(csrf_token)}
           <label for="full_name">Nombre completo</label>
@@ -131,16 +131,12 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
           <input id="username_new" name="username" required placeholder="Ej. mgarcia"
                  autocomplete="off" minlength="3" maxlength="32" pattern="[A-Za-z0-9_.-]{3,32}"
                  title="Use entre 3 y 32 caracteres: letras, números, punto, guion o guion bajo.">
-          <label for="role_sel">Rol</label>
-          <select id="role_sel" name="role">
-            <option value="auditor">Auditor</option>
-            <option value="admin">Administrador / Jefe</option>
-          </select>
           <label for="new_password">Contraseña temporal</label>
           <input id="new_password" name="password" type="password" required
                  minlength="6" autocomplete="new-password">
+          <div class="field-hint">El auditor la cambia desde "Mi cuenta" al ingresar.</div>
           <div class="actions" style="margin-top:24px;">
-            <button class="btn btn-primary" type="submit" style="width:100%">Crear usuario</button>
+            <button class="btn btn-primary" type="submit" style="width:100%">Crear auditor</button>
           </div>
         </form>
       </div>

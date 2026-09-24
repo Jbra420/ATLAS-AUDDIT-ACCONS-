@@ -17,6 +17,7 @@ from database import (
     init_db,
     list_provenance,
     lookup_balances_catalog,
+    lookup_balance_details,
     set_audit_fiscal_year,
     upsert_financial_statement,
 )
@@ -39,7 +40,7 @@ class TestBalancesCatalog(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.catalog = self.root / "balances.db"
         self.app_db = self.root / "atlas.db"
-        init_db(self.app_db)
+        init_db(self.app_db, demo=True)
         self.auditor = authenticate("auditor", "auditor123", self.app_db)
         self.admin = authenticate("admin", "admin123", self.app_db)
         self.audit_id = create_company_audit(
@@ -64,6 +65,9 @@ class TestBalancesCatalog(unittest.TestCase):
         self.assertEqual(record["nombre"], "GRUCANQUI CIA. LTDA")
         self.assertEqual(record["activo_total"], 3108776.58)
         self.assertEqual(record["utilidad_neta_707"], -7279.63)
+        detalle = lookup_balance_details(RUC, self.catalog)[0]
+        self.assertEqual(len(detalle["cuentas"]), len(FIELDS))
+        self.assertIn(("1", "Descripción de cuenta 1", 3108776.58), detalle["cuentas"])
         self.assertEqual(record["fuente_sha256"], hashlib.sha256(
             (self.root / "balances_2025_1.txt").read_bytes()).hexdigest())
 
@@ -75,6 +79,36 @@ class TestBalancesCatalog(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no es numerica"):
             load_catalog(self.root, self.catalog)
         self.assertEqual(lookup_balances_catalog(RUC, self.catalog)[0]["activo_total"], 3108776.58)
+        self.assertEqual(lookup_balance_details(RUC, self.catalog)[0]["cuentas"][0][2], 3108776.58)
+
+    def test_guarda_cuentas_de_desglose_y_ceros_del_reporte(self):
+        with (self.root / "catalogo_2025_1.txt").open("a", encoding="cp1252", newline="") as stream:
+            csv.writer(stream, delimiter="\t").writerow(("101", "Activo corriente"))
+        with (self.root / "balances_2025_1.txt").open("w", encoding="cp1252", newline="") as stream:
+            writer = csv.writer(stream, delimiter="\t")
+            writer.writerow([*HEADER, "CUENTA_101"])
+            writer.writerow(["2025", "141528", RUC, "GRUCANQUI CIA. LTDA", "G0000", *AMOUNTS, "0,00"])
+        load_catalog(self.root, self.catalog)
+        cuentas = lookup_balance_details(RUC, self.catalog)[0]["cuentas"]
+        self.assertIn(("101", "Activo corriente", 0), cuentas)
+        self.assertEqual(len(cuentas), len(FIELDS) + 1)
+
+    def test_descripciones_se_mantienen_por_ejercicio(self):
+        load_catalog(self.root, self.catalog)
+        other = self.root / "ejercicio_2024"
+        other.mkdir()
+        with (other / "catalogo_2024_1.txt").open("w", encoding="cp1252", newline="") as stream:
+            writer = csv.writer(stream, delimiter="\t")
+            writer.writerows((code, f"Cuenta anterior {code}") for code in FIELDS)
+        with (other / "balances_2024_1.txt").open("w", encoding="cp1252", newline="") as stream:
+            writer = csv.writer(stream, delimiter="\t")
+            writer.writerow(HEADER)
+            writer.writerow(["2024", "141528", RUC, "GRUCANQUI", "G0000", *AMOUNTS])
+        load_catalog(other, self.catalog)
+        detalle = lookup_balance_details(RUC, self.catalog)
+        self.assertEqual([year["anio_fiscal"] for year in detalle], [2025, 2024])
+        self.assertEqual(detalle[0]["cuentas"][0][1], "Descripción de cuenta 1")
+        self.assertEqual(detalle[1]["cuentas"][0][1], "Cuenta anterior 1")
 
     def test_invalid_ruc_is_counted_not_guessed(self):
         valid = ["2025", "141528", RUC, "GRUCANQUI", "G0000", *AMOUNTS]

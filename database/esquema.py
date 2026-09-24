@@ -14,11 +14,13 @@ from database.expedientes import DEFAULT_ECONOMIC_DOCUMENTS
 SCHEMA_PATH = BASE_DIR / "schema.sql"
 
 
-def init_db(db_path: Path | str = DB_PATH) -> None:
+def init_db(db_path: Path | str = DB_PATH, demo: bool = False) -> None:
+    """Crea o migra la base. demo=True (solo tests) siembra además el auditor
+    y la empresa demo cuando la base está vacía."""
     with connect(db_path) as conn:
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         _migrate(conn)
-        seed_defaults(conn)
+        seed_defaults(conn, demo=demo)
 
 
 def _migrate(conn: sqlite3.Connection) -> None:

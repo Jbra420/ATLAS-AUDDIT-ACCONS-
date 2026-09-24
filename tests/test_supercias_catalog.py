@@ -84,7 +84,7 @@ class TestApplySuperciasResearchResult(unittest.TestCase):
     def setUp(self):
         directory = Path(tempfile.mkdtemp())
         self.db = directory / "atlas.db"
-        init_db(self.db)
+        init_db(self.db, demo=True)
         self.auditor = authenticate("auditor", "auditor123", self.db)
         self.admin = authenticate("admin", "admin123", self.db)
         self.audit_id = create_company_audit(
@@ -177,7 +177,7 @@ class TestLookupSuperciasCatalogMissing(unittest.TestCase):
     def test_research_company_by_ruc_reports_pending_when_catalog_absent(self):
         directory = Path(tempfile.mkdtemp())
         db = directory / "atlas.db"
-        init_db(db)
+        init_db(db, demo=True)
         auditor = authenticate("auditor", "auditor123", db)
         admin = authenticate("admin", "admin123", db)
         audit_id = create_company_audit(
@@ -200,7 +200,7 @@ class TestResearchCompanyByRucPartialResults(unittest.TestCase):
     def setUp(self):
         directory = Path(tempfile.mkdtemp())
         self.db = directory / "atlas.db"
-        init_db(self.db)
+        init_db(self.db, demo=True)
         self.auditor = authenticate("auditor", "auditor123", self.db)
         self.admin = authenticate("admin", "admin123", self.db)
         self.audit_id = create_company_audit(

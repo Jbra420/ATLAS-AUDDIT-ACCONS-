@@ -259,34 +259,26 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     """
 
     # ── Barra de acción flotante ────────────────────────────────────
+    export_buttons = f"""
+          <a class="btn btn-sm" href="/export/summary?audit_id={audit_id}" title="Descargar el resumen en texto">
+            {SVG_DOWNLOAD} Resumen
+          </a>
+          <a class="btn btn-sm" href="/export/xlsx?audit_id={audit_id}"
+             title="Descargar el levantamiento de información completo en Excel">
+            {SVG_DOWNLOAD} Excel
+          </a>"""
     if is_read_only:
         action_bar_right = f"""
           {'<span class="badge badge-amber" title="' + esc(audit["archive_reason"] or "") + '">Empresa archivada</span>' if audit["archived_at"] else ''}
           <span class="badge badge-gray">{SVG_INFO} Modo solo lectura</span>
-          <a class="btn btn-sm" href="/export/summary?audit_id={audit_id}" title="Descargar resumen en .txt">
-            {SVG_DOWNLOAD} Exportar .txt
-          </a>
-          <a class="btn btn-sm" href="/export/csv?audit_id={audit_id}" title="Descargar ficha en .csv">
-            {SVG_DOWNLOAD} Exportar .csv
-          </a>
-          <a class="btn btn-sm" href="/export/dossier?audit_id={audit_id}" title="Descargar ficha final en .txt">
-            {SVG_DOWNLOAD} Ficha final
-          </a>
+          {export_buttons}
         """
     else:
         action_bar_right = f"""
           <button type="button" class="btn btn-sm" onclick="switchTab('resumen')" title="Ir al resumen">
             {SVG_RADAR} Ver resumen
           </button>
-          <a class="btn btn-sm" href="/export/summary?audit_id={audit_id}" title="Descargar resumen en .txt">
-            {SVG_DOWNLOAD} Exportar .txt
-          </a>
-          <a class="btn btn-sm" href="/export/csv?audit_id={audit_id}" title="Descargar ficha en .csv">
-            {SVG_DOWNLOAD} Exportar .csv
-          </a>
-          <a class="btn btn-sm" href="/export/dossier?audit_id={audit_id}" title="Descargar ficha final en .txt">
-            {SVG_DOWNLOAD} Ficha final
-          </a>
+          {export_buttons}
         """
     action_bar = f"""
     <div class="radar-action-bar">

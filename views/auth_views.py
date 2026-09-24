@@ -98,9 +98,6 @@ def render_login_page(user: sqlite3.Row | None = None, query: dict = None, activ
             </button>
           </div>
         </form>
-        <p class="login-demo">
-          Demo: <code>admin / admin123</code><br><code>auditor / auditor123</code>
-        </p>
       </div>
       <div class="login-footer-badge" style="z-index: 1;">
         <img src="/static/logoauddit.jpeg" alt="Auddit" class="login-footer-logo">

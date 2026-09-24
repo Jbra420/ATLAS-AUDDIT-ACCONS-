@@ -65,8 +65,6 @@
   font-weight: 500;
 }
 
-.login-demo { font-size: 12px; color: rgba(255,255,255,0.4); text-align: center; margin-top: 24px; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px;}
-.login-demo code { background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; color: white;}
 
 /* Credito de marca bajo la tarjeta de login: el logo de Auddit trae su
    propio fondo blanco (no es un PNG transparente), así que se aloja en una

@@ -41,7 +41,7 @@ CIFRAS_2025 = {
 class _FinancialCase(unittest.TestCase):
     def setUp(self):
         self.db = Path(tempfile.mkdtemp()) / "atlas.db"
-        init_db(self.db)
+        init_db(self.db, demo=True)
         self.auditor = authenticate("auditor", "auditor123", self.db)
         self.admin = authenticate("admin", "admin123", self.db)
         self.audit_id = self._audit(REFERENCE_RUC)
@@ -289,8 +289,8 @@ class TestSummaryAndDocuments(_FinancialCase):
         self.assertIn(nombre, DEFAULT_ECONOMIC_DOCUMENTS)
         with connect(self.db) as conn:
             conn.execute("DELETE FROM economic_documents WHERE audit_id = ? AND nombre = ?", (self.audit_id, nombre))
-        init_db(self.db)
-        init_db(self.db)
+        init_db(self.db, demo=True)
+        init_db(self.db, demo=True)
         with connect(self.db) as conn:
             count = conn.execute(
                 "SELECT COUNT(*) FROM economic_documents WHERE audit_id = ? AND nombre = ?",

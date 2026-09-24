@@ -30,7 +30,7 @@ def _make_db() -> Path:
     """Crea una base de datos temporal para pruebas."""
     tmp_dir = tempfile.mkdtemp()
     db_path = Path(tmp_dir) / "test_radar.db"
-    init_db(db_path)
+    init_db(db_path, demo=True)
     return db_path
 
 def _admin_row(db_path: Path) -> sqlite3.Row:

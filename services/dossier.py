@@ -3,7 +3,7 @@ services/dossier.py - Ficha final de resultados para Atlas.
 
 Consolida la informacion ya capturada en el expediente. No consulta fuentes
 externas ni inventa datos; solo organiza avances, evidencias, riesgos y
-pendientes para lectura rapida y exportacion.
+pendientes para lectura rapida en la pestaña Resumen.
 """
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ def build_dossier_model(
     source_map: dict[str, Any],
     sources: list[RowLike],
 ) -> dict[str, Any]:
-    """Construye un modelo compacto para vista y exportacion de la ficha final."""
+    """Construye un modelo compacto de la ficha final para la pestaña Resumen."""
     totals = source_map.get("totals", {})
     source_rows = _source_rows(sources)
     financial_alerts = [
@@ -178,50 +178,3 @@ def build_dossier_model(
             else "El expediente debe completar los campos pendientes antes de usar la ficha como soporte definitivo."
         ),
     }
-
-
-def build_dossier_text(dossier: dict[str, Any]) -> str:
-    """Convierte la ficha final a texto plano descargable."""
-    metrics = dossier.get("metrics", {})
-    lines = [
-        "ATLAS - FICHA FINAL DE RESULTADOS",
-        "=" * 72,
-        f"Estado: {dossier.get('status', 'En construccion')}",
-        "",
-        "1. IDENTIFICACION",
-        "-" * 72,
-    ]
-    for item in dossier.get("identity", []):
-        lines.append(f"{item['label']}: {item['value']}")
-
-    lines += [
-        "",
-        "2. ESTADO DE FUENTES",
-        "-" * 72,
-        f"Avance global: {metrics.get('source_percent', 0)}%",
-        f"Fuentes completas: {metrics.get('completed_sources', 0)}",
-        f"Fuentes en avance: {metrics.get('partial_sources', 0)}",
-        f"Fuentes pendientes: {metrics.get('pending_sources', 0)}",
-    ]
-    for row in dossier.get("source_status", []):
-        lines.append(f"- {row['title']}: {row['status']} ({row['completed']}) | Pendiente: {row['missing']}")
-
-    lines += ["", "3. EVIDENCIA REGISTRADA", "-" * 72]
-    for row in dossier.get("evidence", []):
-        lines.append(f"- [{row['type']}] {row['title']} | {row['url']} | {row['notes']}")
-    if not dossier.get("evidence"):
-        lines.append("Sin evidencias registradas.")
-
-    lines += ["", "4. INDICADORES FINANCIEROS", "-" * 72]
-    for item in dossier.get("financial", []):
-        lines.append(f"{item['label']}: {item['value']}")
-
-    lines += ["", "5. RIESGOS Y PENDIENTES", "-" * 72, "Riesgos:"]
-    for item in dossier.get("risks", []):
-        lines.append(f"- {item}")
-    lines.append("Pendientes:")
-    for item in dossier.get("pending", []):
-        lines.append(f"- {item}")
-
-    lines += ["", "6. CIERRE PRELIMINAR", "-" * 72, dossier.get("closing", "Pendiente de confirmar.")]
-    return "\n".join(lines)

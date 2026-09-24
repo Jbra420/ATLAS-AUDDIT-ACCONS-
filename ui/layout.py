@@ -129,13 +129,14 @@ def layout(
             </nav>
           </div>
           <div class="topbar-right">
-            <div class="userbox">
+            <a class="userbox{' active' if active_path == '/cuenta' else ''}" href="/cuenta"
+               title="Mi cuenta: cambiar contraseña">
               <div class="userbox-avatar">{initials}</div>
               <div class="userbox-info">
                 <span class="userbox-name">{esc(user['full_name'])}</span>
                 <span class="userbox-role">{esc(role_label)}</span>
               </div>
-            </div>
+            </a>
             <a class="logout-link" href="/logout" title="Cerrar sesión">{SVG_LOGOUT}</a>
           </div>
         </header>

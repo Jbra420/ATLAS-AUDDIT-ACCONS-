@@ -160,6 +160,82 @@ def _line(label: str, value) -> str:
     return f"  {label:<28}: {_val(value)}"
 
 
+# Campos de los bloques 1 a 3 del levantamiento: (columna, etiqueta). Los usan
+# el resumen en texto y el Excel, para que ambos presenten lo mismo.
+CAMPOS_SRI = (
+    ("razon_social_sri", "Razón social"),
+    ("estado_contribuyente", "Estado del RUC"),
+    ("tipo_contribuyente", "Tipo de contribuyente"),
+    ("regimen", "Régimen"),
+    ("agente_retencion", "Agente de retención"),
+    ("fecha_inicio_actividades", "Inicio de actividades"),
+    ("obligado_contabilidad", "Obligado a llevar contab."),
+    ("contribuyente_especial", "Contribuyente especial"),
+    ("contribuyente_fantasma", "Contribuyente fantasma"),
+    ("transacciones_inexistentes", "Transacciones inexistentes"),
+    ("actividad_economica", "Actividad económica"),
+    ("ciiu_sri", "Código CIIU"),
+    ("representante_legal_sri", "Representante legal (SRI)"),
+)
+CAMPOS_SUPERCIAS = (
+    ("razon_social_supercias", "Razón social (Supercias)"),
+    ("expediente_supercias", "Número de expediente"),
+    ("fecha_constitucion", "Fecha de constitución"),
+    ("tipo_compania", "Tipo de compañía"),
+    ("situacion_legal", "Situación legal"),
+    ("plazo_social", "Plazo social"),
+    ("oficina_control", "Oficina de control"),
+    ("objeto_social", "Objeto social"),
+)
+CAMPOS_UBICACION = (
+    ("provincia", "Provincia"),
+    ("ciudad", "Ciudad"),
+    ("calle", "Calle principal"),
+    ("numero", "Número"),
+    ("interseccion", "Intersección"),
+    ("barrio", "Barrio"),
+    ("referencia", "Referencia"),
+)
+
+
+def valores_supercias(profile, data: dict) -> list[tuple[str, str, object]]:
+    """(columna, etiqueta, valor) del bloque Supercias: tipo de compañía y
+    situación legal con su clasificación oficial."""
+    pv = profile or _CamposTolerantes()
+    valores = {campo: pv[campo] for campo, _ in CAMPOS_SUPERCIAS}
+    valores["tipo_compania"] = con_valor_oficial(clasificar_tipo_compania(pv["tipo_compania"]), pv["tipo_compania"])
+    valores["situacion_legal"] = (
+        con_valor_oficial(clasificar_situacion_legal(pv["situacion_legal"]), pv["situacion_legal"])
+        or data.get("legal_status")
+    )
+    return [(campo, label, valores[campo]) for campo, label in CAMPOS_SUPERCIAS]
+
+
+def cierre_levantamiento(validacion: dict, snapshot, risks: list[str]) -> dict:
+    """Pendientes obligatorios, recomendados y recomendación preliminar."""
+    pendientes = [p["label"] for p in validacion["pendientes"]]
+    if snapshot and not row_get(snapshot, "anio_fiscal", None):
+        pendientes.append("Confirmar el año fiscal de las cifras financieras registradas.")
+    recomendados = [r["label"] for r in validacion["recomendaciones"]]
+    if not risks and not pendientes:
+        recomendacion = (
+            "El levantamiento de información está completo y no presenta alertas automáticas. "
+            "Se recomienda proceder a la etapa de planificación de auditoría."
+        )
+    elif risks:
+        recomendacion = (
+            f"Se identificaron {len(risks)} alerta(s) o riesgo(s) preliminar(es) y "
+            f"{len(pendientes)} dato(s) obligatorio(s) pendiente(s). Se recomienda revisarlos "
+            "antes de cerrar el análisis inicial."
+        )
+    else:
+        recomendacion = (
+            f"Hay {len(pendientes)} dato(s) obligatorio(s) pendiente(s). "
+            "Se recomienda completar el levantamiento antes de iniciar la auditoría formal."
+        )
+    return {"pendientes": pendientes, "recomendados": recomendados, "recomendacion": recomendacion}
+
+
 def _fuentes_bloque(provenance: list | None, bloque: str, anio_fiscal: int | None = None) -> str:
     """Fuentes del bloque con su última fecha de consulta, en orden de aparición."""
     ultimas: dict[str, str] = {}
@@ -220,53 +296,19 @@ def generate_summary(
     anio_fiscal = row_get(snapshot, "anio_fiscal", None)
 
     # ── 1. Identificación tributaria (SRI) ────────────────────────────────
-    sec1 = [
-        _line("RUC", ruc),
-        _line("Razón social", pv["razon_social_sri"]),
-        _line("Estado del RUC", pv["estado_contribuyente"]),
-        _line("Tipo de contribuyente", pv["tipo_contribuyente"]),
-        _line("Régimen", pv["regimen"]),
-        _line("Agente de retención", pv["agente_retencion"]),
-        _line("Inicio de actividades", pv["fecha_inicio_actividades"]),
-        _line("Obligado a llevar contab.", pv["obligado_contabilidad"]),
-        _line("Contribuyente especial", pv["contribuyente_especial"]),
-        _line("Contribuyente fantasma", pv["contribuyente_fantasma"]),
-        _line("Transacciones inexistentes", pv["transacciones_inexistentes"]),
-        _line("Actividad económica", pv["actividad_economica"]),
-        _line("Código CIIU", pv["ciiu_sri"]),
-        _line("Representante legal (SRI)", pv["representante_legal_sri"]),
-    ]
+    sec1 = [_line("RUC", ruc)] + [_line(label, pv[campo]) for campo, label in CAMPOS_SRI]
     if not profile and data.get("sri_info"):
         sec1.append(_line("Información SRI registrada", data.get("sri_info")))
     sec1.append(_fuentes_bloque(provenance, "sri"))
 
     # ── 2. Información societaria (Supercias) ─────────────────────────────
-    tipo = con_valor_oficial(clasificar_tipo_compania(pv["tipo_compania"]), pv["tipo_compania"])
-    situacion = con_valor_oficial(clasificar_situacion_legal(pv["situacion_legal"]), pv["situacion_legal"])
-    sec2 = [
-        _line("Razón social (Supercias)", pv["razon_social_supercias"]),
-        _line("Número de expediente", pv["expediente_supercias"]),
-        _line("Fecha de constitución", pv["fecha_constitucion"]),
-        _line("Tipo de compañía", tipo),
-        _line("Situación legal", situacion or data.get("legal_status")),
-        _line("Plazo social", pv["plazo_social"]),
-        _line("Oficina de control", pv["oficina_control"]),
-        _line("Objeto social", pv["objeto_social"]),
-    ]
+    sec2 = [_line(label, valor) for _campo, label, valor in valores_supercias(pv, data)]
     if not profile and data.get("supercias_info"):
         sec2.append(_line("Información Supercias", data.get("supercias_info")))
     sec2.append(_fuentes_bloque(provenance, "supercias"))
 
     # ── 3. Ubicación ──────────────────────────────────────────────────────
-    sec3 = [
-        _line("Provincia", lv["provincia"]),
-        _line("Ciudad", lv["ciudad"]),
-        _line("Calle principal", lv["calle"]),
-        _line("Número", lv["numero"]),
-        _line("Intersección", lv["interseccion"]),
-        _line("Barrio", lv["barrio"]),
-        _line("Referencia", lv["referencia"]),
-    ]
+    sec3 = [_line(label, lv[campo]) for campo, label in CAMPOS_UBICACION]
     if not location and data.get("address"):
         sec3.append(_line("Dirección registrada", data.get("address")))
     sec3.append(_fuentes_bloque(provenance, "ubicacion"))
@@ -359,30 +401,14 @@ def generate_summary(
     sec9 = sec9 or ["  Sin hallazgos adicionales registrados."]
 
     # ── 10. Pendientes de validación ──────────────────────────────────────
-    pendientes = [p["label"] for p in validacion["pendientes"]]
-    if snapshot and not anio_fiscal:
-        pendientes.append("Confirmar el año fiscal de las cifras financieras registradas.")
-    recomendados = [r["label"] for r in validacion["recomendaciones"]]
-    sec10 = [f"  □ Obligatorio: {p}" for p in pendientes] + [f"  ○ Recomendado: {r}" for r in recomendados]
+    cierre = cierre_levantamiento(validacion, snapshot, risks)
+    sec10 = [f"  □ Obligatorio: {p}" for p in cierre["pendientes"]] + [
+        f"  ○ Recomendado: {r}" for r in cierre["recomendados"]
+    ]
     sec10 = sec10 or ["  Todos los campos del levantamiento fueron completados."]
 
     # ── 11. Recomendación preliminar ──────────────────────────────────────
-    if not risks and not pendientes:
-        recomendacion = (
-            "  El levantamiento de información está completo y no presenta alertas automáticas. "
-            "Se recomienda proceder a la etapa de planificación de auditoría."
-        )
-    elif risks:
-        recomendacion = (
-            f"  Se identificaron {len(risks)} alerta(s) o riesgo(s) preliminar(es) y "
-            f"{len(pendientes)} dato(s) obligatorio(s) pendiente(s). Se recomienda revisarlos "
-            "antes de cerrar el análisis inicial."
-        )
-    else:
-        recomendacion = (
-            f"  Hay {len(pendientes)} dato(s) obligatorio(s) pendiente(s). "
-            "Se recomienda completar el levantamiento antes de iniciar la auditoría formal."
-        )
+    recomendacion = f"  {cierre['recomendacion']}"
 
     disclaimer = (
         "⚠ AVISO: Este resumen es PRELIMINAR. Fue generado con información registrada "

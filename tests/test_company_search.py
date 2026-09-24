@@ -29,7 +29,7 @@ from services.company_search import build_source_map
 def _make_db() -> Path:
     tmp_dir = tempfile.mkdtemp()
     db_path = Path(tmp_dir) / "test_company_search.db"
-    init_db(db_path)
+    init_db(db_path, demo=True)
     return db_path
 
 

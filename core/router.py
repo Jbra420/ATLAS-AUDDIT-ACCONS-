@@ -5,7 +5,8 @@ core/router.py — Tablas declarativas de rutas de Atlas.
   (user, query, path, csrf_token) -> str construye la página completa.
 - ADMIN_POSTS: path -> (página de vuelta, acción(form, admin) -> mensaje).
 - RADAR_POSTS: path -> (pestaña de vuelta, acción(form, audit, user) -> mensaje).
-- EXPORTS: path -> (prefijo del archivo, extensión, build(audit) -> contenido).
+- EXPORTS: path -> (prefijo del archivo, extensión, build(audit) -> contenido en
+  texto o, para el Excel, en bytes).
 
 core/server.py despacha estas tablas y ya valida sesión, rol, CSRF y acceso
 al expediente antes de llamar a la acción. Una acción que lanza una excepción
@@ -14,8 +15,6 @@ función y una línea aquí, sin tocar server.py.
 """
 from __future__ import annotations
 
-import csv
-import io
 import sqlite3
 from urllib.parse import quote_plus
 
@@ -38,6 +37,9 @@ from database import (
     get_audit_context,
     get_certificate_import,
     get_research,
+    lookup_balance_details,
+    lookup_catastro,
+    lookup_supercias_catalog,
     mark_document_pending,
     mark_document_reviewed,
     mark_matching_source_checked,
@@ -60,14 +62,14 @@ from database import (
     upsert_financial_statement,
 )
 from services.certificados import MAX_CERTIFICADOS, NOMINAS, analizar_nominas, extraer_texto
-from services.financial import CAMPOS_FINANCIEROS, compute_indicators
+from services.financial import CAMPOS_FINANCIEROS
+from services.resumen_excel import build_resumen_xlsx
 from services.company_search import source_map_from_context
 from services.company_research import research_company_by_ruc
-from services.dossier import build_dossier_model, build_dossier_text
 from services.identificacion import validar_identificacion
 from services.trazabilidad import FUENTE_CERTIFICADO_SUPERCIAS, validar_fecha_consulta
 from ui.helpers import form_value
-from views import auth_views
+from views import auth_views, cuenta
 from views.admin import dashboard as admin_dashboard
 from views.admin import users as admin_users
 from views.admin import companies as admin_companies
@@ -85,6 +87,7 @@ GET_ROUTES: dict[str, tuple[bool, bool, object]] = {
     "/admin/audit":     (True,  False, lambda u, q, p, csrf: radar_page.render(u, q, p, csrf_token=csrf)),
     "/auditor":         (False, True,  lambda u, q, p, csrf: auditor_dashboard.render(u, q, p)),
     "/auditor/radar":   (False, True,  lambda u, q, p, csrf: radar_page.render(u, q, p, csrf_token=csrf)),
+    "/cuenta":          (False, True,  lambda u, q, p, csrf: cuenta.render(u, q, p, csrf_token=csrf)),
 }
 
 
@@ -103,9 +106,11 @@ def _int(form: dict, key: str) -> int:
 # ── Acciones POST del jefe: (form, admin) -> mensaje ────────────────────────
 
 def _create_user(form: dict, admin: sqlite3.Row) -> str:
+    # El jefe auditor es el usuario principal: desde Usuarios solo se crean auditores.
     with connect() as conn:
-        create_user(conn, *(form_value(form, k) for k in ("username", "full_name", "role", "password")))
-    return "Usuario creado exitosamente"
+        create_user(conn, form_value(form, "username"), form_value(form, "full_name"), "auditor",
+                    form_value(form, "password"))
+    return "Auditor creado exitosamente"
 
 
 def _create_company(form: dict, admin: sqlite3.Row) -> str:
@@ -328,13 +333,17 @@ def _upload_certificate(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> st
         raise ValueError("Seleccione el certificado en PDF")
     if len(archivos) > MAX_CERTIFICADOS:
         raise ValueError(f"Adjunte como máximo {MAX_CERTIFICADOS} PDF a la vez")
+    if not audit["ruc"]:
+        raise ValueError("Registre el RUC del expediente antes de adjuntar el certificado: "
+                         "se usa para verificar que el documento sea de esta compañía")
     documentos = []
     for nombre, pdf in archivos:
         try:
             documentos.append((nombre, extraer_texto(pdf)))
         except ValueError as exc:
             raise ValueError(f"{nombre}: {exc}") from exc
-    analisis = analizar_nominas(documentos, audit["ruc"] or "")
+    # Verifica que cada documento sea de esta compañía antes de guardar o extraer nada.
+    analisis = analizar_nominas(documentos, audit["ruc"])
     save_certificate(audit["id"], archivos, analisis, user["id"])
     registrado = "Certificado registrado" if len(archivos) == 1 else f"{len(archivos)} certificados registrados"
     adm, acc = (len(analisis[n]) for n in NOMINAS)
@@ -438,50 +447,17 @@ def _summary_txt(audit: sqlite3.Row) -> str:
     return refresh_summary(audit["id"]) if has_summary else "No existe resumen generado."
 
 
-def _summary_csv(audit: sqlite3.Row) -> str:
-    research = get_research(audit["id"])
-    out = io.StringIO()
-    writer = csv.writer(out, quoting=csv.QUOTE_ALL)
-    writer.writerow(["Campo", "Valor"])
-    rows = [
-        ("Razón social", audit["company_name"]),
-        ("RUC", audit["ruc"]),
-        ("Período", audit["period"]),
-        ("Ciudad", audit["city"]),
-        ("Estado auditoría", audit["status"]),
-        *((label, research[key]) for key, label in (
-            ("commercial_name", "Nombre comercial"),
-            ("economic_activity", "Actividad económica"),
-            ("legal_status", "Estado societario"),
-            ("representative", "Representante legal"),
-            ("address", "Dirección"),
-            ("tax_obligations", "Obligaciones tributarias"),
-            ("public_contracting", "Contratación pública"),
-            ("supercias_info", "Info Supercias"),
-            ("sri_info", "Info SRI"),
-            ("sercop_info", "Info SERCOP"),
-            ("observations", "Observaciones"),
-            ("risk_flags", "Riesgos identificados"),
-            ("generated_summary", "Resumen generado"),
-        )),
-    ]
-    writer.writerows((label, value or "") for label, value in rows)
-    return out.getvalue()
-
-
-def _dossier_txt(audit: sqlite3.Row) -> str:
-    ctx = get_audit_context(audit["id"])
-    snapshot = ctx["snapshot"]
-    dossier = build_dossier_model(
-        audit, ctx["research"], ctx["profile"], ctx["location"], ctx["admins"], ctx["shareholders"],
-        snapshot, compute_indicators(dict(snapshot) if snapshot else None),
-        source_map_from_context(audit, ctx), ctx["sources"],
+def _levantamiento_xlsx(audit: sqlite3.Row) -> bytes:
+    ruc = audit["ruc"]
+    return build_resumen_xlsx(
+        audit, get_audit_context(audit["id"]),
+        catalog_sri=lookup_catastro(ruc),
+        catalog_supercias=lookup_supercias_catalog(ruc),
+        balance_details=lookup_balance_details(ruc),
     )
-    return build_dossier_text(dossier)
 
 
 EXPORTS = {
     "/export/summary": ("atlas_resumen", "txt", _summary_txt),
-    "/export/csv": ("atlas_ficha", "csv", _summary_csv),
-    "/export/dossier": ("atlas_ficha_final", "txt", _dossier_txt),
+    "/export/xlsx": ("atlas_levantamiento", "xlsx", _levantamiento_xlsx),
 }

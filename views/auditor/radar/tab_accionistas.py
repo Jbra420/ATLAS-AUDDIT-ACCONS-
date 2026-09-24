@@ -10,6 +10,7 @@ from ui.components import (
     fuente_text as _fuente_text,
     identificacion_select as _tipo_select,
     identificacion_text as _identificacion_text,
+    modal,
     people_avatar as _avatar,
     provenance_history,
 )
@@ -38,24 +39,42 @@ _PERMITIDOS = ("cedula", "ruc", "pasaporte")
 def _complete_form(audit_id: int, s, csrf_token: str) -> str:
     """Formulario por fila para completar identificación, participación y
     beneficiario final sin volver a escribir el nombre."""
-    return f"""
-    <details class="row-edit">
-      <summary>Completar</summary>
-      <form method="post" action="/auditor/radar/shareholder">
-        {hidden_inputs(csrf_token, audit_id=audit_id, shareholder_id=s['id'], action="update")}
-        <label>Tipo de identificación</label>{_tipo_select(row_get(s, "tipo_identificacion") or "cedula", _PERMITIDOS)}
-        <label>Identificación</label>
-        <input name="identificacion" maxlength="32" value="{esc(row_get(s, 'identificacion') or '')}">
-        <label>Participación (%)</label>
-        <input name="participacion_porcentaje" type="number" step="0.0001" min="0" max="100" value="{_number_value(s, 'participacion_porcentaje')}">
-        <label>Capital (USD)</label>
-        <input name="capital" type="number" step="0.01" min="0" value="{_number_value(s, 'capital')}">
-        <label>Beneficiario final</label>
-        <input name="beneficiario_final" maxlength="160" value="{esc(row_get(s, 'beneficiario_final') or '')}">
-        {fecha_consulta_field("")}
+    modal_id = f"modal-shareholder-{s['id']}"
+    form_html = f"""
+    <form method="post" action="/auditor/radar/shareholder">
+      {hidden_inputs(csrf_token, audit_id=audit_id, shareholder_id=s['id'], action="update")}
+      <div class="grid" style="text-align: left; margin-top: 16px;">
+        <div class="col-4">
+          <label>Tipo de identificación</label>
+          {_tipo_select(row_get(s, "tipo_identificacion") or "cedula", _PERMITIDOS)}
+        </div>
+        <div class="col-8">
+          <label>Identificación</label>
+          <input name="identificacion" maxlength="32" value="{esc(row_get(s, 'identificacion') or '')}">
+        </div>
+        <div class="col-6">
+          <label>Participación (%)</label>
+          <input name="participacion_porcentaje" type="number" step="0.0001" min="0" max="100" value="{_number_value(s, 'participacion_porcentaje')}">
+        </div>
+        <div class="col-6">
+          <label>Capital (USD)</label>
+          <input name="capital" type="number" step="0.01" min="0" value="{_number_value(s, 'capital')}">
+        </div>
+        <div class="col-12">
+          <label>Beneficiario final</label>
+          <input name="beneficiario_final" maxlength="160" placeholder="Persona natural que controla la participación" value="{esc(row_get(s, 'beneficiario_final') or '')}">
+        </div>
+        {fecha_consulta_field("col-12", "")}
+      </div>
+      <div class="actions" style="justify-content: flex-end; margin-top: 24px;">
+        <button type="button" class="btn btn-sm" onclick="closeModal('{modal_id}')">Cancelar</button>
         <button type="submit" class="btn btn-sm btn-primary">{SVG_SAVE} Guardar</button>
-      </form>
-    </details>
+      </div>
+    </form>
+    """
+    return f"""
+    <button type="button" class="btn btn-sm" style="background: none; border: none; color: var(--accent-base); font-weight: 600; padding: 4px 8px; box-shadow: none;" onclick="openModal('{modal_id}')">▼ Completar</button>
+    {modal(modal_id, f"Completar accionista: {esc(s['nombre'])}", form_html)}
     """
 
 
