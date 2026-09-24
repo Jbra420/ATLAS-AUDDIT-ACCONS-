@@ -13,6 +13,7 @@ from database import (
     add_shareholder,
     archive_audit,
     authenticate,
+    change_password,
     compute_progress,
     connect,
     create_company_audit,
@@ -49,7 +50,7 @@ def _make_db() -> Path:
     """Crea una base de datos temporal para pruebas."""
     tmp_dir = tempfile.mkdtemp()
     db_path = Path(tmp_dir) / "test.db"
-    init_db(db_path)
+    init_db(db_path, demo=True)
     return db_path
 
 
@@ -115,6 +116,15 @@ class TestAuthentication(unittest.TestCase):
         usernames = [u["username"] for u in users]
         self.assertIn("admin", usernames)
         self.assertIn("auditor", usernames)
+
+    def test_base_nueva_solo_crea_al_jefe_auditor(self):
+        db = Path(tempfile.mkdtemp()) / "nueva.db"
+        init_db(db)
+        self.assertEqual([(u["username"], u["role"]) for u in list_users(db)], [("admin", "admin")])
+        self.assertIsNone(authenticate("auditor", "auditor123", db), "Sin auditor demo")
+        with connect(db) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0], 0,
+                             "Sin empresa demo")
 
     def test_create_user_normalizes_username(self):
         with connect(self.db) as conn:
@@ -539,6 +549,46 @@ class TestProgress(unittest.TestCase):
         progress = self._progress(source_count=2)
         self.assertTrue(progress["stages"]["has_summary"])
         self.assertNotIn("is_sent", progress["stages"])
+
+
+class TestCambiarContrasena(unittest.TestCase):
+    def setUp(self):
+        self.db = _make_db()
+        self.auditor = _auditor_row(self.db)
+
+    def _cambiar(self, actual="auditor123", nueva="nueva-clave-1", confirmacion=None, token=""):
+        return change_password(
+            self.auditor["id"], actual, nueva, nueva if confirmacion is None else confirmacion, token, self.db,
+        )
+
+    def test_cambia_la_contrasena(self):
+        self._cambiar()
+        self.assertIsNone(authenticate("auditor", "auditor123", self.db))
+        self.assertIsNotNone(authenticate("auditor", "nueva-clave-1", self.db))
+
+    def test_todos_los_roles_pueden_cambiarla(self):
+        admin = _admin_row(self.db)
+        change_password(admin["id"], "admin123", "jefe-clave-1", "jefe-clave-1", "", self.db)
+        self.assertIsNotNone(authenticate("admin", "jefe-clave-1", self.db))
+
+    def test_cierra_las_demas_sesiones_y_conserva_la_actual(self):
+        actual, otra = create_session(self.auditor["id"], self.db), create_session(self.auditor["id"], self.db)
+        self._cambiar(token=actual)
+        self.assertIsNotNone(user_from_session(actual, self.db))
+        self.assertIsNone(user_from_session(otra, self.db))
+
+    def test_reglas(self):
+        casos = [
+            ({"actual": "incorrecta"}, "actual no es correcta"),
+            ({"confirmacion": "otra-cosa-1"}, "no coinciden"),
+            ({"nueva": "corta"}, "entre 8"),
+            ({"nueva": "auditor123"}, "distinta de la actual"),
+            ({"actual": ""}, "Ingrese"),
+        ]
+        for kwargs, error in casos:
+            with self.subTest(error=error), self.assertRaisesRegex(ValueError, error):
+                self._cambiar(**kwargs)
+        self.assertIsNotNone(authenticate("auditor", "auditor123", self.db), "Nada cambió")
 
 
 class TestArchivarEmpresa(unittest.TestCase):

@@ -39,7 +39,7 @@ class TestBalancesCatalog(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.catalog = self.root / "balances.db"
         self.app_db = self.root / "atlas.db"
-        init_db(self.app_db)
+        init_db(self.app_db, demo=True)
         self.auditor = authenticate("auditor", "auditor123", self.app_db)
         self.admin = authenticate("admin", "admin123", self.app_db)
         self.audit_id = create_company_audit(

@@ -106,7 +106,7 @@ class TestFechaConsulta(unittest.TestCase):
 class _AuditCase(unittest.TestCase):
     def setUp(self):
         self.db = Path(tempfile.mkdtemp()) / "atlas.db"
-        init_db(self.db)
+        init_db(self.db, demo=True)
         self.auditor = authenticate("auditor", "auditor123", self.db)
         self.admin = authenticate("admin", "admin123", self.db)
         self.audit_id = create_company_audit(

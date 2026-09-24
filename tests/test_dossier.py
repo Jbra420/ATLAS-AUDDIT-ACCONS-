@@ -25,14 +25,14 @@ from database import (
     load_demo_if_ruc_matches,
 )
 from services.company_search import build_source_map
-from services.dossier import build_dossier_model, build_dossier_text
+from services.dossier import build_dossier_model
 from services.financial import compute_indicators
 
 
 def _make_db() -> Path:
     tmp_dir = tempfile.mkdtemp()
     db_path = Path(tmp_dir) / "test_dossier.db"
-    init_db(db_path)
+    init_db(db_path, demo=True)
     return db_path
 
 
@@ -86,12 +86,10 @@ class TestDossier(unittest.TestCase):
             self.db,
         )
         dossier = self._build()
-        text = build_dossier_text(dossier)
 
-        self.assertIn("ATLAS - FICHA FINAL DE RESULTADOS", text)
-        self.assertIn("ESTADO DE FUENTES", text)
-        self.assertIn("EVIDENCIA REGISTRADA", text)
-        self.assertIn("Consulta SERCOP", text)
+        self.assertEqual(dossier["title"], "Ficha final de resultados")
+        self.assertTrue(dossier["source_status"])
+        self.assertIn("Consulta SERCOP", [row["title"] for row in dossier["evidence"]])
 
     def test_empty_assignment_does_not_crash(self):
         audit_id = create_company_audit(
@@ -99,16 +97,14 @@ class TestDossier(unittest.TestCase):
             self.auditor["id"], self.admin["id"], self.db,
         )
         dossier = self._build(audit_id)
-        text = build_dossier_text(dossier)
 
-        self.assertIn("Empresa Nueva", text)
-        self.assertIn("En construccion", text)
+        self.assertIn("Empresa Nueva", [item["value"] for item in dossier["identity"]])
+        self.assertEqual(dossier["status"], "En construccion")
         self.assertGreater(dossier["metrics"]["pending_count"], 0)
 
     def test_dossier_has_no_document_checklist(self):
         dossier = self._build()
         self.assertNotIn("documents", dossier)
-        self.assertNotIn("DOCUMENTOS ECONOMICOS", build_dossier_text(dossier))
 
     def test_demo_loaded_dossier_uses_company_profile(self):
         load_demo_if_ruc_matches(self.audit_id, "0190377210001", self.db)

@@ -24,7 +24,10 @@ generar una ficha inicial de la empresa auditada.
   - extraccion basica de RUC, correos y telefonos;
   - validacion de requisitos obligatorios antes del resumen;
   - generacion de resumen preliminar por parte del auditor.
-- Exportacion del resumen a TXT.
+- Descarga del resumen en texto y del levantamiento de información completo en
+  Excel (.xlsx): una hoja por bloque (SRI, Supercias, ubicación, administradores,
+  accionistas, financiero) con la fuente y fecha de consulta de cada dato, más
+  requisitos, validaciones y alertas, fuentes y evidencia, trazabilidad y hallazgos.
 
 ## Levantamiento de información general del cliente
 
@@ -76,7 +79,7 @@ La documentación de cada fase está en
 Desde esta carpeta:
 
 ```bash
-python3 -m pip install -r requirements.txt   # pypdf, para leer los certificados PDF
+python3 -m pip install -r requirements.txt   # pypdf (certificados PDF) y openpyxl (Excel)
 python3 app.py --port 8765
 ```
 
@@ -86,14 +89,17 @@ Abrir:
 http://127.0.0.1:8765
 ```
 
-Credenciales de demostracion:
+Usuarios:
 
-```text
-admin / admin123
-auditor / auditor123
-```
+- Una base nueva crea solo al **jefe auditor**, el usuario principal:
+  `admin` / `admin123`. Cambie esa contraseña al primer ingreso en
+  **Mi cuenta** (clic en su nombre, arriba a la derecha).
+- El jefe auditor crea a los **auditores** desde Usuarios, con una contraseña
+  temporal que cada auditor cambia en Mi cuenta.
+- Todos los usuarios cambian su propia contraseña en Mi cuenta: se pide la
+  actual, y las demás sesiones abiertas de la cuenta se cierran.
 
-Cambiar estas claves antes de registrar informacion real.
+El auditor y la empresa demo solo existen en los tests (`init_db(demo=True)`).
 
 ## Catastro local del SRI
 
@@ -119,7 +125,7 @@ automáticamente en cada consulta: se importa manualmente, igual que el
 catastro del SRI.
 
 ```bash
-python3 -m pip install -r requirements.txt   # instala openpyxl (solo lo usa este script)
+python3 -m pip install -r requirements.txt   # instala openpyxl
 python3 scripts/update_supercias_catalog.py             # descarga la última versión pública
 python3 scripts/update_supercias_catalog.py archivo.xlsx # o usa un archivo ya descargado
 ```
@@ -249,7 +255,8 @@ automática y por eso usa `database`; `ui/components.py` lee
   `(form, audit, user) -> mensaje` y una línea en `RADAR_POSTS`. El
   dispatcher ya valida CSRF, rol, acceso al expediente y redirige a la
   pestaña. Para mostrar un error, basta con lanzar `ValueError`.
-- Exportación: una función `build(audit) -> str` y una línea en `EXPORTS`.
+- Exportación: una función `build(audit) -> str | bytes` y una línea en `EXPORTS`
+  (con su tipo de contenido en `_CONTENT_TYPES` de `core/server.py`).
 
 **Reutilizar antes de escribir HTML**
 

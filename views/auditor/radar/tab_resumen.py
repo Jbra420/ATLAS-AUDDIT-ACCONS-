@@ -112,8 +112,9 @@ def _render_dossier(audit_id: int, dossier: dict | None) -> str:
           <h3>Ficha final de resultados</h3>
           <p>{esc(dossier.get("closing", ""))}</p>
         </div>
-        <a class="btn btn-sm" href="/export/dossier?audit_id={audit_id}" title="Descargar ficha final en .txt">
-          {SVG_DOWNLOAD} Exportar ficha final
+        <a class="btn btn-sm" href="/export/xlsx?audit_id={audit_id}"
+           title="Descargar el levantamiento de información completo en Excel">
+          {SVG_DOWNLOAD} Descargar Excel
         </a>
       </div>
       <div style="background-color: var(--color-warning-light, #fff3cd); color: var(--color-warning-dark, #856404); padding: 12px; border-radius: 6px; border: 1px solid var(--color-warning-border, #ffeeba); margin-bottom: 20px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
@@ -194,8 +195,8 @@ def build(
         actions_html = f"""
       <div class="actions mt-0">
         {generate}
-        <a class="btn btn-sm" href="/export/summary?audit_id={audit_id}">{SVG_DOWNLOAD} TXT</a>
-        <a class="btn btn-sm" href="/export/csv?audit_id={audit_id}">{SVG_DOWNLOAD} CSV</a>
+        <a class="btn btn-sm" href="/export/summary?audit_id={audit_id}">{SVG_DOWNLOAD} Resumen</a>
+        <a class="btn btn-sm" href="/export/xlsx?audit_id={audit_id}">{SVG_DOWNLOAD} Excel</a>
       </div>
         """
     observations_html = (

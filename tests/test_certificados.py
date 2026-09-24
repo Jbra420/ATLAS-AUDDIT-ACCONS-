@@ -196,7 +196,7 @@ class TestGuardarCertificado(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())
         self.db, self.adjuntos = tmp / "test.db", tmp / "adjuntos"
-        init_db(self.db)
+        init_db(self.db, demo=True)
         self.auditor = authenticate("auditor", "auditor123", self.db)
         admin = authenticate("admin", "admin123", self.db)
         self.audit_id = create_company_audit(

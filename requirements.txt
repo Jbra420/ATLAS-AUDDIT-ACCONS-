@@ -1,17 +1,18 @@
 # ── Auddit MVP Local — Dependencias ──────────────────────────────────────────
 #
 # Runtime: la aplicación (app.py / core / services / views) usa la biblioteca
-# estándar de Python (≥ 3.10), salvo la excepción de pypdf descrita abajo:
+# estándar de Python (≥ 3.10), salvo las excepciones pypdf y openpyxl descritas abajo:
 #   - http.server, http.client, urllib, sqlite3, hashlib, html, csv, io, argparse
 #
 # Excepción aprobada: pypdf (lectura de texto de PDF) la usa en runtime
 # services/certificados.py para extraer la nómina de los certificados de
 # Supercias que adjunta el auditor. Es Python puro, sin dependencias nativas.
 #
-# Excepción aprobada: openpyxl (lectura de .xlsx en modo read_only) es usada
-# ÚNICAMENTE por scripts/update_supercias_catalog.py para importar el
-# Directorio de Compañías de Supercías (.xlsx oficial). No la importa ningún
-# módulo de runtime de la aplicación (app.py, core/, services/, views/).
+# Excepción: openpyxl (Python puro) la usan
+#   - services/resumen_excel.py, en runtime, para generar el levantamiento de
+#     información del expediente en Excel (/export/xlsx);
+#   - scripts/update_supercias_catalog.py, para leer el Directorio de
+#     Compañías de Supercías (.xlsx oficial).
 #
 # Desarrollo / tests:
 #   - pytest: runner alternativo a unittest (opcional, unittest funciona sin instalarlo)
@@ -27,8 +28,6 @@
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
 pypdf>=5,<6
-
-# ── Herramientas de carga de datos (scripts/) ────────────────────────────────
 openpyxl>=3.1,<4.0
 
 # ── Herramientas de desarrollo ────────────────────────────────────────────────

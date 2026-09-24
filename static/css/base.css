@@ -165,9 +165,12 @@ body {
   background: var(--line-2);
   border: 1px solid var(--line);
   transition: all 0.2s;
+  color: inherit;
+  text-decoration: none;
 }
 
-.userbox:hover {
+.userbox:hover,
+.userbox.active {
   background: white;
   box-shadow: var(--shadow-sm);
   border-color: rgba(139,63,192,0.25);

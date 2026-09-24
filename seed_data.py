@@ -1,11 +1,12 @@
 """
 seed_data.py — Datos de demostración de Atlas (empresa GRUCANQUI CIA. LTDA).
 
-Se usan solo la primera vez que se ejecuta init_db() (tabla users vacía) y
-cuando un auditor registra el RUC de demo. No es parte del modelo de datos
-real de la aplicación: es un fixture para poder usar Atlas sin cargar
-información real, separado del paquete database para no mezclar datos de ejemplo
-con la lógica de persistencia.
+La primera vez que se ejecuta init_db() (tabla users vacía) se crea solo el
+jefe auditor, el usuario principal: los auditores los crea él desde Usuarios.
+El auditor demo y la empresa demo solo se cargan con init_db(demo=True), que
+usan los tests como fixture, y el expediente demo cuando un auditor registra el
+RUC de demo. Está separado del paquete database para no mezclar datos de
+ejemplo con la lógica de persistencia.
 
 Los imports de database (create_user, now_iso, DEFAULT_ECONOMIC_DOCUMENTS)
 se hacen dentro de las funciones, no al nivel del módulo, porque
@@ -21,7 +22,9 @@ DEMO_RUC = os.environ.get("DEMO_RUC", "0190377210001")
 DEMO_COMPANY = "GRUCANQUI CIA. LTDA"
 
 
-def seed_defaults(conn: sqlite3.Connection) -> None:
+def seed_defaults(conn: sqlite3.Connection, demo: bool = False) -> None:
+    """Base nueva: crea el jefe auditor (admin / admin123, a cambiar en "Mi
+    cuenta"). Con demo=True agrega además el auditor y la empresa demo."""
     from database import create_user, now_iso
 
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -29,6 +32,8 @@ def seed_defaults(conn: sqlite3.Connection) -> None:
         return
 
     admin_id = create_user(conn, "admin", "Jefe Auditor", "admin", "admin123")
+    if not demo:
+        return
     auditor_id = create_user(conn, "auditor", "Auditor Demo", "auditor", "auditor123")
 
     ts = now_iso()

@@ -29,6 +29,7 @@ from database.usuarios import (
     session_hash,
     create_user,
     authenticate,
+    change_password,
     list_users,
     list_auditors,
     deactivate_user,
