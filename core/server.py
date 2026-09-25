@@ -308,19 +308,15 @@ class AtlasHandler(BaseHTTPRequestHandler):
                 return
             from database import lookup_catastro
             data = lookup_catastro(ruc)
-            
             if not data:
-                # Nivel 2: Fallback al Scraper
-                from services.sri_scraper import scrape_ruc_data
-                data = scrape_ruc_data(ruc)
-                
-            if not data:
+                # Sin datos inventados: el jefe completa la empresa a mano.
                 self.send_json(
-                    {"error": "No se encontraron datos para el RUC ingresado ni en catastro ni vía web."},
+                    {"error": "El RUC no consta en el catastro local del SRI. "
+                              "Revise que su provincia esté importada o complete los datos a mano."},
                     HTTPStatus.NOT_FOUND,
                 )
                 return
-                
+
             self.send_json(data)
             return
 
