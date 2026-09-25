@@ -443,8 +443,9 @@ RADAR_POSTS = {
 # ── Exportaciones: kind -> (prefijo del archivo, extensión, build(audit) -> contenido) ─
 
 def _summary_txt(audit: sqlite3.Row) -> str:
-    has_summary = get_research(audit["id"])["generated_summary"]
-    return refresh_summary(audit["id"]) if has_summary else "No existe resumen generado."
+    # Entrega el resumen tal como lo generó el auditor: descargarlo (también el
+    # jefe, en solo lectura) no lo regenera ni escribe en el expediente.
+    return get_research(audit["id"])["generated_summary"] or "No existe resumen generado."
 
 
 def _levantamiento_xlsx(audit: sqlite3.Row) -> bytes:

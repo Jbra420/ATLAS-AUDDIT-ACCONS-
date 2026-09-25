@@ -6,7 +6,7 @@ Cubre estas garantías:
     una fuente o del auditor;
   - la razón social de SRI y la de Supercias se conservan por separado;
   - un auditor no puede cambiar documentos ni fuentes de otro expediente;
-  - registrar evidencia no genera el resumen.
+  - registrar evidencia no genera el resumen, y descargarlo no lo regenera.
 """
 from __future__ import annotations
 
@@ -37,6 +37,7 @@ from database import (
     update_company_location_fields,
     update_company_profile_fields,
 )
+from core import router
 from seed_data import DEMO_RUC
 from services.company_research import build_sri_result
 from services.supercias_catalog import build_supercias_result
@@ -326,6 +327,17 @@ class TestResumenSoloBajoPedido(_TempDbCase):
         refresh_summary(self.audit_id, self.db)
         antes = get_research(self.audit_id, self.db)["generated_summary"]
         append_research_source_note(self.audit_id, self.auditor["id"], "SRI", "RUC activo", "", self.db)
+        self.assertEqual(get_research(self.audit_id, self.db)["generated_summary"], antes)
+
+    def test_descargar_resumen_no_lo_regenera(self):
+        audit = {"id": self.audit_id}
+        leer = lambda audit_id: get_research(audit_id, self.db)  # noqa: E731
+        with mock.patch.object(router, "get_research", leer):
+            self.assertEqual(router._summary_txt(audit), "No existe resumen generado.")
+            refresh_summary(self.audit_id, self.db)
+            antes = get_research(self.audit_id, self.db)["generated_summary"]
+            update_company_profile_fields(self.audit_id, {"objeto_social": "Otro objeto"}, self.db)
+            self.assertEqual(router._summary_txt(audit), antes)
         self.assertEqual(get_research(self.audit_id, self.db)["generated_summary"], antes)
 
 
