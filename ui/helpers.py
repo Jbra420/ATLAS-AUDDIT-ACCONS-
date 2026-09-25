@@ -27,12 +27,6 @@ def form_id(form: dict[str, list[str]], key: str) -> int:
     return int(value) if value.isdigit() else 0
 
 
-def _now() -> str:
-    """Retorna la fecha/hora actual en formato ISO sin microsegundos."""
-    from datetime import datetime
-    return datetime.now().replace(microsecond=0).isoformat(sep=" ")
-
-
 def csrf_input(csrf_token: str) -> str:
     """Genera el hidden input que lleva el CSRF token en cada formulario POST."""
     return f'<input type="hidden" name="_csrf" value="{esc(csrf_token)}">'

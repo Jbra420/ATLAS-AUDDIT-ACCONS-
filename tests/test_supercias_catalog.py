@@ -13,7 +13,6 @@ from database import (
     authenticate,
     connect,
     create_company_audit,
-    get_company_location,
     get_company_profile,
     init_db,
 )

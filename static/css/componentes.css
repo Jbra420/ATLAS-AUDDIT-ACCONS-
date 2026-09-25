@@ -360,37 +360,6 @@ tbody tr:hover { background: rgba(241, 245, 249, 0.5); }
 .td-company strong { font-weight: 600; font-size: 14.5px; color: var(--ink); }
 .td-company span   { font-size: 12.5px; color: var(--muted); display: block; margin-top: 2px; }
 
-/* ── RUC validation banner ───────────────────────────── */
-.ruc-banner {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 16px 20px;
-  border-radius: var(--radius);
-  border: 1px solid;
-  margin-bottom: 24px;
-  font-size: 14px;
-  font-weight: 500;
-  box-shadow: var(--shadow-sm);
-}
-
-.ruc-banner.valid   { background: var(--green-50); border-color: rgba(16, 185, 129, 0.2); color: var(--green-700); }
-.ruc-banner.invalid { background: var(--red-50);   border-color: rgba(239, 68, 68, 0.2);  color: var(--red-700); }
-.ruc-banner.warning { background: var(--amber-50); border-color: rgba(245, 158, 11, 0.2);  color: var(--amber-700); }
-.ruc-banner.neutral { background: var(--bg);  border-color: var(--line); color: var(--ink-2); }
-
-.ruc-banner svg { width: 24px; height: 24px; flex-shrink: 0; }
-
-.ruc-banner .ruc-val {
-  font-family: 'Courier New', monospace;
-  font-size: 18px;
-  font-weight: 800;
-  letter-spacing: 1.5px;
-  background: rgba(0,0,0,.04);
-  padding: 4px 10px;
-  border-radius: 6px;
-}
-
 /* ── Custom Modal ────────────────────────────────────────── */
 .modal-overlay {
   position: fixed;

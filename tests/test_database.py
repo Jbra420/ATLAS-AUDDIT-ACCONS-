@@ -360,7 +360,6 @@ class TestRBAC(unittest.TestCase):
         self.assertEqual(audit["ruc"], "0190000000001")
 
     def test_auditor_search_ruc_cannot_replace_assigned_ruc(self):
-        admin = _admin_row(self.db)
         with self.assertRaisesRegex(ValueError, "no coincide"):
             register_audit_ruc(self.audit_for_auditor2, "0191111111111", self.db)
 
