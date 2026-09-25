@@ -51,6 +51,8 @@ de 9 pasos que la pantalla del expediente muestra en ese orden.
 
 - **Búsqueda automática:** "Iniciar búsqueda" completa lo que publican los
   catálogos locales. Lo demás se captura a mano con una fecha de consulta.
+  Al repetirla, un dato que el auditor corrigió a mano se conserva, y la
+  razón social, ciudad y actividad que registró el jefe no se reemplazan.
 - **Trazabilidad:** cada dato registra su fuente y fecha de consulta en
   `data_provenance`, un historial de solo inserción.
 - **Clave RUC:** la información financiera se guarda por RUC y año fiscal

@@ -18,6 +18,7 @@ from services.trazabilidad import (
     CAMPOS_UBICACION,
     FUENTE_CATASTRO_SRI,
     FUENTE_DIRECTORIO_SUPERCIAS,
+    FUENTE_MANUAL_POR_BLOQUE,
     bloque_de_campo_perfil,
 )
 
@@ -62,11 +63,12 @@ def apply_sri_research_result(
     result: dict[str, dict[str, str]],
     db_path: Path | str = DB_PATH,
 ) -> None:
-    """Guarda una consulta SRI sin modificar campos pertenecientes a Supercias."""
-    company = result["company"]
-    profile = result["profile"]
-    location = result["location"]
-    research = result["research"]
+    """Guarda una consulta SRI sin modificar campos pertenecientes a Supercias.
+
+    Un dato cuya última modificación fue una corrección del auditor se
+    conserva: la búsqueda solo reemplaza lo que vino del catálogo o está vacío.
+    La razón social, ciudad y actividad que registró el jefe tampoco se pisan.
+    """
     ts = now_iso()
 
     with connect(db_path) as conn:
@@ -78,11 +80,26 @@ def apply_sri_research_result(
             raise ValueError("Auditoría no encontrada")
         profile_before = _fetch_row(conn, "company_profiles", audit_id)
         location_before = _fetch_row(conn, "company_locations", audit_id)
+        research_before = _fetch_row(conn, "research_notes", audit_id)
+        manuales = _manual_fields(conn, audit_id)
+        # Lo corregido a mano se reenvía con su valor actual: el UPSERT lo deja igual.
+        profile = _keep_manual(result["profile"], profile_before, manuales, bloque_de_campo_perfil)
+        location = _keep_manual(result["location"], location_before, manuales, lambda _c: BLOQUE_UBICACION)
+        research = dict(result["research"])
+        company = result["company"]
+        actividad_notas = _text(research_before["economic_activity"]) if research_before else ""
+        actividad_perfil = _text(profile_before["actividad_economica"]) if profile_before else ""
+        if actividad_notas and actividad_notas != actividad_perfil:
+            research["economic_activity"] = actividad_notas  # la escribió el auditor
 
         conn.execute(
             """
             UPDATE companies
-            SET name = ?, ruc = ?, city = ?, activity_hint = ?, updated_at = ?
+            SET name = CASE WHEN TRIM(COALESCE(name, '')) = '' THEN ? ELSE name END,
+                ruc = ?,
+                city = CASE WHEN TRIM(COALESCE(city, '')) = '' THEN ? ELSE city END,
+                activity_hint = CASE WHEN TRIM(COALESCE(activity_hint, '')) = '' THEN ? ELSE activity_hint END,
+                updated_at = ?
             WHERE id = ?
             """,
             (
@@ -207,6 +224,30 @@ def apply_sri_research_result(
             "UPDATE audits SET status = ?, updated_at = ? WHERE id = ?",
             (status, ts, audit_id),
         )
+
+
+def _manual_fields(conn: sqlite3.Connection, audit_id: int) -> set[tuple[str, str]]:
+    """(bloque, campo) cuyo último registro en la trazabilidad es una edición
+    manual del auditor (la fuente fija de su bloque, no un catálogo)."""
+    manuales = set(FUENTE_MANUAL_POR_BLOQUE.values())
+    ultimo: dict[tuple[str, str], str] = {}
+    for row in conn.execute(
+        "SELECT bloque, campo, fuente FROM data_provenance WHERE audit_id = ? ORDER BY id", (audit_id,),
+    ):
+        ultimo[(row["bloque"], row["campo"])] = row["fuente"]
+    return {clave for clave, fuente in ultimo.items() if fuente in manuales}
+
+
+def _keep_manual(
+    nuevos: dict[str, str], antes: sqlite3.Row | None, manuales: set[tuple[str, str]], bloque_de: Any,
+) -> dict[str, str]:
+    """Copia de nuevos donde cada campo corregido a mano conserva su valor actual."""
+    if antes is None:
+        return dict(nuevos)
+    return {
+        campo: _text(antes[campo]) if (bloque_de(campo), campo) in manuales and _text(antes[campo]) else valor
+        for campo, valor in nuevos.items()
+    }
 
 
 SUPERCIAS_CATALOG_PATH = BASE_DIR / "supercias_catalog.db"

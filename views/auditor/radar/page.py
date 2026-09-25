@@ -100,7 +100,7 @@ def _render_search_bar(
           </p>
           <div class="radar-refresh-note">
             <strong>Antes de continuar</strong>
-            <span>La consulta puede reemplazar ajustes manuales en SRI, Supercias y datos financieros.</span>
+            <span>Se actualizan los datos que vinieron de los catálogos. Las correcciones que usted registró a mano y las cifras financieras ya cargadas se conservan.</span>
           </div>
           <div class="radar-refresh-actions">
             <form method="dialog"><button type="submit" class="radar-refresh-cancel" autofocus>Cancelar</button></form>

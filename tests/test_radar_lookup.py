@@ -42,7 +42,7 @@ class TestRadarLookup(unittest.TestCase):
         self.assertIn("Actualizar búsqueda", html)
         self.assertIn('data-confirm-refresh="true"', html)
         self.assertIn('<dialog id="radar-refresh-dialog"', html)
-        self.assertIn("puede reemplazar ajustes manuales", html)
+        self.assertIn("correcciones que usted registró a mano", html)
         self.assertNotIn("window.confirm", html)
 
     def test_first_search_has_no_confirmation_dialog(self):

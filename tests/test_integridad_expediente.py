@@ -6,7 +6,9 @@ Cubre estas garantías:
     una fuente o del auditor;
   - la razón social de SRI y la de Supercias se conservan por separado;
   - un auditor no puede cambiar documentos ni fuentes de otro expediente;
-  - registrar evidencia no genera el resumen, y descargarlo no lo regenera.
+  - registrar evidencia no genera el resumen, y descargarlo no lo regenera;
+  - volver a buscar en el catastro SRI conserva las correcciones del auditor
+    y los datos de la empresa registrados por el jefe.
 """
 from __future__ import annotations
 
@@ -351,6 +353,53 @@ class TestResumenSoloBajoPedido(_TempDbCase):
         research = get_research(self.audit_id, self.db)
         self.assertEqual(research["observations"], "")
         self.assertEqual(research["risk_flags"], "Riesgo")
+
+
+class TestBusquedaSriConservaCorrecciones(_TempDbCase):
+    def setUp(self):
+        super().setUp()
+        self.audit_id = self._create_audit()
+        with connect(self.db) as conn:
+            conn.execute(
+                "UPDATE companies SET name = 'NOMBRE DEL JEFE', city = 'Gualaceo' "
+                "WHERE id = (SELECT company_id FROM audits WHERE id = ?)", (self.audit_id,),
+            )
+        self.buscar()
+
+    def buscar(self, **cambios):
+        apply_sri_research_result(
+            self.audit_id, self.auditor["id"], build_sri_result({**SRI_RECORD, **cambios}), self.db,
+        )
+
+    def test_correccion_manual_sobrevive_a_otra_busqueda(self):
+        update_company_profile_fields(
+            self.audit_id, {"estado_contribuyente": "SUSPENDIDO"}, self.db, user_id=self.auditor["id"],
+        )
+        update_company_location_fields(self.audit_id, {"canton": "GUALACEO"}, self.db)
+        self.buscar(update_date="2026-01-10 00:00:00")
+        profile = get_company_profile(self.audit_id, self.db)
+        self.assertEqual(profile["estado_contribuyente"], "SUSPENDIDO")
+        self.assertEqual(profile["fecha_actualizacion"], "2026-01-10")
+        self.assertEqual(get_company_location(self.audit_id, self.db)["canton"], "GUALACEO")
+
+    def test_dato_del_catalogo_se_actualiza(self):
+        self.buscar(taxpayer_status="PASIVO")
+        self.assertEqual(get_company_profile(self.audit_id, self.db)["estado_contribuyente"], "PASIVO")
+
+    def test_empresa_registrada_por_el_jefe_no_cambia(self):
+        with connect(self.db) as conn:
+            company = conn.execute(
+                "SELECT c.name, c.city, c.activity_hint FROM companies c "
+                "JOIN audits a ON a.company_id = c.id WHERE a.id = ?", (self.audit_id,),
+            ).fetchone()
+        self.assertEqual((company["name"], company["city"]), ("NOMBRE DEL JEFE", "Gualaceo"))
+        # La actividad estaba vacía: la búsqueda la completa.
+        self.assertEqual(company["activity_hint"], SRI_RECORD["activity_hint"])
+
+    def test_actividad_escrita_por_el_auditor_en_notas_se_conserva(self):
+        database.patch_research(self.audit_id, self.auditor["id"], {"economic_activity": "Hotel boutique"}, self.db)
+        self.buscar()
+        self.assertEqual(get_research(self.audit_id, self.db)["economic_activity"], "Hotel boutique")
 
 
 if __name__ == "__main__":
