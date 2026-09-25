@@ -150,8 +150,9 @@ ADMIN_POSTS = {
 # El dispatcher ya validó CSRF, rol auditor y acceso al expediente.
 
 def _save_research(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
-    # Solo los campos enviados con contenido: patch_research no toca el resto.
-    fields = {k: v for k in RESEARCH_FIELDS if (v := form_value(form, k))}
+    # Solo los campos que trae el formulario (vacíos incluidos, para poder
+    # borrarlos): patch_research no toca el resto.
+    fields = {k: form_value(form, k) for k in RESEARCH_FIELDS if k in form}
     patch_research(audit["id"], user["id"], fields)
     return "Avance guardado correctamente"
 

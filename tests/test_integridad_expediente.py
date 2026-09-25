@@ -340,6 +340,18 @@ class TestResumenSoloBajoPedido(_TempDbCase):
             self.assertEqual(router._summary_txt(audit), antes)
         self.assertEqual(get_research(self.audit_id, self.db)["generated_summary"], antes)
 
+    def test_guardar_avance_permite_vaciar_un_campo(self):
+        user = {"id": self.auditor["id"]}
+        audit = {"id": self.audit_id}
+        guardar = lambda audit_id, user_id, fields: database.patch_research(  # noqa: E731
+            audit_id, user_id, fields, self.db)
+        with mock.patch.object(router, "patch_research", guardar):
+            router._save_research({"observations": ["Nota"], "risk_flags": ["Riesgo"]}, audit, user)
+            router._save_research({"observations": [""]}, audit, user)
+        research = get_research(self.audit_id, self.db)
+        self.assertEqual(research["observations"], "")
+        self.assertEqual(research["risk_flags"], "Riesgo")
+
 
 if __name__ == "__main__":
     unittest.main()
