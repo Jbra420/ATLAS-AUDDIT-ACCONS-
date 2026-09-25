@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import sqlite3
 import threading
@@ -49,6 +50,11 @@ _CSS_CONTENT: str = ""
 # Cuerpo máximo de un POST: los certificados PDF (hasta 5 de 10 MB) más los campos del formulario.
 MAX_BODY_BYTES = 51 * 1024 * 1024
 _QUIET_MODE: bool = False  # Se activa con --quiet; suprime el log de peticiones HTTP
+_TLS: bool = False  # Se activa con --tls; la cookie de sesión lleva además Secure
+# Rutas que puede usar quien debe cambiar su clave inicial o temporal.
+_PASSWORD_CHANGE_PATHS = {"/cuenta", "/cuenta/password"}
+_ERROR_INTERNO = "No se pudo completar la acción por un error interno. El detalle quedó en el registro del servidor."
+logger = logging.getLogger("atlas")
 
 
 # Tipo de contenido de cada descarga de EXPORTS, por extensión.
@@ -201,13 +207,21 @@ class AtlasHandler(BaseHTTPRequestHandler):
         content_type = self.headers.get("Content-Type", "")
         if content_type.startswith("multipart/form-data"):
             return parse_multipart(content_type, body)
-        return FormData(parse_qs(body.decode("utf-8"), keep_blank_values=True))
+        return FormData(parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True))
 
     def require_user(self) -> sqlite3.Row | None:
         user = self.current_user()
         if user is None:
             self.redirect("/login")
+            return None
+        if user["must_change_password"] and urlparse(self.path).path not in _PASSWORD_CHANGE_PATHS:
+            self.redirect(f"/cuenta?err={quote_plus('Cambie su contraseña inicial antes de continuar.')}")
+            return None
         return user
+
+    def session_cookie(self, value: str, max_age: int, same_site: str) -> str:
+        secure = "; Secure" if _TLS else ""
+        return f"{COOKIE_NAME}={value}; Max-Age={max_age}; Path=/; HttpOnly; SameSite={same_site}{secure}"
 
     def require_admin(self) -> sqlite3.Row | None:
         user = self.require_user()
@@ -255,14 +269,32 @@ class AtlasHandler(BaseHTTPRequestHandler):
     # ── GET routing ─────────────────────────────────────────────────────
 
     def do_GET(self) -> None:
+        self._guarded(self._do_get)
+
+    def do_POST(self) -> None:
+        self._guarded(self._do_post)
+
+    def _guarded(self, handler) -> None:
+        """Un error no previsto se registra con su traza y el usuario recibe
+        una página 500, en lugar de una conexión cortada sin respuesta."""
+        try:
+            handler()
+        except Exception:
+            logger.exception("Error no controlado en %s %s", self.command, self.path)
+            self.close_connection = True
+            try:
+                self.send_html(layout("Error interno", None, f'<div class="error-msg">{_ERROR_INTERNO}</div>'), 500)
+            except Exception:  # noqa: BLE001 — la respuesta ya pudo haber empezado
+                pass
+
+    def _do_get(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
 
         if path == "/logout":
             destroy_session(self.get_cookie_token())
-            expired = f"{COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax"
-            self.redirect("/login", cookie=expired)
+            self.redirect("/login", cookie=self.session_cookie("", 0, "Lax"))
             return
 
         if path.startswith("/static/"):
@@ -365,13 +397,14 @@ class AtlasHandler(BaseHTTPRequestHandler):
 
     # ── POST routing ────────────────────────────────────────────────────
 
-    def do_POST(self) -> None:
+    def _do_post(self) -> None:
         path = urlparse(self.path).path
         if self.content_length() > MAX_BODY_BYTES:
             # Sin leer el cuerpo: se cierra la conexión tras responder.
             self.close_connection = True
-            self.send_html(layout("Archivo demasiado grande", self.current_user(),
-                                  '<div class="error-msg">El archivo supera el máximo de 10 MB.</div>'), 413)
+            self.send_html(layout("Envío demasiado grande", self.current_user(),
+                                  '<div class="error-msg">El envío supera el máximo permitido: '
+                                  'hasta 5 PDF de 10 MB cada uno.</div>'), 413)
             return
         self._cached_form = self.parse_post()  # guardar para _reject_csrf
         form = self._cached_form
@@ -407,8 +440,11 @@ class AtlasHandler(BaseHTTPRequestHandler):
             back, action = ADMIN_POSTS[path]
             try:
                 self.redirect(f"{back}?msg={quote_plus(action(form, admin))}")
-            except Exception as exc:
+            except ValueError as exc:
                 self.redirect(f"{back}?err={quote_plus(str(exc))}")
+            except Exception:
+                logger.exception("Error en %s", path)
+                self.redirect(f"{back}?err={quote_plus(_ERROR_INTERNO)}")
             return
 
         if path in RADAR_POSTS:
@@ -424,8 +460,11 @@ class AtlasHandler(BaseHTTPRequestHandler):
             tab = form_value(form, "return_tab") or default_tab
             try:
                 self.redirect(radar_url(audit_id, tab, msg=action(form, audit, current)))
-            except Exception as exc:
+            except ValueError as exc:
                 self.redirect(radar_url(audit_id, tab, err=str(exc)))
+            except Exception:
+                logger.exception("Error en %s (expediente %s)", path, audit_id)
+                self.redirect(radar_url(audit_id, tab, err=_ERROR_INTERNO))
             return
 
         self.send_html(
@@ -446,8 +485,12 @@ class AtlasHandler(BaseHTTPRequestHandler):
             return
         _LOGIN_LIMITER.record_success(client_ip)
         token = create_session(user["id"])
-        cookie = f"{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={8 * 3600}"
-        self.redirect("/admin" if user["role"] == "admin" else "/auditor", cookie=cookie)
+        cookie = self.session_cookie(token, 8 * 3600, "Strict")
+        if user["must_change_password"]:
+            destino = f"/cuenta?err={quote_plus('Cambie su contraseña inicial antes de continuar.')}"
+        else:
+            destino = "/admin" if user["role"] == "admin" else "/auditor"
+        self.redirect(destino, cookie=cookie)
 
     # ── Export endpoints ──────────────────────────────────────────────────
 
@@ -464,7 +507,7 @@ class AtlasHandler(BaseHTTPRequestHandler):
 
 
 def run() -> None:
-    global _QUIET_MODE
+    global _QUIET_MODE, _TLS
     parser = argparse.ArgumentParser(description="Atlas — Plataforma de auditoría · Auddit")
     parser.add_argument("--host", default="127.0.0.1", help="Host del servidor local")
     parser.add_argument("--port", type=int, default=8765, help="Puerto del servidor local")
@@ -482,6 +525,8 @@ def run() -> None:
     parser.add_argument("--key",  default="key.pem",  help="Ruta a la clave privada TLS (PEM)")
     args = parser.parse_args()
     _QUIET_MODE = args.quiet
+    _TLS = args.tls
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     load_css()
     init_db(DB_PATH)

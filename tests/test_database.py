@@ -146,8 +146,14 @@ class TestAuthentication(unittest.TestCase):
 
     def test_short_password_is_rejected(self):
         with connect(self.db) as conn:
-            with self.assertRaisesRegex(ValueError, "al menos 6"):
-                create_user(conn, "nuevo", "Usuario Nuevo", "auditor", "12345")
+            with self.assertRaisesRegex(ValueError, "entre 8 y 128"):
+                create_user(conn, "nuevo", "Usuario Nuevo", "auditor", "clave12")
+
+    def test_password_with_edge_spaces_is_rejected(self):
+        """Antes se guardaba recortada y luego no servía para entrar."""
+        with connect(self.db) as conn:
+            with self.assertRaisesRegex(ValueError, "espacios"):
+                create_user(conn, "nuevo", "Usuario Nuevo", "auditor", " clave123 ")
 
     def test_inactive_user_cannot_authenticate(self):
         with connect(self.db) as conn:
@@ -280,7 +286,7 @@ class TestRBAC(unittest.TestCase):
         self.db = _make_db()
         # Crear segundo auditor y nueva empresa asignada a él
         with connect(self.db) as conn:
-            self.auditor2_id = create_user(conn, "auditor2", "Auditor Dos", "auditor", "clave2")
+            self.auditor2_id = create_user(conn, "auditor2", "Auditor Dos", "auditor", "clave-dos")
         admin = _admin_row(self.db)
         self.audit_for_auditor2 = create_company_audit(
             "Empresa Solo Auditor2", "0190000000001", "Guayaquil",
@@ -307,7 +313,7 @@ class TestRBAC(unittest.TestCase):
         self.assertIsNotNone(audit)
 
     def test_auditor2_sees_own_assignment(self):
-        auditor2 = authenticate("auditor2", "clave2", self.db)
+        auditor2 = authenticate("auditor2", "clave-dos", self.db)
         audits = list_auditor_audits(auditor2["id"], self.db)
         self.assertEqual(len(audits), 1)
         self.assertEqual(audits[0]["company_name"], "Empresa Solo Auditor2")
@@ -349,7 +355,7 @@ class TestRBAC(unittest.TestCase):
         self.assertEqual(clean_ruc, "0190000000001")
         self.assertIn("0190000000001", msg)
 
-        auditor2 = authenticate("auditor2", "clave2", self.db)
+        auditor2 = authenticate("auditor2", "clave-dos", self.db)
         audit = get_audit(audit_id, auditor2, self.db)
         self.assertEqual(audit["ruc"], "0190000000001")
 
@@ -589,6 +595,37 @@ class TestCambiarContrasena(unittest.TestCase):
             with self.subTest(error=error), self.assertRaisesRegex(ValueError, error):
                 self._cambiar(**kwargs)
         self.assertIsNotNone(authenticate("auditor", "auditor123", self.db), "Nada cambió")
+
+
+class TestClaveInicial(unittest.TestCase):
+    """La clave inicial del jefe y la temporal de un auditor deben cambiarse."""
+
+    def setUp(self):
+        self.db = _make_db()
+
+    def test_base_nueva_marca_la_clave_del_jefe(self):
+        self.assertEqual(_admin_row(self.db)["must_change_password"], 1)
+
+    def test_clave_temporal_de_auditor_y_su_cambio(self):
+        with connect(self.db) as conn:
+            uid = create_user(conn, "temporal", "Auditor Temporal", "auditor", "temporal-1",
+                              must_change_password=True)
+        self.assertEqual(authenticate("temporal", "temporal-1", self.db)["must_change_password"], 1)
+        change_password(uid, "temporal-1", "propia-clave-1", "propia-clave-1", "", self.db)
+        self.assertEqual(authenticate("temporal", "propia-clave-1", self.db)["must_change_password"], 0)
+
+    def test_migracion_marca_solo_la_clave_por_defecto(self):
+        with connect(self.db) as conn:
+            conn.execute("ALTER TABLE users DROP COLUMN must_change_password")
+        init_db(self.db)
+        self.assertEqual(_admin_row(self.db)["must_change_password"], 1)
+
+        admin = _admin_row(self.db)
+        change_password(admin["id"], "admin123", "jefe-clave-1", "jefe-clave-1", "", self.db)
+        with connect(self.db) as conn:
+            conn.execute("ALTER TABLE users DROP COLUMN must_change_password")
+        init_db(self.db)
+        self.assertEqual(authenticate("admin", "jefe-clave-1", self.db)["must_change_password"], 0)
 
 
 class TestArchivarEmpresa(unittest.TestCase):

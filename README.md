@@ -99,10 +99,14 @@ http://127.0.0.1:8765
 Usuarios:
 
 - Una base nueva crea solo al **jefe auditor**, el usuario principal:
-  `admin` / `admin123`. Cambie esa contraseña al primer ingreso en
-  **Mi cuenta** (clic en su nombre, arriba a la derecha).
+  `admin` / `admin123`. Al primer ingreso, Atlas lo lleva a **Mi cuenta**
+  (clic en su nombre, arriba a la derecha) y no deja usar otras páginas
+  hasta cambiar esa contraseña. Una base existente que aún conserve
+  `admin123` queda marcada igual al actualizarse.
 - El jefe auditor crea a los **auditores** desde Usuarios, con una contraseña
-  temporal que cada auditor cambia en Mi cuenta.
+  temporal que cada auditor debe cambiar en su primer ingreso.
+- Toda contraseña, temporal o propia, tiene entre 8 y 128 caracteres y no
+  empieza ni termina con espacios.
 - Todos los usuarios cambian su propia contraseña en Mi cuenta: se pide la
   actual, y las demás sesiones abiertas de la cuenta se cierran.
 

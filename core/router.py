@@ -109,8 +109,9 @@ def _int(form: dict, key: str) -> int:
 def _create_user(form: dict, admin: sqlite3.Row) -> str:
     # El jefe auditor es el usuario principal: desde Usuarios solo se crean auditores.
     with connect() as conn:
+        # La clave que asigna el jefe es temporal: el auditor la cambia al primer ingreso.
         create_user(conn, form_value(form, "username"), form_value(form, "full_name"), "auditor",
-                    form_value(form, "password"))
+                    form.get("password", [""])[0], must_change_password=True)
     return "Auditor creado exitosamente"
 
 

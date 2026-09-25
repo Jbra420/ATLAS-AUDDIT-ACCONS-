@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS users (
     deleted_at TEXT,
     deleted_by INTEGER REFERENCES users(id),
     deletion_reason TEXT,
+    -- 1 mientras la cuenta use una clave inicial o temporal que debe cambiar.
+    must_change_password INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 

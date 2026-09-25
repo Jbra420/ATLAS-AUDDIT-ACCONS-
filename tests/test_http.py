@@ -1030,6 +1030,29 @@ class TestHTTPCuenta(unittest.TestCase):
         self.assertEqual(_login(username, "clave-inicial"), "")
         self.assertIn("atlas_session=", _login(username, "clave-nueva-1"))
 
+    def test_clave_temporal_obliga_a_cambiarla(self):
+        username = f"http_tmp_{time.time_ns()}"
+        with connect() as conn:
+            create_user(conn, username, "Prueba clave temporal", "auditor", "clave-temporal",
+                        must_change_password=True)
+        status, location, set_cookie = _post_raw("/login", {"username": username, "password": "clave-temporal"})
+        self.assertEqual(status, 303)
+        self.assertIn("/cuenta?err=", location, "El ingreso lleva directo a Mi cuenta")
+        cookie = [p for p in set_cookie.split(";") if "atlas_session=" in p][0].strip()
+
+        _, body = _get("/auditor", cookie)
+        self.assertIn('action="/cuenta/password"', body, "Otras páginas redirigen a Mi cuenta")
+        self.assertIn("inicial o temporal", body)
+
+        _, location, _ = _post_raw("/cuenta/password", {
+            "_csrf": _csrf_token("/cuenta", cookie), "current_password": "clave-temporal",
+            "new_password": "clave-propia-1", "confirm_password": "clave-propia-1",
+        }, cookie)
+        self.assertIn("msg=", unquote_plus(location))
+        status, body = _get("/auditor", cookie)
+        self.assertEqual(status, 200)
+        self.assertNotIn('action="/cuenta/password"', body, "Tras el cambio, el auditor entra a su panel")
+
     def test_cambiar_contrasena_exige_csrf(self):
         status, _, _ = _post_raw("/cuenta/password", {
             "current_password": AUDITOR[1], "new_password": "x" * 10, "confirm_password": "x" * 10,

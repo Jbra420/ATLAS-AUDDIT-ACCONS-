@@ -107,8 +107,8 @@ class TestRadarEmpresarial(unittest.TestCase):
     # 4. test_auditor_isolation — Auditor no puede ver auditoría ajena
     def test_auditor_isolation(self):
         with connect(self.db) as conn:
-            create_user(conn, "auditor2", "Auditor Dos", "auditor", "clave2")
-        auditor2 = authenticate("auditor2", "clave2", self.db)
+            create_user(conn, "auditor2", "Auditor Dos", "auditor", "clave-dos")
+        auditor2 = authenticate("auditor2", "clave-dos", self.db)
         
         # Auditor2 intenta ver audit_id asignado a auditor1
         audit = get_audit(self.audit_id, auditor2, self.db)

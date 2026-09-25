@@ -9,6 +9,7 @@ from seed_data import seed_defaults
 from database.base import BASE_DIR, DB_PATH, connect
 from database.catalogos import lookup_catastro, lookup_supercias_catalog
 from database.expedientes import DEFAULT_ECONOMIC_DOCUMENTS
+from database.usuarios import verify_password
 
 
 SCHEMA_PATH = BASE_DIR / "schema.sql"
@@ -34,6 +35,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     ]:
         if col not in user_existing:
             conn.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
+    if "must_change_password" not in user_existing:
+        conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
+        # Una base que aún tiene la clave inicial del jefe debe cambiarla al entrar.
+        admin = conn.execute("SELECT * FROM users WHERE username = 'admin'").fetchone()
+        if admin and verify_password("admin123", admin["password_salt"], admin["password_hash"]):
+            conn.execute("UPDATE users SET must_change_password = 1 WHERE id = ?", (admin["id"],))
 
     conn.executescript(
         """

@@ -31,7 +31,7 @@ def seed_defaults(conn: sqlite3.Connection, demo: bool = False) -> None:
     if user_count:
         return
 
-    admin_id = create_user(conn, "admin", "Jefe Auditor", "admin", "admin123")
+    admin_id = create_user(conn, "admin", "Jefe Auditor", "admin", "admin123", must_change_password=True)
     if not demo:
         return
     auditor_id = create_user(conn, "auditor", "Auditor Demo", "auditor", "auditor123")
