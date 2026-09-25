@@ -19,17 +19,6 @@ AUDIT_STATUSES = {
 }
 
 
-# Progreso de etapas para calcular % completitud del expediente.
-STAGE_FIELDS = [
-    ("ruc_ok", "RUC validado"),
-    ("has_sources", "Fuentes consultadas"),
-    ("has_sri", "Ficha SRI"),
-    ("has_supercias", "Ficha Supercias"),
-    ("has_docs", "Documentos revisados"),
-    ("has_financials", "Indicadores"),
-    ("has_summary", "Resumen generado"),
-]
-
 
 # Documentos económicos estándar para auditoría
 DEFAULT_ECONOMIC_DOCUMENTS = [
@@ -437,61 +426,3 @@ def load_demo_if_ruc_matches(
     with connect(db_path) as conn:
         seed_demo_radar(conn, audit_id)
     return True
-
-
-def compute_progress(
-    audit: sqlite3.Row,
-    research: sqlite3.Row,
-    source_count: int,
-    db_path: Path | str = DB_PATH,
-) -> dict:
-    """Calcula el progreso de la investigación Radar Empresarial.
-
-    Nota: source_count no se usa en este cuerpo. La etapa "has_sources" se
-    calcula con su propia consulta a source_checks (fuentes guiadas), no con
-    el conteo de la tabla sources (evidencia libre) que reciben los
-    llamadores. Si se decide que ambas deben contar para el progreso, hay
-    que revisar esta función junto con la Fase 5 (unificación pendiente).
-    """
-    audit_id = audit["id"]
-    ruc = audit["ruc"] or ""
-
-    # Fuentes guiadas consultadas
-    with connect(db_path) as conn:
-        checked_sources = conn.execute(
-            "SELECT COUNT(*) FROM source_checks WHERE audit_id=? AND estado='consultada'",
-            (audit_id,),
-        ).fetchone()[0]
-        profile = conn.execute(
-            "SELECT * FROM company_profiles WHERE audit_id=?", (audit_id,)
-        ).fetchone()
-        docs_total = conn.execute(
-            "SELECT COUNT(*) FROM economic_documents WHERE audit_id=?", (audit_id,)
-        ).fetchone()[0]
-        docs_reviewed = conn.execute(
-            "SELECT COUNT(*) FROM economic_documents WHERE audit_id=? AND estado='revisado'",
-            (audit_id,),
-        ).fetchone()[0]
-        snapshot = _financial_context(conn, audit_id)["snapshot"]
-
-    has_sri = bool(profile and profile["estado_contribuyente"])
-    has_supercias = bool(profile and profile["situacion_legal"])
-    has_financials = bool(snapshot and snapshot["activo_total"])
-    has_docs = docs_total > 0 and docs_reviewed >= max(1, docs_total // 2)
-
-    stages = {
-        "ruc_ok": len(ruc) == 13 and ruc.isdigit(),
-        "has_sources": checked_sources >= 1,
-        "has_sri": has_sri,
-        "has_supercias": has_supercias,
-        "has_docs": has_docs,
-        "has_financials": has_financials,
-        "has_summary": bool(research["generated_summary"] if research else False),
-    }
-    completed = sum(stages.values())
-    return {
-        "stages": stages,
-        "completed": completed,
-        "total": len(stages),
-        "percent": int(completed / len(stages) * 100),
-    }

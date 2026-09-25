@@ -67,7 +67,6 @@ def update_research(
     audit_id: int,
     user_id: int,
     data: dict[str, str],
-    mark_ready: bool,
     db_path: Path | str = DB_PATH,
 ) -> str:
     with connect(db_path) as conn:

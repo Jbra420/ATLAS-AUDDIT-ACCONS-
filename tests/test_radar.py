@@ -114,10 +114,6 @@ class TestRadarEmpresarial(unittest.TestCase):
         audit = get_audit(self.audit_id, auditor2, self.db)
         self.assertIsNone(audit)
 
-    # Nota: el comportamiento de mark_ready se prueba una sola vez, en
-    # tests/test_database.py::test_mark_ready_no_longer_sends_to_review,
-    # para no duplicar la misma aserción en dos archivos.
-
     # 5. test_document_mark_reviewed — Documento pasa a estado revisado
     def test_document_mark_reviewed(self):
         load_demo_if_ruc_matches(self.audit_id, "0190377210001", self.db)

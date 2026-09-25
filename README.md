@@ -300,6 +300,8 @@ nunca al revés con SQL.
 | Historial de un bloque | `ui.components.provenance_history` |
 | Lectura segura de filas | `services.rowutil.row_get` |
 | Mapa de fuentes y requisitos del expediente | `services.company_search.source_map_from_context` |
+| Avance del expediente (requisitos obligatorios, también en el panel del auditor) | `source_map_from_context(...)["readiness"]` |
+| Resumen preliminar a partir del contexto | `services.summary.generate_summary_from_context` |
 
 Un bloque del levantamiento se define una sola vez como tupla `CAMPOS`
 `(campo, etiqueta, …)` en su pestaña. De ella salen las tarjetas, el
