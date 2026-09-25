@@ -8,7 +8,7 @@ from typing import Any
 from seed_data import DEMO_RUC, seed_demo_radar
 from services.ruc_validator import format_ruc, validate_ruc
 
-from database.base import DB_PATH, connect, now_iso
+from database.base import DB_PATH, _ensure_research, connect, now_iso
 from database.certificados import _pending_certificate
 from database.financiero import _financial_context
 
@@ -387,17 +387,7 @@ def get_audit_context(audit_id: int, db_path: Path | str = DB_PATH) -> dict[str,
     list_sources, que abrían una conexión SQLite distinta cada una.
     """
     with connect(db_path) as conn:
-        research = conn.execute(
-            "SELECT * FROM research_notes WHERE audit_id = ?", (audit_id,)
-        ).fetchone()
-        if research is None:
-            conn.execute(
-                "INSERT INTO research_notes (audit_id, updated_at) VALUES (?, ?)",
-                (audit_id, now_iso()),
-            )
-            research = conn.execute(
-                "SELECT * FROM research_notes WHERE audit_id = ?", (audit_id,)
-            ).fetchone()
+        research = _ensure_research(conn, audit_id)
         context = _load_radar_context(conn, audit_id)
     context["research"] = research
     return context

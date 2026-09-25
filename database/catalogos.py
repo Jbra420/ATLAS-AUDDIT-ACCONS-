@@ -22,7 +22,7 @@ from services.trazabilidad import (
     bloque_de_campo_perfil,
 )
 
-from database.base import BASE_DIR, DB_PATH, _fetch_row, _text, _today, connect, now_iso
+from database.base import BASE_DIR, DB_PATH, _fetch_row, _mark_in_research, _text, _today, connect, now_iso
 from database.trazabilidad import _record_provenance, _record_row_changes
 from database.personas import _person_summary
 from database.financiero import _audit_ruc, _format_amount, _validar_anio_fiscal
@@ -198,32 +198,34 @@ def apply_sri_research_result(
             ("Consulta automática en el catastro local oficial del SRI", user_id, ts, audit_id),
         )
 
-        source = conn.execute(
-            """
-            SELECT id FROM sources
-            WHERE audit_id = ? AND source_type = 'SRI'
-              AND title = 'Catastro RUC SRI (base local)'
-            """,
-            (audit_id,),
-        ).fetchone()
-        source_notes = f"Consulta automática del RUC {company['ruc']} realizada el {ts}."
-        if source:
-            conn.execute("UPDATE sources SET notes = ? WHERE id = ?", (source_notes, source["id"]))
-        else:
-            conn.execute(
-                """
-                INSERT INTO sources (audit_id, title, url, source_type, notes, created_by, created_at)
-                VALUES (?, 'Catastro RUC SRI (base local)', 'https://www.sri.gob.ec/datasets',
-                        'SRI', ?, ?, ?)
-                """,
-                (audit_id, source_notes, user_id, ts),
-            )
-
-        status = "en_investigacion" if audit["status"] == "pendiente" else audit["status"]
-        conn.execute(
-            "UPDATE audits SET status = ?, updated_at = ? WHERE id = ?",
-            (status, ts, audit_id),
+        _register_catalog_source(
+            conn, audit_id, "SRI", "Catastro RUC SRI (base local)", "https://www.sri.gob.ec/datasets",
+            f"Consulta automática del RUC {company['ruc']} realizada el {ts}.", user_id, ts,
         )
+
+        _mark_in_research(conn, audit_id, ts)
+
+
+def _register_catalog_source(
+    conn: sqlite3.Connection, audit_id: int, source_type: str, title: str, url: str,
+    notes: str, user_id: int | None, ts: str, *, update_notes: bool = True,
+) -> None:
+    """Evidencia de una consulta a un catálogo local: una fila por título en
+    el expediente. Repetir la consulta actualiza sus notas (update_notes)."""
+    existing = conn.execute(
+        "SELECT id FROM sources WHERE audit_id = ? AND source_type = ? AND title = ?",
+        (audit_id, source_type, title),
+    ).fetchone()
+    if existing is None:
+        conn.execute(
+            """
+            INSERT INTO sources (audit_id, title, url, source_type, notes, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (audit_id, title, url, source_type, notes, user_id, ts),
+        )
+    elif update_notes:
+        conn.execute("UPDATE sources SET notes = ? WHERE id = ?", (notes, existing["id"]))
 
 
 def _manual_fields(conn: sqlite3.Connection, audit_id: int) -> set[tuple[str, str]]:
@@ -405,38 +407,17 @@ def apply_supercias_research_result(
             ("Consulta automática del Directorio de Compañías (catálogo local)", user_id, ts, audit_id),
         )
 
-        source = conn.execute(
-            """
-            SELECT id FROM sources
-            WHERE audit_id = ? AND source_type = 'Supercias'
-              AND title = 'Directorio Supercías (catálogo local)'
-            """,
-            (audit_id,),
-        ).fetchone()
         fecha_cat = catalogo.get("fecha_actualizacion") or "sin fecha declarada"
         expediente = profile.get("expediente_supercias") or "sin expediente"
-        source_notes = (
+        _register_catalog_source(
+            conn, audit_id, "Supercias", "Directorio Supercías (catálogo local)",
+            "https://mercadodevalores.supercias.gob.ec/reportes/directorioCompanias.jsf",
             f"Consulta automática del expediente {expediente} realizada el {ts}. "
-            f"Corte del catálogo: {fecha_cat}."
+            f"Corte del catálogo: {fecha_cat}.",
+            user_id, ts,
         )
-        if source:
-            conn.execute("UPDATE sources SET notes = ? WHERE id = ?", (source_notes, source["id"]))
-        else:
-            conn.execute(
-                """
-                INSERT INTO sources (audit_id, title, url, source_type, notes, created_by, created_at)
-                VALUES (?, 'Directorio Supercías (catálogo local)',
-                        'https://mercadodevalores.supercias.gob.ec/reportes/directorioCompanias.jsf',
-                        'Supercias', ?, ?, ?)
-                """,
-                (audit_id, source_notes, user_id, ts),
-            )
 
-        status = "en_investigacion" if audit["status"] == "pendiente" else audit["status"]
-        conn.execute(
-            "UPDATE audits SET status = ?, updated_at = ? WHERE id = ?",
-            (status, ts, audit_id),
-        )
+        _mark_in_research(conn, audit_id, ts)
 
 
 def _record_catalog_changes(
@@ -648,20 +629,11 @@ def apply_balances_catalog_result(
                 f"SHA-256 {record['fuente_sha256']}; importado {record['fuente_importada_at']}. "
                 "No sustituye el documento economico original ni su revision."
             )
-            existing_source = conn.execute(
-                "SELECT id FROM sources WHERE audit_id = ? AND title = ?", (audit_id, title),
-            ).fetchone()
-            if existing_source is None:
-                conn.execute(
-                    """INSERT INTO sources (audit_id, title, url, source_type, notes, created_by, created_at)
-                       VALUES (?, ?, ?, 'Supercias', ?, ?, ?)""",
-                    (audit_id, title, record.get("fuente_url") or BALANCES_SOURCE_URL, notes, user_id, ts),
-                )
+            # La evidencia de un ejercicio describe el archivo importado: se registra una sola vez.
+            _register_catalog_source(
+                conn, audit_id, "Supercias", title, record.get("fuente_url") or BALANCES_SOURCE_URL,
+                notes, user_id, ts, update_notes=False,
+            )
             imported += 1
-        conn.execute(
-            """UPDATE audits
-               SET status = CASE WHEN status = 'pendiente' THEN 'en_investigacion' ELSE status END,
-                   updated_at = ? WHERE id = ?""",
-            (ts, audit_id),
-        )
+        _mark_in_research(conn, audit_id, ts)
     return imported

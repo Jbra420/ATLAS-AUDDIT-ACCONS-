@@ -43,6 +43,28 @@ def _touch_audit(conn: sqlite3.Connection, audit_id: int) -> None:
     conn.execute("UPDATE audits SET updated_at = ? WHERE id = ?", (now_iso(), audit_id))
 
 
+def _mark_in_research(conn: sqlite3.Connection, audit_id: int, ts: str | None = None) -> None:
+    """Un expediente pendiente pasa a "en investigación" (los demás estados no
+    cambian) y registra la actividad en updated_at."""
+    conn.execute(
+        """
+        UPDATE audits
+        SET status = CASE WHEN status = 'pendiente' THEN 'en_investigacion' ELSE status END,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (ts or now_iso(), audit_id),
+    )
+
+
+def _ensure_research(conn: sqlite3.Connection, audit_id: int) -> sqlite3.Row:
+    """Fila de notas de investigación del expediente; la crea vacía si no existe."""
+    conn.execute(
+        "INSERT OR IGNORE INTO research_notes (audit_id, updated_at) VALUES (?, ?)", (audit_id, now_iso()),
+    )
+    return conn.execute("SELECT * FROM research_notes WHERE audit_id = ?", (audit_id,)).fetchone()
+
+
 def _optional_number(
     value: Any, label: str, minimum: float, maximum: float | None = None,
 ) -> float | None:

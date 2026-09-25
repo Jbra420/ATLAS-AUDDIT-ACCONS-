@@ -25,7 +25,7 @@ import re
 import sqlite3
 
 from services.normalizacion import clasificar_situacion_legal, clasificar_tipo_compania, con_valor_oficial
-from services.financial import filas_comparativo, formato_moneda, indicators_summary_text
+from services.financial import compute_indicators, filas_comparativo, formato_moneda, indicators_summary_text
 from services.rowutil import row_get
 from services.validaciones import NO_COINCIDE, evaluar_levantamiento
 
@@ -253,6 +253,25 @@ def _fuentes_bloque(provenance: list | None, bloque: str, anio_fiscal: int | Non
     if not ultimas:
         return "  Fuente: sin trazabilidad registrada."
     return "  Fuente: " + "; ".join(f"{f} (consulta {d})" for f, d in ultimas.items())
+
+
+def generate_summary_from_context(audit: sqlite3.Row, data: dict[str, str], ctx: dict) -> str:
+    """generate_summary() a partir del contexto del expediente
+    (database.get_audit_context); data son las notas de investigación."""
+    profile, location, snapshot = ctx["profile"], ctx["location"], ctx["snapshot"]
+    return generate_summary(
+        audit, data, len(ctx["sources"]),
+        profile=dict(profile) if profile else None,
+        location=dict(location) if location else None,
+        admins=ctx["admins"],
+        shareholders=ctx["shareholders"],
+        snapshot=dict(snapshot) if snapshot else None,
+        indicators=compute_indicators(dict(snapshot)) if snapshot else {},
+        source_checks=ctx["source_checks"],
+        sources=ctx["sources"],
+        alert_treatments=ctx["alert_treatments"],
+        provenance=ctx["provenance"],
+    )
 
 
 def generate_summary(

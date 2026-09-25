@@ -271,7 +271,10 @@ database/  SQL y persistencia (única capa que escribe en SQLite)
 
 Excepciones conocidas: `services/company_research.py` orquesta la búsqueda
 automática y por eso usa `database`; `ui/components.py` lee
-`AUDIT_STATUSES` de `database`.
+`AUDIT_STATUSES` de `database`. A la inversa, `database/` usa funciones puras
+y constantes de `services/` (casilleros, fuentes, validación de
+identificaciones y `generate_summary_from_context` para componer el resumen),
+nunca al revés con SQL.
 
 **Agregar una ruta**
 

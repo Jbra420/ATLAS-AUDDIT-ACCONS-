@@ -5,9 +5,9 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import urlparse
 
-from services.summary import generate_summary
+from services.summary import generate_summary_from_context
 
-from database.base import DB_PATH, connect, now_iso
+from database.base import DB_PATH, _ensure_research, _mark_in_research, connect, now_iso
 from database.expedientes import _load_radar_context
 
 
@@ -40,18 +40,7 @@ RESEARCH_FIELDS = [
 
 def get_research(audit_id: int, db_path: Path | str = DB_PATH) -> sqlite3.Row:
     with connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT * FROM research_notes WHERE audit_id = ?", (audit_id,)
-        ).fetchone()
-        if row:
-            return row
-        conn.execute(
-            "INSERT INTO research_notes (audit_id, updated_at) VALUES (?, ?)",
-            (audit_id, now_iso()),
-        )
-        return conn.execute(
-            "SELECT * FROM research_notes WHERE audit_id = ?", (audit_id,)
-        ).fetchone()
+        return _ensure_research(conn, audit_id)
 
 
 def _fetch_audit(conn: sqlite3.Connection, audit_id: int) -> sqlite3.Row:
@@ -71,23 +60,7 @@ def _fetch_audit(conn: sqlite3.Connection, audit_id: int) -> sqlite3.Row:
 
 def _compose_summary(conn: sqlite3.Connection, audit: sqlite3.Row, data: dict[str, str]) -> str:
     """Resumen preliminar del expediente con los datos de investigación 'data'."""
-    from services.financial import compute_indicators
-
-    ctx = _load_radar_context(conn, audit["id"])
-    profile, location, snapshot = ctx["profile"], ctx["location"], ctx["snapshot"]
-    return generate_summary(
-        audit, data, len(ctx["sources"]),
-        profile=dict(profile) if profile else None,
-        location=dict(location) if location else None,
-        admins=ctx["admins"],
-        shareholders=ctx["shareholders"],
-        snapshot=dict(snapshot) if snapshot else None,
-        indicators=compute_indicators(dict(snapshot)) if snapshot else {},
-        source_checks=ctx["source_checks"],
-        sources=ctx["sources"],
-        alert_treatments=ctx["alert_treatments"],
-        provenance=ctx["provenance"],
-    )
+    return generate_summary_from_context(audit, data, _load_radar_context(conn, audit["id"]))
 
 
 def update_research(
@@ -137,11 +110,7 @@ def update_research(
             ),
         )
 
-        status = "en_investigacion" if audit["status"] == "pendiente" else audit["status"]
-        conn.execute(
-            "UPDATE audits SET status = ?, updated_at = ? WHERE id = ?",
-            (status, ts, audit_id),
-        )
+        _mark_in_research(conn, audit_id, ts)
         return summary
 
 
@@ -179,17 +148,7 @@ def patch_research(
 def refresh_summary(audit_id: int, db_path: Path | str = DB_PATH) -> str:
     with connect(db_path) as conn:
         audit = _fetch_audit(conn, audit_id)
-        research = conn.execute(
-            "SELECT * FROM research_notes WHERE audit_id = ?", (audit_id,)
-        ).fetchone()
-        if research is None:
-            conn.execute(
-                "INSERT INTO research_notes (audit_id, updated_at) VALUES (?, ?)",
-                (audit_id, now_iso()),
-            )
-            research = conn.execute(
-                "SELECT * FROM research_notes WHERE audit_id = ?", (audit_id,)
-            ).fetchone()
+        research = _ensure_research(conn, audit_id)
         data = {field: research[field] or "" for field in RESEARCH_FIELDS}
         summary = _compose_summary(conn, audit, data)
         conn.execute(
@@ -265,18 +224,7 @@ def append_research_source_note(
         return
 
     with connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT * FROM research_notes WHERE audit_id = ?", (audit_id,)
-        ).fetchone()
-        if row is None:
-            conn.execute(
-                "INSERT INTO research_notes (audit_id, updated_at) VALUES (?, ?)",
-                (audit_id, now_iso()),
-            )
-            row = conn.execute(
-                "SELECT * FROM research_notes WHERE audit_id = ?", (audit_id,)
-            ).fetchone()
-
+        row = _ensure_research(conn, audit_id)
         data = {field: row[field] or "" for field in RESEARCH_FIELDS}
         label = source_type.strip() or "Otra fuente"
         finding_line = f"{label}: {finding}" if finding else ""
@@ -299,10 +247,7 @@ def append_research_source_note(
         before = {field: row[field] or "" for field in RESEARCH_FIELDS}
         # Registrar evidencia no genera el resumen: eso solo ocurre con
         # "Generar resumen", que antes revisa los requisitos pendientes.
-        conn.execute(
-            "UPDATE audits SET status = 'en_investigacion' WHERE id = ? AND status = 'pendiente'",
-            (audit_id,),
-        )
+        _mark_in_research(conn, audit_id)
 
     patch_research(
         audit_id, user_id, {k: v for k, v in data.items() if v != before[k]}, db_path=db_path,
