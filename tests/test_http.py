@@ -4,12 +4,13 @@ tests/test_http.py — Pruebas de integración HTTP para Atlas · Auddit.
 Conecta a un servidor Atlas ya en ejecución en el puerto ATLAS_HTTP_TEST_PORT.
 Si el servidor no está disponible, los tests se saltean automáticamente.
 
-Escriben en auddit.db (crean empresas y registros de prueba), así que no se
-ejecutan salvo que se pida explícitamente con ATLAS_HTTP_TEST_PORT. Úselos
-sobre una copia del proyecto o una base desechable, nunca contra el servidor
-con datos reales:
-    1. Iniciar el servidor de la copia: python3 app.py --port 8799
-    2. Correr los tests desde la copia: ATLAS_HTTP_TEST_PORT=8799 python3 -m unittest tests.test_http -v
+Escriben en la base (crean empresas y registros de prueba), así que solo se
+ejecutan con ATLAS_HTTP_TEST_PORT y con ATLAS_DB_PATH apuntando a una base
+desechable, distinta de auddit.db. El servidor y los tests deben usar la misma
+base:
+    1. export ATLAS_DB_PATH=/tmp/atlas_http.db
+    2. Iniciar el servidor: python3 app.py --port 8799
+    3. Correr los tests: ATLAS_HTTP_TEST_PORT=8799 python3 -m unittest tests.test_http -v
 
 No dependen de las cuentas de la base: crean (si faltan) un jefe auditor y
 un auditor propios de prueba, http_admin y http_auditor.
@@ -34,7 +35,9 @@ from urllib.request import urlopen, Request
 from urllib.parse import unquote_plus, urlencode
 from urllib.error import HTTPError, URLError
 
-from database import connect, create_company_audit, create_user
+from pathlib import Path
+
+from database import BASE_DIR, connect, create_company_audit, create_user
 
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = int(os.environ.get("ATLAS_HTTP_TEST_PORT", "0"))
@@ -54,9 +57,15 @@ def _asegurar_usuarios_de_prueba() -> None:
                 create_user(conn, username, f"Prueba HTTP {role}", role, password)
 
 
+def _base_desechable() -> bool:
+    """True solo si ATLAS_DB_PATH apunta a una base distinta de auddit.db."""
+    ruta = os.environ.get("ATLAS_DB_PATH")
+    return bool(ruta) and Path(ruta).resolve() != (BASE_DIR / "auddit.db").resolve()
+
+
 def _server_available() -> bool:
     """Verifica si el servidor Atlas está disponible en el puerto configurado."""
-    if not SERVER_PORT:
+    if not SERVER_PORT or not _base_desechable():
         return False
     try:
         with socket.create_connection((SERVER_HOST, SERVER_PORT), timeout=1):
@@ -133,7 +142,7 @@ def _csrf_token(path: str, cookie: str) -> str:
     return match.group(1) if match else ""
 
 
-_SKIP_REASON = "Defina ATLAS_HTTP_TEST_PORT y levante un servidor sobre una copia (ver docstring)"
+_SKIP_REASON = "Defina ATLAS_HTTP_TEST_PORT y ATLAS_DB_PATH (base desechable) y levante el servidor (ver docstring)"
 
 
 # ── Casos de prueba ───────────────────────────────────────────────────────────

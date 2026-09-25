@@ -1,6 +1,7 @@
 """database/base.py — Conexión SQLite y utilidades compartidas por todo el paquete."""
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -9,7 +10,8 @@ from typing import Any
 
 # Raíz del proyecto: las bases locales viven junto a app.py.
 BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = BASE_DIR / "auddit.db"
+# ATLAS_DB_PATH permite usar otra base (p. ej. una desechable para tests/test_http.py).
+DB_PATH = Path(os.environ.get("ATLAS_DB_PATH") or BASE_DIR / "auddit.db")
 
 
 def now_iso() -> str:

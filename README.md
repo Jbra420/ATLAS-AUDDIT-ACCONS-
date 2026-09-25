@@ -249,8 +249,9 @@ guiar la consulta y guardar evidencia.
   `supercias_catalog.db` son catálogos locales separados, generados por los
   scripts de arriba (ninguno de los tres se versiona en git).
 - `tests/`: pruebas unitarias (bases temporales) y de integración HTTP
-  (`tests/test_http.py`: escribe en `auddit.db`, así que solo corre con
-  `ATLAS_HTTP_TEST_PORT` y sobre una copia del proyecto; ver su docstring).
+  (`tests/test_http.py`: escribe en la base del servidor, así que solo corre
+  con `ATLAS_HTTP_TEST_PORT` y `ATLAS_DB_PATH` apuntando a una base
+  desechable, la misma para el servidor y los tests; ver su docstring).
 
 ## Arquitectura y convenciones
 
