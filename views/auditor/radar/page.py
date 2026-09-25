@@ -18,7 +18,7 @@ from services.dossier import build_dossier_model
 from services.normalizacion import anio_fiscal_sugerido
 from services.rowutil import row_get
 from services.ruc_validator import validate_ruc
-from ui.helpers import esc, form_value, hidden_inputs
+from ui.helpers import esc, form_id, form_value, hidden_inputs
 from ui.icons import (
     SVG_BUILDING,
     SVG_DOLLAR,
@@ -133,7 +133,7 @@ def _render_search_bar(
 
 def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "") -> str:
     """Genera el HTML completo del Radar Empresarial."""
-    audit_id = int(form_value(query, "audit_id", "0"))
+    audit_id = form_id(query, "audit_id")
     audit = get_audit(audit_id, user)
     if not audit:
         return layout(

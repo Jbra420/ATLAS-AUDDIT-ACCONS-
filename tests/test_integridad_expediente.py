@@ -40,6 +40,7 @@ from database import (
     update_company_profile_fields,
 )
 from core import router
+from ui.helpers import form_id
 from seed_data import DEMO_RUC
 from services.company_research import build_sri_result
 from services.supercias_catalog import build_supercias_result
@@ -308,6 +309,12 @@ class TestAccesoEntreExpedientes(_TempDbCase):
         doc = get_audit_context(self.propio, self.db)["docs"][0]["id"]
         mark_document_reviewed(self.propio, doc, self.auditor["id"], self.db)
         self.assertEqual(self._estado("economic_documents", doc), "revisado")
+
+    def test_id_no_numerico_vale_cero(self):
+        self.assertEqual(form_id({"audit_id": ["abc"]}, "audit_id"), 0)
+        self.assertEqual(form_id({"audit_id": ["-3"]}, "audit_id"), 0)
+        self.assertEqual(form_id({}, "audit_id"), 0)
+        self.assertEqual(form_id({"audit_id": [" 12 "]}, "audit_id"), 12)
 
 
 class TestResumenSoloBajoPedido(_TempDbCase):

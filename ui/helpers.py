@@ -20,6 +20,13 @@ def form_value(form: dict[str, list[str]], key: str, default: str = "") -> str:
     return values[0].strip()
 
 
+def form_id(form: dict[str, list[str]], key: str) -> int:
+    """Identificador numérico de un campo; 0 si falta o no es un entero
+    positivo (ningún registro tiene id 0, así que el acceso se deniega)."""
+    value = form_value(form, key)
+    return int(value) if value.isdigit() else 0
+
+
 def _now() -> str:
     """Retorna la fecha/hora actual en formato ISO sin microsegundos."""
     from datetime import datetime

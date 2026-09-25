@@ -32,7 +32,7 @@ from database import (
     validate_csrf_token,
 )
 from ui.layout import layout, set_css
-from ui.helpers import form_value
+from ui.helpers import form_id, form_value
 from core.router import ADMIN_POSTS, EXPORTS, GET_ROUTES, RADAR_POSTS, radar_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -192,8 +192,12 @@ class AtlasHandler(BaseHTTPRequestHandler):
     def current_user(self) -> sqlite3.Row | None:
         return user_from_session(self.get_cookie_token())
 
+    def content_length(self) -> int:
+        value = self.headers.get("Content-Length", "0").strip()
+        return int(value) if value.isdigit() else 0
+
     def parse_post(self) -> FormData:
-        body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        body = self.rfile.read(self.content_length())
         content_type = self.headers.get("Content-Type", "")
         if content_type.startswith("multipart/form-data"):
             return parse_multipart(content_type, body)
@@ -363,7 +367,7 @@ class AtlasHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
-        if int(self.headers.get("Content-Length", "0")) > MAX_BODY_BYTES:
+        if self.content_length() > MAX_BODY_BYTES:
             # Sin leer el cuerpo: se cierra la conexión tras responder.
             self.close_connection = True
             self.send_html(layout("Archivo demasiado grande", self.current_user(),
@@ -411,7 +415,7 @@ class AtlasHandler(BaseHTTPRequestHandler):
             current = self.require_auditor()
             if not current:
                 return
-            audit_id = int(form_value(form, "audit_id", "0"))
+            audit_id = form_id(form, "audit_id")
             audit = get_audit(audit_id, current)
             if not audit:
                 self.deny(current, "Auditoría no disponible.")
@@ -448,7 +452,7 @@ class AtlasHandler(BaseHTTPRequestHandler):
     # ── Export endpoints ──────────────────────────────────────────────────
 
     def export_audit(self, user: sqlite3.Row, query: dict, kind: str) -> None:
-        audit = get_audit(int(form_value(query, "audit_id", "0")), user)
+        audit = get_audit(form_id(query, "audit_id"), user)
         if not audit:
             self.deny(user, "No disponible.")
             return

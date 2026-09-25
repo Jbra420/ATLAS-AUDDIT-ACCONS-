@@ -68,7 +68,7 @@ from services.company_search import source_map_from_context
 from services.company_research import research_company_by_ruc
 from services.identificacion import validar_identificacion
 from services.trazabilidad import FUENTE_CERTIFICADO_SUPERCIAS, validar_fecha_consulta
-from ui.helpers import form_value
+from ui.helpers import form_id, form_value
 from views import auth_views, cuenta
 from views.admin import dashboard as admin_dashboard
 from views.admin import users as admin_users
@@ -100,7 +100,8 @@ def radar_url(audit_id: int, tab: str, *, msg: str = "", err: str = "") -> str:
 
 
 def _int(form: dict, key: str) -> int:
-    return int(form_value(form, key, "0"))
+    # Un id no numérico vale 0: la acción responde "no encontrado" con su propio mensaje.
+    return form_id(form, key)
 
 
 # ── Acciones POST del jefe: (form, admin) -> mensaje ────────────────────────
