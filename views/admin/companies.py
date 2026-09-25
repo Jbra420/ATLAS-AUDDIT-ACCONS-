@@ -12,43 +12,29 @@ from ui.icons import SVG_ALERT, SVG_ARCHIVE, SVG_ARROW_RIGHT, SVG_REFRESH
 from ui.layout import layout
 
 
-def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "") -> str:
-    """Genera el HTML de la página de gestión de empresas."""
-    auditors = list_auditors()
-    audits = list_admin_audits()
-    archived = list_admin_audits(archived=True)
-    err = form_value(query, "err")
-
-    options = "".join(
-        f'<option value="{a["id"]}">{esc(a["full_name"])} ({esc(a["username"])})</option>'
-        for a in auditors
-    )
-    if not options:
-        options = '<option disabled>No hay auditores registrados</option>'
-
-    rows_html = []
-    for a in audits:
-        if a["auditor_deleted_at"]:
-            auditor_label = f"""
+def _company_row(a: sqlite3.Row, auditors: list[sqlite3.Row], csrf_token: str) -> str:
+    """Fila de una empresa vigente: auditor asignado, reasignación y acciones."""
+    if a["auditor_deleted_at"]:
+        auditor_label = f"""
               <strong>{esc(a['auditor_name'])}</strong>
               <span class="assignment-state"><span class="badge badge-red">Baja definitiva</span> Reasignación disponible</span>
             """
-        elif not a["auditor_active"]:
-            auditor_label = f"""
+    elif not a["auditor_active"]:
+        auditor_label = f"""
               <strong>{esc(a['auditor_name'])}</strong>
               <span class="assignment-state"><span class="badge badge-amber">Inactivo</span> Reasignación disponible</span>
             """
-        else:
-            auditor_label = f"<strong>{esc(a['auditor_name'])}</strong>"
-        
-        # Build options for reassignment dropdown, excluding the current assigned auditor
-        reassign_options = "".join(
-            f'<option value="{aud["id"]}">{esc(aud["full_name"])}</option>'
-            for aud in auditors if aud["id"] != a['assigned_auditor_id']
-        )
-        
-        if reassign_options:
-            reassign_form = f"""
+    else:
+        auditor_label = f"<strong>{esc(a['auditor_name'])}</strong>"
+    
+    # Build options for reassignment dropdown, excluding the current assigned auditor
+    reassign_options = "".join(
+        f'<option value="{aud["id"]}">{esc(aud["full_name"])}</option>'
+        for aud in auditors if aud["id"] != a['assigned_auditor_id']
+    )
+    
+    if reassign_options:
+        reassign_form = f"""
             <form method="post" action="/admin/companies/reassign" style="display:inline; margin:0;" title="Reasignar">
               {hidden_inputs(csrf_token, audit_id=a['id'])}
               <select name="new_auditor_id" onchange="this.form.submit()" style="width:auto; display:inline-block; padding: 2px 4px; font-size: 12px;">
@@ -57,10 +43,10 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
               </select>
             </form>
             """
-        else:
-            reassign_form = ""
+    else:
+        reassign_form = ""
 
-        rows_html.append(f"""<tr>
+    return f"""<tr>
           <td class="td-company">
             <strong>{esc(a['company_name'])}</strong>
             <span>RUC: {esc(a['ruc'] or '—')}</span>
@@ -75,10 +61,11 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
                     title="Archivar empresa" aria-label="Archivar empresa"
                     onclick="openArchiveModal(this)">{SVG_ARCHIVE}</button>
           </div></td>
-        </tr>""")
-    
-    rows_html = "".join(rows_html)
+        </tr>"""
 
+
+def _archived_panel(archived: list[sqlite3.Row], csrf_token: str) -> str:
+    """Empresas archivadas, con su motivo y el botón para restaurarlas."""
     archived_rows = "".join(f"""<tr>
           <td class="td-company">
             <strong>{esc(a['company_name'])}</strong>
@@ -100,7 +87,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
             </form>
           </div></td>
         </tr>""" for a in archived)
-    archived_panel = f"""
+    return f"""
       <div class="panel col-12">
         <h2>Empresas archivadas ({len(archived)})</h2>
         <p class="muted">No aparecen en los listados ni para el auditor. El expediente y su evidencia
@@ -114,7 +101,10 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
       </div>
     """ if archived else ""
 
-    archive_modal = modal("archiveModal", "Archivar empresa", f"""
+
+def _archive_modal(csrf_token: str) -> str:
+    """Modal para archivar una empresa con motivo obligatorio."""
+    return modal("archiveModal", "Archivar empresa", f"""
         <div class="modal-desc">
           <strong id="archiveCompanyName"></strong> dejará de aparecer en los listados y el auditor
           asignado ya no podrá abrir el expediente. No se borra nada: el expediente, la evidencia y los
@@ -142,17 +132,10 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     </script>
     """
 
-    content = f"""
-    <div class="mb-16">
-      <h1 class="page-title">Directorio de Empresas</h1>
-      <p class="page-subtitle muted">Asigne nuevas empresas a los auditores para iniciar la investigación.</p>
-    </div>
-    {'<div class="error-msg toast">' + SVG_ALERT + ' ' + esc(err) + '</div>' if err else ''}
 
-    <div class="grid">
-      <div class="panel col-4">
-        <h2>Registrar empresa</h2>
-        <form method="post" action="/admin/companies" id="create-company-form">
+def _create_form(options: str, csrf_token: str) -> str:
+    """Alta de empresa: búsqueda por RUC en el catastro y asignación a un auditor."""
+    return f"""        <form method="post" action="/admin/companies" id="create-company-form">
           {csrf_input(csrf_token)}
           
           <div id="ruc-search-group">
@@ -235,7 +218,38 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
             // El usuario debe hacer clic explícitamente en "Buscar".
         }});
         </script>
-      </div>
+"""
+
+
+def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "") -> str:
+    """Genera el HTML de la página de gestión de empresas."""
+    auditors = list_auditors()
+    audits = list_admin_audits()
+    archived = list_admin_audits(archived=True)
+    err = form_value(query, "err")
+
+    options = "".join(
+        f'<option value="{a["id"]}">{esc(a["full_name"])} ({esc(a["username"])})</option>'
+        for a in auditors
+    )
+    if not options:
+        options = '<option disabled>No hay auditores registrados</option>'
+
+    rows_html = "".join(_company_row(a, auditors, csrf_token) for a in audits)
+    archived_panel = _archived_panel(archived, csrf_token)
+    archive_modal = _archive_modal(csrf_token)
+
+    content = f"""
+    <div class="mb-16">
+      <h1 class="page-title">Directorio de Empresas</h1>
+      <p class="page-subtitle muted">Asigne nuevas empresas a los auditores para iniciar la investigación.</p>
+    </div>
+    {'<div class="error-msg toast">' + SVG_ALERT + ' ' + esc(err) + '</div>' if err else ''}
+
+    <div class="grid">
+      <div class="panel col-4">
+        <h2>Registrar empresa</h2>
+{_create_form(options, csrf_token)}      </div>
       <div class="panel col-8">
         <h2>Empresas registradas ({len(audits)})</h2>
         <div class="table-wrap">

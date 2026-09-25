@@ -33,6 +33,15 @@ from ui.icons import (
 )
 from ui.layout import layout
 
+from .tab_accionistas import build as build_accionistas
+from .tab_admins import build as build_admins
+from .tab_documentos import build as build_documentos
+from .tab_financiero import build as build_financiero
+from .tab_resumen import build as build_resumen
+from .tab_sri import build as build_sri
+from .tab_supercias import build as build_supercias
+from .tab_ubicacion import build as build_ubicacion
+
 
 def _render_search_bar(
     audit_id: int, company_name: str, ruc: str | None, read_only: bool,
@@ -131,119 +140,59 @@ def _render_search_bar(
     </section>"""
 
 
-def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "") -> str:
-    """Genera el HTML completo del Radar Empresarial."""
-    audit_id = form_id(query, "audit_id")
-    audit = get_audit(audit_id, user)
-    if not audit:
-        return layout(
-            "Acceso denegado", user,
-            '<div class="error-msg">Auditoría no disponible o no asignada.</div>',
-            active_path="/auditor",
-        )
-
-    # ── Cargar datos (una sola conexión para todo el expediente) ───────────
-    ctx = get_audit_context(audit_id)
-    research = ctx["research"]
-    profile, location = ctx["profile"], ctx["location"]
-    admins, shareholders = ctx["admins"], ctx["shareholders"]
-    docs, snapshot = ctx["docs"], ctx["snapshot"]
-    src_checks, sources = ctx["source_checks"], ctx["sources"]
-    provenance = ctx["provenance"]
-    is_read_only = user["role"] == "admin"
-    readonly_class = "readonly-mode" if is_read_only else ""
-    source_map = source_map_from_context(audit, ctx)
-
-    # ── Indicadores financieros ───────────────────────────────────────────
+def _build_tabs(
+    audit: sqlite3.Row, ctx: dict, source_map: dict, query: dict, read_only: bool, csrf_token: str,
+    sri_check, supercias_check,
+) -> list[tuple[str, str, str, str]]:
+    """(id, etiqueta, ícono, html) de cada pestaña, en el orden del levantamiento."""
+    audit_id = audit["id"]
+    profile, sources, provenance = ctx["profile"], ctx["sources"], ctx["provenance"]
+    snapshot = ctx["snapshot"]
     indicators = compute_indicators(dict(snapshot) if snapshot else None)
     dossier = build_dossier_model(
-        audit, research, profile, location, admins, shareholders,
+        audit, ctx["research"], profile, ctx["location"], ctx["admins"], ctx["shareholders"],
         snapshot, indicators, source_map, sources,
     )
-    # ── Progress ──────────────────────────────────────────────────────────
-    company_name = audit["company_name"]
-    ruc = audit["ruc"]
-    active_tab = form_value(query, "tab", "sri")
-
-    csrf_tok = csrf_token  # recibido desde el server con el token de la sesión activa
-
-    # ── Importar tabs desde sus propios módulos ───────────────────────────
-    from .tab_sri import build as build_sri
-    from .tab_supercias import build as build_supercias
-    from .tab_ubicacion import build as build_ubicacion
-    from .tab_admins import build as build_admins
-    from .tab_accionistas import build as build_accionistas
-    from .tab_financiero import build as build_financiero
-    from .tab_documentos import build as build_documentos
-    from .tab_resumen import build as build_resumen
-
-    # Fuentes guiadas: SRI y Supercias (portal) se resuelven aquí para pasarle
-    # a cada tab solo su propia fila de source_checks.
-    sri_check = find_source_check(src_checks, ("sri",))
-    supercias_check = find_source_check(src_checks, ("supercias",), ("documento",))
-
-    tab_sri = build_sri(
-        audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok,
-        source_check=sri_check, provenance=provenance,
-        alertas=source_map["validacion"]["alertas"],
-    )
-    tab_supercias = build_supercias(
-        audit_id, audit, profile, research, read_only=is_read_only, csrf_token=csrf_tok,
-        source_check=supercias_check, provenance=provenance,
-    )
-    tab_ubicacion = build_ubicacion(
-        audit_id, audit, location, read_only=is_read_only, csrf_token=csrf_tok, provenance=provenance,
-    )
-    tab_admins = build_admins(
-        audit_id, audit, admins, read_only=is_read_only, csrf_token=csrf_tok, sources=sources,
-        provenance=provenance, certificado=ctx["certificado"],
-    )
-    tab_accionistas = build_accionistas(
-        audit_id, audit, shareholders, read_only=is_read_only, csrf_token=csrf_tok, sources=sources,
-        provenance=provenance, certificado=ctx["certificado"],
-    )
     fin_anio = form_value(query, "fin_anio")
-    tab_financiero = build_financiero(
-        audit_id, indicators, read_only=is_read_only, csrf_token=csrf_tok,
-        anio_sugerido=anio_fiscal_sugerido(row_get(profile, "ultimo_anio_balance")),
-        financial=ctx["financial"],
-        ruc=ruc or "",
-        # Ejercicio a editar elegido en la pestaña; se ignora si no es un año válido.
-        anio_edicion=int(fin_anio) if fin_anio.isdigit() and 1990 <= int(fin_anio) <= 2100 else None,
-        provenance=provenance,
-    )
-    tab_documentos = build_documentos(
-        audit_id, sources, read_only=is_read_only, csrf_token=csrf_tok,
-    )
-    tab_resumen = build_resumen(
-        audit_id,
-        research,
-        dossier,
-        readiness=source_map["readiness"],
-        read_only=is_read_only,
-        csrf_token=csrf_tok,
-    )
-
-    # Panel lateral de señales eliminado a petición del usuario para mejor uso del espacio horizontal.
-
-    # ── Búsqueda y estado de fuentes ──────────────────────────────────────
-    search_panel = _render_search_bar(
-        audit_id, company_name, ruc, is_read_only, csrf_tok,
-        sri_check, supercias_check, len(ctx["financial"]["years"]),
-    )
-
-    # ── Ensamble de tabs ──────────────────────────────────────────────────
-    tabs = [
-        ("sri",          "SRI",            SVG_DOLLAR,   tab_sri),
-        ("supercias",    "Supercias",      SVG_BUILDING, tab_supercias),
-        ("ubicacion",    "Ubicación",      SVG_MAP_PIN,  tab_ubicacion),
-        ("admins",       "Administradores",SVG_USERS,    tab_admins),
-        ("accionistas",  "Accionistas",    SVG_USERS,    tab_accionistas),
-        ("indicadores",  "Financiero",     SVG_DOLLAR,   tab_financiero),
-        ("documentos",   "Documentos",     SVG_FILE,     tab_documentos),
-        ("resumen",      "Resumen",        SVG_RADAR,    tab_resumen),
+    comunes = dict(read_only=read_only, csrf_token=csrf_token)
+    return [
+        ("sri", "SRI", SVG_DOLLAR, build_sri(
+            audit_id, audit, profile, ctx["research"], **comunes,
+            source_check=sri_check, provenance=provenance,
+            alertas=source_map["validacion"]["alertas"],
+        )),
+        ("supercias", "Supercias", SVG_BUILDING, build_supercias(
+            audit_id, audit, profile, ctx["research"], **comunes,
+            source_check=supercias_check, provenance=provenance,
+        )),
+        ("ubicacion", "Ubicación", SVG_MAP_PIN, build_ubicacion(
+            audit_id, audit, ctx["location"], **comunes, provenance=provenance,
+        )),
+        ("admins", "Administradores", SVG_USERS, build_admins(
+            audit_id, audit, ctx["admins"], **comunes, sources=sources,
+            provenance=provenance, certificado=ctx["certificado"],
+        )),
+        ("accionistas", "Accionistas", SVG_USERS, build_accionistas(
+            audit_id, audit, ctx["shareholders"], **comunes, sources=sources,
+            provenance=provenance, certificado=ctx["certificado"],
+        )),
+        ("indicadores", "Financiero", SVG_DOLLAR, build_financiero(
+            audit_id, indicators, **comunes,
+            anio_sugerido=anio_fiscal_sugerido(row_get(profile, "ultimo_anio_balance")),
+            financial=ctx["financial"],
+            ruc=audit["ruc"] or "",
+            # Ejercicio a editar elegido en la pestaña; se ignora si no es un año válido.
+            anio_edicion=int(fin_anio) if fin_anio.isdigit() and 1990 <= int(fin_anio) <= 2100 else None,
+            provenance=provenance,
+        )),
+        ("documentos", "Documentos", SVG_FILE, build_documentos(audit_id, sources, **comunes)),
+        ("resumen", "Resumen", SVG_RADAR, build_resumen(
+            audit_id, ctx["research"], dossier, readiness=source_map["readiness"], **comunes,
+        )),
     ]
 
+
+def _tabs_block(tabs: list[tuple[str, str, str, str]], active_tab: str) -> str:
     nav_html = ""
     pane_html = ""
     for tab_id, tab_label, tab_icon, tab_content in tabs:
@@ -251,14 +200,17 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
         nav_html += f'<button class="radar-tab-btn{" active" if is_active else ""}" onclick="switchTab(\'{tab_id}\')" id="tab-btn-{tab_id}">{tab_icon} {esc(tab_label)}</button>'  # noqa: E501
         pane_html += f'<div class="radar-tab-pane{" active" if is_active else ""}" id="tab-{tab_id}">{tab_content}</div>'
 
-    tabs_block = f"""
+    return f"""
     <div class="radar-tabs" id="radar-tabs-main">
       <div class="radar-tab-nav">{nav_html}</div>
       {pane_html}
     </div>
     """
 
-    # ── Barra de acción flotante ────────────────────────────────────
+
+def _action_bar(audit: sqlite3.Row, read_only: bool) -> str:
+    """Barra de acción flotante: descargas y, según el rol, solo lectura o ir al resumen."""
+    audit_id, company_name, ruc = audit["id"], audit["company_name"], audit["ruc"]
     export_buttons = f"""
           <a class="btn btn-sm" href="/export/summary?audit_id={audit_id}" title="Descargar el resumen en texto">
             {SVG_DOWNLOAD} Resumen
@@ -267,7 +219,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
              title="Descargar el levantamiento de información completo en Excel">
             {SVG_DOWNLOAD} Excel
           </a>"""
-    if is_read_only:
+    if read_only:
         action_bar_right = f"""
           {'<span class="badge badge-amber" title="' + esc(audit["archive_reason"] or "") + '">Empresa archivada</span>' if audit["archived_at"] else ''}
           <span class="badge badge-gray">{SVG_INFO} Modo solo lectura</span>
@@ -280,7 +232,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
           </button>
           {export_buttons}
         """
-    action_bar = f"""
+    return f"""
     <div class="radar-action-bar">
       <div class="radar-action-bar-inner">
         <div class="radar-action-left">
@@ -294,8 +246,9 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     </div>
     """
 
-    # ── JS para tabs ──────────────────────────────────────────────────────
-    tab_js = """
+
+# Cambio de pestaña, validación del RUC y confirmación de "Actualizar búsqueda".
+_TAB_JS = """
     <script>
     function switchTab(id, updateUrl = true, scrollToTabs = true) {
       const pane = document.getElementById('tab-' + id);
@@ -375,18 +328,44 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     </script>
     """
 
-    # ── Contenido final ───────────────────────────────────────────────────
+
+def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "") -> str:
+    """Genera el HTML completo del Radar Empresarial."""
+    audit_id = form_id(query, "audit_id")
+    audit = get_audit(audit_id, user)
+    if not audit:
+        return layout(
+            "Acceso denegado", user,
+            '<div class="error-msg">Auditoría no disponible o no asignada.</div>',
+            active_path="/auditor",
+        )
+
+    # Una sola conexión para todo el expediente.
+    ctx = get_audit_context(audit_id)
+    is_read_only = user["role"] == "admin"
+    source_map = source_map_from_context(audit, ctx)
+    # Fuentes guiadas: SRI y Supercias (portal) se resuelven aquí para pasarle
+    # a cada tab solo su propia fila de source_checks.
+    sri_check = find_source_check(ctx["source_checks"], ("sri",))
+    supercias_check = find_source_check(ctx["source_checks"], ("supercias",), ("documento",))
+
+    tabs = _build_tabs(audit, ctx, source_map, query, is_read_only, csrf_token, sri_check, supercias_check)
+    search_panel = _render_search_bar(
+        audit_id, audit["company_name"], audit["ruc"], is_read_only, csrf_token,
+        sri_check, supercias_check, len(ctx["financial"]["years"]),
+    )
+
     content = f"""
-    <div class="{readonly_class}">
+    <div class="{"readonly-mode" if is_read_only else ""}">
       {search_panel}
       <div class="radar-layout">
         <div style="min-width: 0;">
-          {tabs_block}
-          {action_bar}
+          {_tabs_block(tabs, form_value(query, "tab", "sri"))}
+          {_action_bar(audit, is_read_only)}
         </div>
       </div>
     </div>
-    {tab_js}
+    {_TAB_JS}
     """
 
     flash = form_value(query, "msg")
