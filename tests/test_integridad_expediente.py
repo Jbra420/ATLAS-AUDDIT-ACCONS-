@@ -5,7 +5,8 @@ Cubre estas garantías:
   - crear un expediente con el RUC demo no carga datos que no provengan de
     una fuente o del auditor;
   - la razón social de SRI y la de Supercias se conservan por separado;
-  - un auditor no puede cambiar documentos ni fuentes de otro expediente.
+  - un auditor no puede cambiar documentos ni fuentes de otro expediente;
+  - registrar evidencia no genera el resumen.
 """
 from __future__ import annotations
 
@@ -16,6 +17,8 @@ from unittest import mock
 
 import database
 from database import (
+    add_source,
+    append_research_source_note,
     apply_sri_research_result,
     apply_supercias_research_result,
     authenticate,
@@ -24,11 +27,13 @@ from database import (
     get_audit_context,
     get_company_location,
     get_company_profile,
+    get_research,
     init_db,
     mark_document_pending,
     mark_document_reviewed,
     mark_source_checked,
     mark_source_pending,
+    refresh_summary,
     update_company_location_fields,
     update_company_profile_fields,
 )
@@ -300,6 +305,28 @@ class TestAccesoEntreExpedientes(_TempDbCase):
         doc = get_audit_context(self.propio, self.db)["docs"][0]["id"]
         mark_document_reviewed(self.propio, doc, self.auditor["id"], self.db)
         self.assertEqual(self._estado("economic_documents", doc), "revisado")
+
+
+class TestResumenSoloBajoPedido(_TempDbCase):
+    def setUp(self):
+        super().setUp()
+        self.audit_id = self._create_audit()
+
+    def test_registrar_evidencia_no_genera_resumen(self):
+        add_source(self.audit_id, "Consulta", "", "SRI", "", self.auditor["id"], self.db)
+        append_research_source_note(self.audit_id, self.auditor["id"], "SRI", "RUC activo", "", self.db)
+        research = get_research(self.audit_id, self.db)
+        self.assertIsNone(research["generated_summary"])
+        self.assertIn("SRI: RUC activo", research["sri_info"])
+        with connect(self.db) as conn:
+            status = conn.execute("SELECT status FROM audits WHERE id = ?", (self.audit_id,)).fetchone()[0]
+        self.assertEqual(status, "en_investigacion")
+
+    def test_registrar_evidencia_conserva_resumen_generado(self):
+        refresh_summary(self.audit_id, self.db)
+        antes = get_research(self.audit_id, self.db)["generated_summary"]
+        append_research_source_note(self.audit_id, self.auditor["id"], "SRI", "RUC activo", "", self.db)
+        self.assertEqual(get_research(self.audit_id, self.db)["generated_summary"], antes)
 
 
 if __name__ == "__main__":

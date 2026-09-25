@@ -296,8 +296,17 @@ def append_research_source_note(
             data["pasted_text"] = _append_evidence(data["pasted_text"], evidence_text)
         else:
             data["observations"] = _append_evidence(data["observations"], finding_line, evidence_line)
+        before = {field: row[field] or "" for field in RESEARCH_FIELDS}
+        # Registrar evidencia no genera el resumen: eso solo ocurre con
+        # "Generar resumen", que antes revisa los requisitos pendientes.
+        conn.execute(
+            "UPDATE audits SET status = 'en_investigacion' WHERE id = ? AND status = 'pendiente'",
+            (audit_id,),
+        )
 
-    update_research(audit_id, user_id, data, mark_ready=False, db_path=db_path)
+    patch_research(
+        audit_id, user_id, {k: v for k, v in data.items() if v != before[k]}, db_path=db_path,
+    )
 
 
 def list_source_checks(audit_id: int, db_path: Path | str = DB_PATH) -> list[sqlite3.Row]:
