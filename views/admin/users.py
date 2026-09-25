@@ -129,7 +129,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
           <input id="full_name" name="full_name" required placeholder="Ej. María García">
           <label for="username_new">Usuario</label>
           <input id="username_new" name="username" required placeholder="Ej. mgarcia"
-                 autocomplete="off" minlength="3" maxlength="32" pattern="[A-Za-z0-9_.-]{3,32}"
+                 autocomplete="off" minlength="3" maxlength="32" pattern="[A-Za-z0-9_.-]{{3,32}}"
                  title="Use entre 3 y 32 caracteres: letras, números, punto, guion o guion bajo.">
           <label for="new_password">Contraseña temporal</label>
           <input id="new_password" name="password" type="password" required
