@@ -179,9 +179,11 @@ def list_financial_statements(ruc: str, db_path: Path | str = DB_PATH) -> list[s
 def _financial_context(conn: sqlite3.Connection, audit_id: int) -> dict[str, Any]:
     """Financiero vigente de la auditoría.
 
-    - anio_fiscal: ejercicio que se muestra. Es el registrado en la auditoría
-      si tiene cifras; si no, el más reciente con cifras del RUC. Solo sin
-      ninguna cifra anual se conserva el registrado (o None).
+    - anio_confirmado: año fiscal que el auditor confirmó como auditado
+      (audits.anio_fiscal_eeff) o None.
+    - anio_fiscal: ejercicio que se muestra. Es el confirmado, tenga o no
+      cifras (nunca se sustituye por otro); sin confirmar, el más reciente con
+      cifras del RUC.
     - snapshot: cifras de ese ejercicio (origen "anual"). Si no hay cifras
       anuales, las registradas antes de la Fase 4 sin año fiscal (origen
       "sin_anio"), para no perderlas de vista; si tampoco existen, None.
@@ -205,7 +207,8 @@ def _financial_context(conn: sqlite3.Connection, audit_id: int) -> dict[str, Any
     ).fetchone()
     legacy = dict(legacy_row) if legacy_row else None
 
-    if years and anio not in {y["anio_fiscal"] for y in years}:
+    confirmado = anio
+    if anio is None and years:
         anio = years[0]["anio_fiscal"]
     current = next((dict(y) for y in years if anio is not None and y["anio_fiscal"] == anio), None)
     if current is not None:
@@ -214,7 +217,10 @@ def _financial_context(conn: sqlite3.Connection, audit_id: int) -> dict[str, Any
         snapshot = {**legacy, "anio_fiscal": None, "fecha_corte": None, "origen": "sin_anio"}
     else:
         snapshot = None
-    return {"snapshot": snapshot, "legacy": legacy, "years": years, "anio_fiscal": anio}
+    return {
+        "snapshot": snapshot, "legacy": legacy, "years": years,
+        "anio_fiscal": anio, "anio_confirmado": confirmado,
+    }
 
 
 def get_financial_context(audit_id: int, db_path: Path | str = DB_PATH) -> dict[str, Any]:

@@ -137,7 +137,7 @@ class TestCompanySearchMap(unittest.TestCase):
 
     def test_complete_levantamiento_enables_summary_with_optional_warnings(self):
         source_map = build_source_map(
-            {"ruc": "0190377210001"}, {"observations": ""}, self.PROFILE, self.LOCATION,
+            {"ruc": "0190377210001", "anio_fiscal_eeff": 2025}, {"observations": ""}, self.PROFILE, self.LOCATION,
             self.ADMINS, self.SHAREHOLDERS, [], self.SNAPSHOT, self.CHECKS, [],
         )
         readiness = source_map["readiness"]
@@ -152,7 +152,7 @@ class TestCompanySearchMap(unittest.TestCase):
     def test_process_controls_still_block(self):
         checks = [{"fuente": "SRI", "estado": "pendiente"}, {"fuente": "Supercias", "estado": "consultada"}]
         source_map = build_source_map(
-            {"ruc": "0190377210001"}, {}, self.PROFILE, self.LOCATION,
+            {"ruc": "0190377210001", "anio_fiscal_eeff": 2025}, {}, self.PROFILE, self.LOCATION,
             self.ADMINS, self.SHAREHOLDERS, [], self.SNAPSHOT, checks, [],
         )
         self.assertEqual([b["label"] for b in source_map["readiness"]["blockers"]], ["Fuente SRI consultada"])

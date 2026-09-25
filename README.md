@@ -199,8 +199,10 @@ sin reemplazar el ejercicio anterior.
 Tras importar, el auditor debe pulsar **Iniciar búsqueda** de nuevo en el
 expediente para cargar las cifras disponibles. La búsqueda solo llena
 casilleros vacíos: conserva las correcciones manuales y registra fuente y
-fecha por dato. El año fiscal de la auditoría sigue requiriendo confirmación
-explícita. El jefe puede ver la información, pero no ejecutar la búsqueda ni
+fecha por dato. La pestaña muestra el ejercicio más reciente con cifras, pero
+el año fiscal de la auditoría requiere confirmación explícita ("Confirmar
+ejercicio … como año auditado"): hasta entonces, el requisito queda pendiente.
+Un año confirmado sin cifras nunca se sustituye por otro ejercicio. El jefe puede ver la información, pero no ejecutar la búsqueda ni
 editarla. Este reporte agregado no sustituye la revisión del documento
 económico original, las notas ni el acta de junta.
 

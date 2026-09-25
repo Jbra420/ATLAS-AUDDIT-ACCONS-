@@ -196,13 +196,33 @@ class TestFinancialTab(_FinancialCase):
     def test_latest_year_with_figures_is_shown_without_choosing(self):
         self._save(2024, {"activo_total": "2900000"})
         self._save(2025, CIFRAS_2025)
-        set_audit_fiscal_year(self.audit_id, 2006, db_path=self.db)
         ctx = get_audit_context(self.audit_id, self.db)
         self.assertEqual((ctx["snapshot"]["origen"], ctx["snapshot"]["anio_fiscal"]), ("anual", 2025))
+        self.assertIsNone(ctx["financial"]["anio_confirmado"])
         html = self._html()
         self.assertIn('<span class="badge badge-green">Ejercicio 2025</span>', html)
         self.assertIn("Ejercicios con cifras: 2025, 2024", html)
         self.assertIn("$3,108,776.58", html)
+        self.assertIn("pendiente de confirmar", html)
+        self.assertIn('action="/auditor/radar/financial-year"', html)
+        self.assertIn("Confirmar ejercicio 2025 como año auditado", html)
+
+    def test_confirmed_year_without_figures_is_not_replaced(self):
+        self._save(2025, CIFRAS_2025)
+        set_audit_fiscal_year(self.audit_id, 2006, db_path=self.db)
+        ctx = get_audit_context(self.audit_id, self.db)
+        self.assertIsNone(ctx["snapshot"])
+        self.assertEqual((ctx["financial"]["anio_fiscal"], ctx["financial"]["anio_confirmado"]), (2006, 2006))
+        html = self._html()
+        self.assertIn("2006</strong> (EEFF al 2006-12-31) — sin cifras registradas", html)
+        self.assertNotIn("$3,108,776.58", html.split("Comparativo")[0])
+
+    def test_confirmed_year_is_shown_as_confirmed(self):
+        self._save(2025, CIFRAS_2025)
+        set_audit_fiscal_year(self.audit_id, 2025, db_path=self.db)
+        html = self._html()
+        self.assertIn("Año fiscal auditado: <strong>2025</strong> (confirmado)", html)
+        self.assertNotIn("Confirmar ejercicio", html)
 
     def test_opened_year_drives_the_whole_tab(self):
         self._save(2024, {"activo_total": "2900000"})
