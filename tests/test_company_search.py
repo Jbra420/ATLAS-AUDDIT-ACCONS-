@@ -68,7 +68,7 @@ class TestCompanySearchMap(unittest.TestCase):
 
     def test_marked_source_can_complete_sri_card(self):
         sri_check = next(sc for sc in list_source_checks(self.audit_id, self.db) if "SRI" in sc["fuente"])
-        mark_source_checked(sri_check["id"], self.auditor["id"], "Consulta confirmada", self.db)
+        mark_source_checked(self.audit_id, sri_check["id"], self.auditor["id"], "Consulta confirmada", self.db)
 
         source_map = self._source_map()
         sri = next(card for card in source_map["cards"] if card["key"] == "sri")

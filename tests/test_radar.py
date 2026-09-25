@@ -125,7 +125,7 @@ class TestRadarEmpresarial(unittest.TestCase):
         self.assertGreater(len(docs), 0)
         
         doc_id = docs[0]["id"]
-        mark_document_reviewed(doc_id, self.auditor["id"], self.db)
+        mark_document_reviewed(self.audit_id, doc_id, self.auditor["id"], self.db)
         
         docs_updated = list_economic_documents(self.audit_id, self.db)
         doc = next(d for d in docs_updated if d["id"] == doc_id)

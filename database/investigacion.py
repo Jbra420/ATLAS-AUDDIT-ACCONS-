@@ -309,20 +309,23 @@ def list_source_checks(audit_id: int, db_path: Path | str = DB_PATH) -> list[sql
 
 
 def mark_source_checked(
+    audit_id: int,
     check_id: int,
     user_id: int,
     observacion: str,
     db_path: Path | str = DB_PATH,
 ) -> None:
     with connect(db_path) as conn:
-        conn.execute(
+        cur = conn.execute(
             """
             UPDATE source_checks
             SET estado='consultada', observacion=?, consultada_por=?, consultada_at=?
-            WHERE id=?
+            WHERE id=? AND audit_id=?
             """,
-            (observacion.strip(), user_id, now_iso(), check_id),
+            (observacion.strip(), user_id, now_iso(), check_id, audit_id),
         )
+        if cur.rowcount == 0:
+            raise ValueError("Fuente no encontrada en este expediente")
 
 
 def mark_matching_source_checked(
@@ -369,9 +372,12 @@ def mark_matching_source_checked(
     return False
 
 
-def mark_source_pending(check_id: int, db_path: Path | str = DB_PATH) -> None:
+def mark_source_pending(audit_id: int, check_id: int, db_path: Path | str = DB_PATH) -> None:
     with connect(db_path) as conn:
-        conn.execute(
-            "UPDATE source_checks SET estado='pendiente', consultada_por=NULL, consultada_at=NULL WHERE id=?",
-            (check_id,),
+        cur = conn.execute(
+            "UPDATE source_checks SET estado='pendiente', consultada_por=NULL, consultada_at=NULL "
+            "WHERE id=? AND audit_id=?",
+            (check_id, audit_id),
         )
+        if cur.rowcount == 0:
+            raise ValueError("Fuente no encontrada en este expediente")

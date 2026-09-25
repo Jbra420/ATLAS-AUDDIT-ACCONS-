@@ -411,20 +411,28 @@ def list_economic_documents(audit_id: int, db_path: Path | str = DB_PATH, *, lim
         ))
 
 
-def mark_document_reviewed(doc_id: int, user_id: int, db_path: Path | str = DB_PATH) -> None:
+def _set_document_state(audit_id: int, doc_id: int, sql: str, params: tuple, db_path: Path | str) -> None:
+    """Cambia el estado de un documento solo si pertenece al expediente."""
     with connect(db_path) as conn:
-        conn.execute(
-            "UPDATE economic_documents SET estado='revisado', revisado_por=?, revisado_at=? WHERE id=?",
-            (user_id, now_iso(), doc_id),
-        )
+        cur = conn.execute(f"{sql} WHERE id = ? AND audit_id = ?", (*params, doc_id, audit_id))  # noqa: S608
+        if cur.rowcount == 0:
+            raise ValueError("Documento no encontrado en este expediente")
 
 
-def mark_document_pending(doc_id: int, db_path: Path | str = DB_PATH) -> None:
-    with connect(db_path) as conn:
-        conn.execute(
-            "UPDATE economic_documents SET estado='pendiente', revisado_por=NULL, revisado_at=NULL WHERE id=?",
-            (doc_id,),
-        )
+def mark_document_reviewed(audit_id: int, doc_id: int, user_id: int, db_path: Path | str = DB_PATH) -> None:
+    _set_document_state(
+        audit_id, doc_id,
+        "UPDATE economic_documents SET estado='revisado', revisado_por=?, revisado_at=?",
+        (user_id, now_iso()), db_path,
+    )
+
+
+def mark_document_pending(audit_id: int, doc_id: int, db_path: Path | str = DB_PATH) -> None:
+    _set_document_state(
+        audit_id, doc_id,
+        "UPDATE economic_documents SET estado='pendiente', revisado_por=NULL, revisado_at=NULL",
+        (), db_path,
+    )
 
 
 def load_demo_if_ruc_matches(

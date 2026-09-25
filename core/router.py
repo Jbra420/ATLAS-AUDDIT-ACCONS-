@@ -205,17 +205,17 @@ def _investigate(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
 
 def _toggle_source_check(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
     if form_value(form, "accion", "consultar") == "revertir":
-        mark_source_pending(_int(form, "check_id"))
+        mark_source_pending(audit["id"], _int(form, "check_id"))
     else:
-        mark_source_checked(_int(form, "check_id"), user["id"], form_value(form, "observacion"))
+        mark_source_checked(audit["id"], _int(form, "check_id"), user["id"], form_value(form, "observacion"))
     return "Fuente actualizada"
 
 
 def _toggle_document(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
     if form_value(form, "accion", "revisar") == "revertir":
-        mark_document_pending(_int(form, "doc_id"))
+        mark_document_pending(audit["id"], _int(form, "doc_id"))
     else:
-        mark_document_reviewed(_int(form, "doc_id"), user["id"])
+        mark_document_reviewed(audit["id"], _int(form, "doc_id"), user["id"])
     return "Documento actualizado"
 
 

@@ -195,7 +195,7 @@ class TestResumenExcel(unittest.TestCase):
 
     def test_documentos_distinguen_pendiente_de_revision_registrada(self):
         doc = get_audit_context(self.audit_id, self.db)["docs"][0]
-        mark_document_reviewed(doc["id"], self.uid, self.db)
+        mark_document_reviewed(self.audit_id, doc["id"], self.uid, self.db)
         libro = self._libro()
         self.assertEqual(_valor(libro["Documentos"], "Documentos revisados").value, "1 de 9")
         fila = next(r for r in _filas(libro["Documentos"]) if r[0] == doc["nombre"])

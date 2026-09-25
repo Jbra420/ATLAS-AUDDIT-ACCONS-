@@ -1,10 +1,11 @@
 """Pruebas de integridad del expediente (Fase 1 del levantamiento de información).
 
-Cubre tres garantías:
+Cubre estas garantías:
   - guardar una pestaña no vacía los datos de otra (actualización parcial);
   - crear un expediente con el RUC demo no carga datos que no provengan de
     una fuente o del auditor;
-  - la razón social de SRI y la de Supercias se conservan por separado.
+  - la razón social de SRI y la de Supercias se conservan por separado;
+  - un auditor no puede cambiar documentos ni fuentes de otro expediente.
 """
 from __future__ import annotations
 
@@ -24,6 +25,10 @@ from database import (
     get_company_location,
     get_company_profile,
     init_db,
+    mark_document_pending,
+    mark_document_reviewed,
+    mark_source_checked,
+    mark_source_pending,
     update_company_location_fields,
     update_company_profile_fields,
 )
@@ -260,6 +265,41 @@ class TestFormsSendOnlyTheirFields(unittest.TestCase):
         sri = self._field_names(tab_sri.build(1, self.AUDIT, self.PROFILE, None, csrf_token="t"))
         sup = self._field_names(tab_supercias.build(1, self.AUDIT, self.PROFILE, None, csrf_token="t"))
         self.assertLessEqual(sri | sup, set(database.PROFILE_FORM_FIELDS))
+
+
+class TestAccesoEntreExpedientes(_TempDbCase):
+    """Un id de documento o de fuente de otro expediente no se acepta."""
+
+    def setUp(self):
+        super().setUp()
+        self.propio = self._create_audit()
+        self.ajeno = self._create_audit("0190314014001")
+        ctx = get_audit_context(self.ajeno, self.db)
+        self.doc_ajeno = ctx["docs"][0]["id"]
+        self.check_ajeno = ctx["source_checks"][0]["id"]
+
+    def _estado(self, tabla: str, row_id: int) -> str:
+        with connect(self.db) as conn:
+            return conn.execute(f"SELECT estado FROM {tabla} WHERE id = ?", (row_id,)).fetchone()[0]
+
+    def test_documento_de_otro_expediente(self):
+        with self.assertRaisesRegex(ValueError, "no encontrado"):
+            mark_document_reviewed(self.propio, self.doc_ajeno, self.auditor["id"], self.db)
+        with self.assertRaisesRegex(ValueError, "no encontrado"):
+            mark_document_pending(self.propio, self.doc_ajeno, self.db)
+        self.assertEqual(self._estado("economic_documents", self.doc_ajeno), "pendiente")
+
+    def test_fuente_de_otro_expediente(self):
+        with self.assertRaisesRegex(ValueError, "no encontrada"):
+            mark_source_checked(self.propio, self.check_ajeno, self.auditor["id"], "x", self.db)
+        with self.assertRaisesRegex(ValueError, "no encontrada"):
+            mark_source_pending(self.propio, self.check_ajeno, self.db)
+        self.assertEqual(self._estado("source_checks", self.check_ajeno), "pendiente")
+
+    def test_documento_propio_se_marca(self):
+        doc = get_audit_context(self.propio, self.db)["docs"][0]["id"]
+        mark_document_reviewed(self.propio, doc, self.auditor["id"], self.db)
+        self.assertEqual(self._estado("economic_documents", doc), "revisado")
 
 
 if __name__ == "__main__":
