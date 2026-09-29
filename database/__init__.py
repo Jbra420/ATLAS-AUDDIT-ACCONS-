@@ -5,7 +5,7 @@ Es la única capa que escribe en SQLite. Cada módulo agrupa un tema y solo
 importa de los que están antes en este orden:
 
     base → trazabilidad → usuarios, personas, perfil, financiero, certificados
-         → catalogos → expedientes → investigacion → esquema
+         → catalogos → expedientes → investigacion → requerimiento → esquema
 
 Este archivo re-exporta la API pública: el resto de la app importa siempre
 `from database import …`. Para parchear en tests una función que otra usa
@@ -124,6 +124,21 @@ from database.investigacion import (
     mark_source_checked,
     mark_matching_source_checked,
     mark_source_pending,
+)
+from database.requerimiento import (
+    get_requerimiento_context,
+    get_requerimiento_file,
+    get_requerimiento_paquete,
+    next_requerimiento_numero,
+    register_requerimiento_envio,
+    register_requerimiento_paquete,
+    review_requerimiento_adjunto,
+    ruta_archivo,
+    save_requerimiento_adjunto,
+    save_requerimiento_datos,
+    save_requerimiento_detalle,
+    save_requerimiento_importacion,
+    save_requerimiento_items,
 )
 from database.esquema import (
     SCHEMA_PATH,

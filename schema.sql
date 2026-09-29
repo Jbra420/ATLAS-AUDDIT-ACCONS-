@@ -265,3 +265,149 @@ CREATE TABLE IF NOT EXISTS alert_treatments (
     registrado_at TEXT NOT NULL,
     PRIMARY KEY (audit_id, codigo)
 );
+
+-- ── Requerimiento inicial (segundo paso del proceso) ─────────────────
+-- Datos propios del requerimiento, separados del levantamiento pero de la
+-- misma auditoría. Los años se guardan por separado porque no son iguales
+-- entre sí: año auditado, año al que se refieren los certificados y último
+-- ejercicio cerrado. Todo lo confirma el auditor; nada se deduce.
+CREATE TABLE IF NOT EXISTS requerimientos (
+    audit_id INTEGER PRIMARY KEY REFERENCES audits(id) ON DELETE CASCADE,
+    empresa TEXT,
+    ruc TEXT,
+    representante_titulo TEXT,
+    representante_nombre TEXT,
+    representante_cargo TEXT,
+    representante_identificacion TEXT,
+    representante_nacionalidad TEXT,
+    representante_ciudad TEXT,
+    anio_auditado INTEGER,
+    anio_certificados INTEGER,
+    anio_cerrado INTEGER,
+    fecha_documentos TEXT,
+    fecha_corte TEXT,
+    fechas_inventario TEXT,
+    cronograma_json TEXT NOT NULL DEFAULT '[]',
+    equipo_json TEXT NOT NULL DEFAULT '[]',
+    auddit_representante TEXT,
+    auddit_cargo TEXT,
+    correo_para_nombre TEXT,
+    correo_para TEXT,
+    correo_cc TEXT,
+    confirmado_por INTEGER REFERENCES users(id),
+    confirmado_at TEXT,
+    updated_at TEXT NOT NULL
+);
+
+-- Marcas que el auditor prepara en las hojas 1 y 2 del Excel antes de enviarlo.
+CREATE TABLE IF NOT EXISTS requerimiento_items (
+    audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+    hoja INTEGER NOT NULL CHECK (hoja IN (1, 2)),
+    numero INTEGER NOT NULL,
+    cumplido INTEGER NOT NULL DEFAULT 0,
+    no_aplica INTEGER NOT NULL DEFAULT 0,
+    observacion TEXT NOT NULL DEFAULT '',
+    CHECK (NOT (cumplido = 1 AND no_aplica = 1)),
+    PRIMARY KEY (audit_id, hoja, numero)
+);
+
+-- Filas precargadas de los cuadros de detalle (hojas 3 y 4), una por fila.
+CREATE TABLE IF NOT EXISTS requerimiento_detalles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+    seccion TEXT NOT NULL,
+    orden INTEGER NOT NULL,
+    valores_json TEXT NOT NULL
+);
+
+-- Generación de los cuatro documentos: se registra junto con sus cuatro
+-- archivos en una sola transacción (nunca queda a medias). La referencia va
+-- dentro del Excel para reconocer la respuesta del cliente; datos_json es la
+-- instantánea con la que se armaron los documentos y el borrador del correo.
+CREATE TABLE IF NOT EXISTS requerimiento_paquetes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+    numero INTEGER NOT NULL,
+    referencia TEXT NOT NULL UNIQUE,
+    datos_json TEXT NOT NULL,
+    generado_por INTEGER REFERENCES users(id),
+    generado_at TEXT NOT NULL,
+    UNIQUE (audit_id, numero)
+);
+
+-- Documentos generados: cada generación es una versión nueva e inmutable
+-- (archivo propio, SHA-256, autor, fecha y datos usados).
+CREATE TABLE IF NOT EXISTS requerimiento_archivos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+    paquete_id INTEGER REFERENCES requerimiento_paquetes(id),
+    tipo TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    nombre TEXT NOT NULL,
+    ruta TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    datos_json TEXT NOT NULL,
+    generado_por INTEGER REFERENCES users(id),
+    generado_at TEXT NOT NULL,
+    UNIQUE (audit_id, tipo, version)
+);
+
+-- Archivos que sube el auditor: contrato firmado, evidencias de envío y
+-- documentos que devuelve el cliente. El original se conserva siempre.
+-- Recibir no es revisar: un PDF firmado queda pendiente hasta que el auditor
+-- deja constancia de su revisión (revisado_*); Atlas no valida firmas
+-- electrónicas. El Excel respondido guarda el resultado de su validación
+-- (importado, rechazado o revision_manual) y la generación que reconoció.
+CREATE TABLE IF NOT EXISTS requerimiento_adjuntos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+    tipo TEXT NOT NULL,
+    nombre TEXT NOT NULL,
+    ruta TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    fecha TEXT,
+    nota TEXT NOT NULL DEFAULT '',
+    subido_por INTEGER REFERENCES users(id),
+    subido_at TEXT NOT NULL,
+    detalle_archivo TEXT NOT NULL DEFAULT '',
+    revision_resultado TEXT CHECK (revision_resultado IN ('conforme', 'observado')),
+    revision_nota TEXT NOT NULL DEFAULT '',
+    revisado_por INTEGER REFERENCES users(id),
+    revisado_at TEXT,
+    importacion_estado TEXT CHECK (importacion_estado IN ('importado', 'rechazado', 'revision_manual')),
+    importacion_detalle TEXT NOT NULL DEFAULT '',
+    paquete_id INTEGER REFERENCES requerimiento_paquetes(id)
+);
+
+-- Envíos manuales registrados por el auditor (correo corporativo y aviso
+-- por WhatsApp). Generar o descargar documentos nunca crea un envío.
+CREATE TABLE IF NOT EXISTS requerimiento_envios (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+    canal TEXT NOT NULL CHECK (canal IN ('correo', 'whatsapp')),
+    destinatario TEXT NOT NULL,
+    copia TEXT NOT NULL DEFAULT '',
+    asunto TEXT NOT NULL DEFAULT '',
+    fecha TEXT NOT NULL,
+    archivos_json TEXT NOT NULL DEFAULT '[]',
+    paquete_id INTEGER REFERENCES requerimiento_paquetes(id),
+    evidencia_id INTEGER REFERENCES requerimiento_adjuntos(id),
+    registro_historico INTEGER NOT NULL DEFAULT 0 CHECK (registro_historico IN (0, 1)),
+    justificacion_historica TEXT NOT NULL DEFAULT '',
+    registrado_por INTEGER REFERENCES users(id),
+    registrado_at TEXT NOT NULL
+);
+
+-- Respuestas importadas del Excel devuelto por el cliente, ligadas al
+-- archivo recibido. Las observaciones se guardan tal como llegaron.
+CREATE TABLE IF NOT EXISTS requerimiento_respuestas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_id INTEGER NOT NULL REFERENCES audits(id) ON DELETE CASCADE,
+    adjunto_id INTEGER NOT NULL REFERENCES requerimiento_adjuntos(id),
+    items_json TEXT NOT NULL,
+    detalles_json TEXT NOT NULL,
+    importado_por INTEGER REFERENCES users(id),
+    importado_at TEXT NOT NULL
+);

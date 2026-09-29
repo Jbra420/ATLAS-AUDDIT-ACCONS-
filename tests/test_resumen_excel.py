@@ -7,21 +7,16 @@ comprobar las hojas, los valores, los tipos de dato y la trazabilidad.
 from __future__ import annotations
 
 import io
-import tempfile
 import unittest
-from pathlib import Path
 
 from openpyxl import load_workbook
 
 from database import (
     add_administrator,
     add_shareholder,
-    authenticate,
     connect,
-    create_company_audit,
     get_audit,
     get_audit_context,
-    init_db,
     mark_document_reviewed,
     patch_research,
     set_audit_fiscal_year,
@@ -30,6 +25,7 @@ from database import (
     upsert_financial_statement,
 )
 from services.resumen_excel import PENDIENTE, build_resumen_xlsx
+from tests._base import BaseTemporal
 
 RUC = "0190444619001"
 HOJAS = [
@@ -52,16 +48,11 @@ def _valor(ws, etiqueta: str, columna: int = 2):
     raise AssertionError(f"No se encontró {etiqueta!r} en {ws.title}")
 
 
-class TestResumenExcel(unittest.TestCase):
+class TestResumenExcel(BaseTemporal):
     def setUp(self):
-        self.db = Path(tempfile.mkdtemp()) / "test.db"
-        init_db(self.db, demo=True)
-        self.admin = authenticate("admin", "admin123", self.db)
-        auditor = authenticate("auditor", "auditor123", self.db)
-        self.uid = auditor["id"]
-        self.audit_id = create_company_audit(
-            "COBBLERCOMPANY CIA. LTDA.", RUC, "Cuenca", "", "2026", self.uid, self.admin["id"], self.db,
-        )
+        super().setUp()
+        self.uid = self.auditor["id"]
+        self.audit_id = self.crear_auditoria("COBBLERCOMPANY CIA. LTDA.", RUC)
 
     def _libro(self):
         audit = get_audit(self.audit_id, self.admin, self.db)

@@ -14,19 +14,14 @@ Se omite si los catálogos locales no están importados o no contienen el RUC.
 """
 from __future__ import annotations
 
-import tempfile
 import unittest
-from pathlib import Path
 
 import database
 from database import (
     add_administrator,
     add_shareholder,
-    authenticate,
-    create_company_audit,
     get_audit,
     get_audit_context,
-    init_db,
     list_administrators,
     refresh_summary,
     register_alert_treatment,
@@ -38,6 +33,7 @@ from database import (
 )
 from services.company_research import research_company_by_ruc
 from services.company_search import build_source_map
+from tests._base import BaseTemporal
 
 REFERENCE_RUC = "0190377210001"
 CEDULA_PRUEBA = "0102030400"
@@ -56,17 +52,11 @@ _CATALOGS_READY = (
 
 
 @unittest.skipUnless(_CATALOGS_READY, "Catálogos locales SRI/Supercias no importados o sin el RUC de referencia")
-class TestAceptacionGrucanqui(unittest.TestCase):
+class TestAceptacionGrucanqui(BaseTemporal):
     def setUp(self):
-        self.db = Path(tempfile.mkdtemp()) / "atlas.db"
-        init_db(self.db, demo=True)
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        self.admin = authenticate("admin", "admin123", self.db)
+        super().setUp()
         self.uid = self.auditor["id"]
-        self.audit_id = create_company_audit(
-            "GRUCANQUI CIA. LTDA", REFERENCE_RUC, "Cuenca", "", "2026",
-            self.uid, self.admin["id"], self.db,
-        )
+        self.audit_id = self.crear_auditoria("GRUCANQUI CIA. LTDA", REFERENCE_RUC)
 
     def _estado(self):
         audit = get_audit(self.audit_id, self.admin, self.db)

@@ -1,18 +1,13 @@
 """
 tests/test_radar.py — Pruebas de la lógica del Radar Empresarial
 """
-import sqlite3
-import tempfile
 import unittest
-from pathlib import Path
 
 from database import (
     authenticate,
     connect,
-    create_company_audit,
     create_user,
     get_audit,
-    init_db,
     load_demo_if_ruc_matches,
     get_company_profile,
     get_financial_snapshot,
@@ -21,36 +16,14 @@ from database import (
 )
 from services.financial import compute_indicators
 from services.summary import generate_summary
+from tests._base import BaseTemporal
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_db() -> Path:
-    """Crea una base de datos temporal para pruebas."""
-    tmp_dir = tempfile.mkdtemp()
-    db_path = Path(tmp_dir) / "test_radar.db"
-    init_db(db_path, demo=True)
-    return db_path
-
-def _admin_row(db_path: Path) -> sqlite3.Row:
-    return authenticate("admin", "admin123", db_path)
-
-def _auditor_row(db_path: Path) -> sqlite3.Row:
-    return authenticate("auditor", "auditor123", db_path)
-
-
-class TestRadarEmpresarial(unittest.TestCase):
+class TestRadarEmpresarial(BaseTemporal):
 
     def setUp(self):
-        self.db = _make_db()
-        self.auditor = _auditor_row(self.db)
-        self.admin = _admin_row(self.db)
-        # Create an audit for testing
-        self.audit_id = create_company_audit(
-            "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
-            "Servicios de consultoría", "2026", self.auditor["id"], self.admin["id"], self.db
-        )
+        super().setUp()
+        self.audit_id = self.crear_auditoria("GRUCANQUI CIA. LTDA", "0190377210001", ciudad="Quito",
+                                             actividad="Servicios de consultoría")
 
     # Nota: la validación real de RUC (formato, dígito verificador, etc.) se
     # prueba a fondo en tests/test_ruc_validator.py contra services.ruc_validator.

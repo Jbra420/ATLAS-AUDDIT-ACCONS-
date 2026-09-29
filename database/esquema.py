@@ -194,6 +194,43 @@ def _migrate(conn: sqlite3.Connection) -> None:
         """
     )
 
+    # Requerimiento inicial: generación de cada documento y envío, y revisión /
+    # validación de lo recibido. Las filas previas quedan sin generación
+    # (paquete_id NULL) y sin revisar: nunca se dan por revisadas.
+    req_columns = {
+        "requerimiento_archivos": [("paquete_id", "INTEGER REFERENCES requerimiento_paquetes(id)")],
+        "requerimiento_envios": [
+            ("paquete_id", "INTEGER REFERENCES requerimiento_paquetes(id)"),
+            ("registro_historico", "INTEGER NOT NULL DEFAULT 0"),
+            ("justificacion_historica", "TEXT NOT NULL DEFAULT ''"),
+        ],
+        "requerimiento_adjuntos": [
+            ("detalle_archivo", "TEXT NOT NULL DEFAULT ''"),
+            ("revision_resultado", "TEXT CHECK (revision_resultado IN ('conforme', 'observado'))"),
+            ("revision_nota", "TEXT NOT NULL DEFAULT ''"),
+            ("revisado_por", "INTEGER REFERENCES users(id)"),
+            ("revisado_at", "TEXT"),
+            ("importacion_estado", "TEXT CHECK (importacion_estado IN ('importado', 'rechazado', 'revision_manual'))"),
+            ("importacion_detalle", "TEXT NOT NULL DEFAULT ''"),
+            ("paquete_id", "INTEGER REFERENCES requerimiento_paquetes(id)"),
+        ],
+    }
+    for table, columns in req_columns.items():
+        existing_cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for col, col_type in columns:
+            if col not in existing_cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+    # Un Excel importado antes de validar su procedencia no se da por válido:
+    # queda para revisión manual (el original y lo leído se conservan).
+    conn.execute(
+        """
+        UPDATE requerimiento_adjuntos SET importacion_estado = 'revision_manual',
+            importacion_detalle = 'Importado antes de verificar RUC, ejercicio y generación: revise el archivo'
+        WHERE tipo = 'solicitud_respondida' AND importacion_estado IS NULL
+          AND id IN (SELECT adjunto_id FROM requerimiento_respuestas)
+        """
+    )
+
     # certificate_imports (una propuesta por tipo) se reemplazó por
     # nomina_imports (un PDF, ambas nóminas). Solo se elimina si está vacía.
     antigua = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'certificate_imports'")

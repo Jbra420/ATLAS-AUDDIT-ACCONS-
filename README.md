@@ -112,6 +112,68 @@ Usuarios:
 
 El auditor y la empresa demo solo existen en los tests (`init_db(demo=True)`).
 
+## Requerimiento inicial (paso 2 del proceso)
+
+Cada auditoría tiene dos pestañas principales, en el orden del proceso, con
+su propia página y ruta: **Levantamiento de información** (`/auditor/radar`,
+con las pestañas SRI, Supercias, Ubicación, Administradores, Accionistas,
+Financiero, Documentos y Resumen) y **Requerimiento inicial**
+(`/auditor/requerimiento`). El jefe auditor ve ambas en solo lectura
+(`/admin/audit` y `/admin/requerimiento`) y puede descargar los archivos
+registrados, pero no genera vistas previas ni borradores de correo (el
+servidor lo rechaza aunque se escriba la URL).
+Comparten la auditoría, no los registros: el requerimiento guarda sus datos en
+tablas propias (`requerimiento*`).
+
+1. **Contrato de auditoría firmado** (PDF legible): queda "adjuntado, pendiente
+   de revisión" hasta que el auditor deja constancia (empresa, ejercicio,
+   integridad aparente y firmas; autor y fecha). Solo un contrato revisado
+   conforme permite generar. Atlas no valida criptográficamente firmas
+   electrónicas.
+2. **Datos del requerimiento**: la precarga toma solo lo que consta en el
+   levantamiento (razón social, RUC, administradores, período y año fiscal
+   confirmado); el auditor confirma y completa representante, cédula,
+   destinatario, equipo, cronograma y fechas. Los años son independientes:
+   año auditado, año que certifican los certificados y último ejercicio
+   cerrado; la fecha de corte debe caer en el año auditado. El RUC se toma de
+   la auditoría y no se puede sustituir solo en este paso.
+3. **Solicitud de información**: marcas CUMPLIDO / NO APLICA (excluyentes) y
+   observaciones de las hojas 1 y 2; filas precargadas de los cuadros de las
+   hojas 3 y 4.
+4. **Documentos**: carta de encargo, certificado de compañías relacionadas y
+   certificado de paraísos fiscales (PDF) y solicitud inicial de información
+   (Excel de 4 hojas; no reemplaza el Excel del levantamiento). Hay vista
+   previa sin guardar. Los cuatro se generan juntos como una **generación**
+   (`requerimiento_paquetes`) con su instantánea de datos y una referencia que
+   va dentro del Excel (propiedades del libro y fila 2 de las hojas 1 y 2); se
+   registra en una sola transacción, así que un fallo no deja generaciones a
+   medias. Si después cambian datos, marcas o cuadros, la generación queda
+   desactualizada para un envío nuevo (sus archivos y envíos no cambian).
+5. **Correo**: asunto, cuerpo, adjuntos y un borrador `.eml` armados con la
+   instantánea de la generación vigente (si está desactualizada hay que
+   regenerar antes). El envío se registra aparte (fecha, destinatario,
+   generación enviada y evidencia); nunca mezcla documentos de generaciones
+   distintas, y generar o descargar no lo marca como enviado. Los correos
+   efectivamente enviados antes de un cambio se registran en una acción
+   histórica separada, con fecha, evidencia y justificación; no completan el
+   envío de una generación nueva.
+6. **WhatsApp**: mensaje para copiar o abrir en WhatsApp y registro del aviso,
+   solo después del correo.
+7. **Recepción**: carta y certificados firmados y Excel respondido. Un PDF
+   recibido cuenta solo cuando se revisa conforme. El Excel se importa solo
+   si su referencia, RUC, ejercicio, encabezados y textos coinciden con una
+   generación enviada de esta auditoría (el nombre del archivo no cuenta);
+   si no, queda como evidencia "recibido con error" o "requiere revisión
+   manual" y no completa el paso. Se puede cargar una versión corregida sin
+   borrar el original.
+
+Los textos de la carta, los certificados, los ítems del Excel y el correo se
+transcribieron de los ejemplos del documento de proceso de Auddit
+(`services/requerimiento.py`, `services/requerimiento_docs.py`). Son plantilla
+de trabajo, no texto legal aprobado. Los PDF se generan con
+`services/pdf_simple.py` (biblioteca estándar, fuentes Helvetica); las firmas
+no se reproducen.
+
 ## Catastro local del SRI
 
 "Iniciar búsqueda" consulta el catastro RUC del SRI importado localmente. El SRI
@@ -255,7 +317,9 @@ guiar la consulta y guardar evidencia.
 - `tests/`: pruebas unitarias (bases temporales) y de integración HTTP
   (`tests/test_http.py`: escribe en la base del servidor, así que solo corre
   con `ATLAS_HTTP_TEST_PORT` y `ATLAS_DB_PATH` apuntando a una base
-  desechable, la misma para el servidor y los tests; ver su docstring).
+  desechable, la misma para el servidor y los tests; ver su docstring). Con
+  `ATLAS_DB_PATH`, la carpeta `adjuntos/` va junto a esa base
+  (`ATLAS_ADJUNTOS_DIR` la fija explícitamente).
 
 ## Arquitectura y convenciones
 

@@ -3,19 +3,15 @@ tests/test_company_search.py — Pruebas del mapa de busqueda por fuentes.
 """
 from __future__ import annotations
 
-import tempfile
 import unittest
-from pathlib import Path
 
 from database import (
-    authenticate,
     create_company_audit,
     get_audit,
     get_company_location,
     get_company_profile,
     get_financial_snapshot,
     get_research,
-    init_db,
     list_administrators,
     list_economic_documents,
     list_shareholders,
@@ -24,21 +20,13 @@ from database import (
     mark_source_checked,
 )
 from services.company_search import build_source_map
+from tests._base import BaseTemporal
 
 
-def _make_db() -> Path:
-    tmp_dir = tempfile.mkdtemp()
-    db_path = Path(tmp_dir) / "test_company_search.db"
-    init_db(db_path, demo=True)
-    return db_path
-
-
-class TestCompanySearchMap(unittest.TestCase):
+class TestCompanySearchMap(BaseTemporal):
 
     def setUp(self):
-        self.db = _make_db()
-        self.admin = authenticate("admin", "admin123", self.db)
-        self.auditor = authenticate("auditor", "auditor123", self.db)
+        super().setUp()
         self.audit_id = get_audit(1, self.admin, self.db)["id"]
 
     def _source_map(self):

@@ -31,6 +31,7 @@ from ui.icons import (
     SVG_SEARCH,
     SVG_USERS,
 )
+from ui.components import proceso_nav
 from ui.layout import layout
 
 from .tab_accionistas import build as build_accionistas
@@ -130,7 +131,7 @@ def _render_search_bar(
     <section class="radar-lookup" aria-label="Búsqueda de empresa">
       <div class="radar-lookup-main">
         <div class="radar-lookup-identity">
-          <span class="radar-lookup-kicker">Expediente de auditoría</span>
+          <span class="radar-lookup-kicker">Levantamiento de información</span>
           <h1>{esc(company_name)}</h1>
           <div class="radar-lookup-meta">{ruc_line}</div>
         </div>
@@ -357,6 +358,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
 
     content = f"""
     <div class="{"readonly-mode" if is_read_only else ""}">
+      {proceso_nav(audit_id, audit["company_name"], "levantamiento", is_read_only)}
       {search_panel}
       <div class="radar-layout">
         <div style="min-width: 0;">
@@ -372,4 +374,4 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     err = form_value(query, "err")
     flash_msg = flash or (f"Error: {err}" if err else "")
     active = "/admin" if is_read_only else "/auditor"
-    return layout("Expediente", user, content, flash_msg, active_path=active)
+    return layout("Levantamiento de información", user, content, flash_msg, active_path=active)

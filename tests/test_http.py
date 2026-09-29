@@ -6,8 +6,9 @@ Si el servidor no está disponible, los tests se saltean automáticamente.
 
 Escriben en la base (crean empresas y registros de prueba), así que solo se
 ejecutan con ATLAS_HTTP_TEST_PORT y con ATLAS_DB_PATH apuntando a una base
-desechable, distinta de auddit.db. El servidor y los tests deben usar la misma
-base:
+desechable, distinta de auddit.db. Los adjuntos que suben van a la carpeta
+adjuntos/ junto a esa base, no a la del proyecto. El servidor y los tests
+deben usar la misma base:
     1. export ATLAS_DB_PATH=/tmp/atlas_http.db
     2. Iniciar el servidor: python3 app.py --port 8799
     3. Correr los tests: ATLAS_HTTP_TEST_PORT=8799 python3 -m unittest tests.test_http -v
@@ -1117,6 +1118,124 @@ class TestHTTPExportaciones(unittest.TestCase):
         self.assertNotIn("/export/csv", body)
         self.assertNotIn("/export/dossier", body)
 
+
+
+@unittest.skipUnless(_server_available(), _SKIP_REASON)
+class TestHTTPRequerimientoInicial(unittest.TestCase):
+    """Pestaña principal "Requerimiento inicial": rutas propias, solo lectura
+    del jefe y acciones solo del auditor asignado (POST y descargas)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        with connect() as conn:
+            ids = {row["username"]: row["id"] for row in conn.execute(
+                "SELECT id, username FROM users WHERE username IN ('http_admin', 'http_auditor')")}
+            otro = conn.execute("SELECT id FROM users WHERE username = 'http_req_otro'").fetchone()
+            if otro is None:
+                create_user(conn, "http_req_otro", "Prueba HTTP otro auditor", "auditor", "http-otro-123")
+        cls.audit_id = create_company_audit(
+            f"Empresa requerimiento HTTP {time.time_ns()}", "0190314014001", "Cuenca", "", "2026",
+            ids["http_auditor"], ids["http_admin"],
+        )
+        cls.auditor = _login(*AUDITOR)
+        cls.admin = _login(*ADMIN)
+        cls.otro = _login("http_req_otro", "http-otro-123")
+        cls._auditoria_con_documentos(ids)
+
+    @classmethod
+    def _auditoria_con_documentos(cls, ids: dict) -> None:
+        """Otra auditoría con el contrato revisado y una generación registrada
+        (en la misma base desechable que usa el servidor)."""
+        from core import router
+        from database import (get_audit, get_requerimiento_context, review_requerimiento_adjunto,
+                              save_requerimiento_adjunto, save_requerimiento_datos)
+        from services.pdf_simple import PdfDocumento
+        from services.requerimiento import normalizar_datos
+        cls.generada = create_company_audit(
+            f"Empresa requerimiento HTTP generada {time.time_ns()}", "0190377210001", "Cuenca", "", "2026",
+            ids["http_auditor"], ids["http_admin"],
+        )
+        doc = PdfDocumento()
+        doc.parrafo("Contrato de prueba HTTP")
+        cls.contrato_id = save_requerimiento_adjunto(cls.generada, "contrato", "contrato.pdf", doc.bytes(), "pdf",
+                                                     ids["http_auditor"])
+        review_requerimiento_adjunto(cls.generada, cls.contrato_id, "conforme", "", ids["http_auditor"])
+        save_requerimiento_datos(cls.generada, normalizar_datos({
+            "empresa": "Constructora HTTP S.A.S.", "ruc": "0190377210001", "representante_nombre": "Eduardo Serpa",
+            "representante_cargo": "Gerente", "representante_identificacion": "0104926555",
+            "representante_nacionalidad": "Ecuatoriana", "representante_ciudad": "Cuenca", "anio_auditado": "2026",
+            "anio_certificados": "2025", "anio_cerrado": "2025", "fecha_documentos": "2026-09-01",
+            "fecha_corte": "2026-07-31", "fechas_inventario": "en diciembre", "auddit_representante": "Mgtr. Parra",
+            "auddit_cargo": "Gerente", "correo_para_nombre": "Contadora", "correo_para": "c@cliente.ec",
+            "equipo": "Auditor HTTP", **{f"cronograma_{i}": "2027" for i in range(4)},
+        }), ids["http_auditor"])
+        with connect() as conn:
+            auditor = conn.execute("SELECT * FROM users WHERE id = ?", (ids["http_auditor"],)).fetchone()
+        router.REQUERIMIENTO_POSTS["/auditor/requerimiento/generar"][1]({}, get_audit(cls.generada, auditor), auditor)
+        cls.carta_id = get_requerimiento_context(cls.generada)["paquetes"][0]["archivos"]["carta"]["id"]
+
+    def test_rutas_propias_y_navegacion(self):
+        status, body = _get(f"/auditor/requerimiento?audit_id={self.audit_id}", self.auditor)
+        self.assertEqual(status, 200)
+        self.assertIn("<title>Requerimiento inicial | Atlas</title>", body)
+        self.assertIn(f'href="/auditor/radar?audit_id={self.audit_id}"', body)
+        status, body = _get(f"/auditor/radar?audit_id={self.audit_id}", self.auditor)
+        self.assertIn("<title>Levantamiento de información | Atlas</title>", body)
+        self.assertIn(f'href="/auditor/requerimiento?audit_id={self.audit_id}"', body)
+
+    def test_jefe_en_solo_lectura(self):
+        status, body = _get(f"/admin/requerimiento?audit_id={self.audit_id}", self.admin)
+        self.assertEqual(status, 200)
+        self.assertIn("Modo solo lectura", body)
+        self.assertNotIn('<form method="post"', body.split("</header>", 1)[-1])
+        token = _csrf_token("/admin/users", self.admin)
+        status, _, _ = _post_raw("/auditor/requerimiento/generar", {"_csrf": token, "audit_id": self.audit_id}, self.admin)
+        self.assertEqual(status, 403)
+
+    def test_otro_auditor_sin_acceso(self):
+        _, body = _get(f"/auditor/requerimiento?audit_id={self.audit_id}", self.otro)
+        self.assertIn("Auditoría no disponible", body)
+        token = _csrf_token("/cuenta", self.otro)
+        status, _, _ = _post_raw("/auditor/requerimiento/datos", {"_csrf": token, "audit_id": self.audit_id}, self.otro)
+        self.assertEqual(status, 403)
+        status, body = _get(f"/requerimiento/archivo?audit_id={self.audit_id}&origen=adjunto&id=1", self.otro)
+        self.assertEqual(status, 403)
+
+    def test_post_sin_csrf_rechazado(self):
+        status, _, _ = _post_raw("/auditor/requerimiento/generar", {"audit_id": self.audit_id}, self.auditor)
+        self.assertEqual(status, 403)
+
+    def test_jefe_no_prepara_vista_previa_ni_correo_por_get_directo(self):
+        for ruta in (f"/requerimiento/vista-previa?audit_id={self.generada}&doc=carta",
+                     f"/requerimiento/vista-previa?audit_id={self.generada}&doc=solicitud",
+                     f"/requerimiento/correo.eml?audit_id={self.generada}"):
+            status, _ = _get(ruta, self.admin)
+            self.assertEqual(status, 403, ruta)
+        _, body = _get(f"/admin/requerimiento?audit_id={self.generada}", self.admin)
+        self.assertNotIn("/requerimiento/vista-previa", body)
+        self.assertNotIn("/requerimiento/correo.eml", body)
+
+    def test_jefe_descarga_archivos_registrados(self):
+        for origen, fila_id in (("generado", self.carta_id), ("adjunto", self.contrato_id)):
+            req = Request(f"{BASE_URL}/requerimiento/archivo?audit_id={self.generada}&origen={origen}&id={fila_id}",
+                          headers={"Cookie": self.admin})
+            with urlopen(req, timeout=5) as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertTrue(resp.read().startswith(b"%PDF"))
+
+    def test_auditor_asignado_prepara_el_borrador(self):
+        req = Request(f"{BASE_URL}/requerimiento/correo.eml?audit_id={self.generada}", headers={"Cookie": self.auditor})
+        with urlopen(req, timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertIn(b"X-Unsent: 1", resp.read())
+
+    def test_generar_sin_contrato_vuelve_con_error(self):
+        token = _csrf_token(f"/auditor/requerimiento?audit_id={self.audit_id}", self.auditor)
+        status, location, _ = _post_raw("/auditor/requerimiento/generar",
+                                        {"_csrf": token, "audit_id": self.audit_id}, self.auditor)
+        self.assertEqual(status, 303)
+        self.assertIn("err=", location)
+        self.assertIn("#documentos", location)
 
 if __name__ == "__main__":
     unittest.main()
