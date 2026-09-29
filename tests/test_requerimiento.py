@@ -10,11 +10,9 @@ import functools
 import hashlib
 import io
 import json
-import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
-from pathlib import Path
 from unittest import mock
 
 import pypdf
@@ -39,6 +37,7 @@ from services.pdf_simple import PdfDocumento
 from services.requerimiento_docs import build_solicitud_xlsx, leer_respuesta_xlsx
 from views.auditor import requerimiento as vista
 from views.auditor.radar import page as radar_page
+from tests._base import BaseTemporal, carpeta_temporal
 
 CEDULA = "0104926555"
 
@@ -71,20 +70,14 @@ def _form(campos: dict | None = None, archivos: dict | None = None, **extra) -> 
     return FormData({k: [str(v)] for k, v in todos.items()}, archivos or {})
 
 
-class _Caso(unittest.TestCase):
+class _Caso(BaseTemporal):
     def setUp(self):
-        tmp = Path(tempfile.mkdtemp())
-        self.db, self.adjuntos = tmp / "atlas.db", tmp / "adjuntos"
-        init_db(self.db, demo=True)
-        self.admin = authenticate("admin", "admin123", self.db)
-        self.auditor = authenticate("auditor", "auditor123", self.db)
+        super().setUp()
+        self.adjuntos = self.tmp / "adjuntos"
         with connect(self.db) as conn:
             create_user(conn, "otro.auditor", "Otro Auditor", "auditor", "otra-clave-1")
         self.otro = authenticate("otro.auditor", "otra-clave-1", self.db)
-        self.audit_id = create_company_audit(
-            "CONSTRUCTORA ESGINGENIERIA S.A.S.", "0190377210001", "Cuenca", "", "2026",
-            self.auditor["id"], self.admin["id"], self.db,
-        )
+        self.audit_id = self.crear_auditoria("CONSTRUCTORA ESGINGENIERIA S.A.S.", "0190377210001")
         db, adj = self.db, self.adjuntos
         enlaces = {
             "get_audit": lambda i, u: expedientes.get_audit(i, u, db),
@@ -1016,7 +1009,7 @@ class TestMigracion(unittest.TestCase):
     """Una base con las tablas del requerimiento anteriores a esta revisión."""
 
     def test_migracion_idempotente_y_respuestas_previas_a_revision(self):
-        db = Path(tempfile.mkdtemp()) / "vieja.db"
+        db = carpeta_temporal(self) / "vieja.db"
         with connect(db) as conn:
             conn.executescript("""
                 CREATE TABLE requerimiento_archivos (id INTEGER PRIMARY KEY AUTOINCREMENT, audit_id INTEGER NOT NULL,
