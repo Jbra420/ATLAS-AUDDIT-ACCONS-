@@ -1,0 +1,150 @@
+spanish,english,category,status,notes
+auditoria,audit,domain,standard,Ya es el nombre de la tabla audits
+expediente,audit,domain,proposed,En el código es el registro de la auditoría; ver también expediente_supercias
+jefe auditor,admin,domain,standard,El rol guardado ya es 'admin'; en pantalla sigue 'Jefe auditor'
+levantamiento de informacion,intake,domain,decision,"Alternativas: fieldwork, information_gathering. Validar con Auddit"
+radar (pantalla del levantamiento),intake,domain,decision,Nombre heredado del MVP 'Radar Empresarial' en rutas y vistas (/auditor/radar)
+requerimiento inicial,initial_request,domain,proposed,Segundo paso del proceso
+solicitud de informacion,information_request,domain,proposed,El Excel de 4 hojas
+carta de encargo,engagement_letter,domain,proposed,
+contrato de auditoria,audit_contract,domain,proposed,
+certificado de nomina,roster_certificate,domain,proposed,PDF de Supercias con administradores y accionistas
+nomina,roster,domain,proposed,Lista de administradores / accionistas de Supercias
+certificado de relacionadas,related_parties_certificate,domain,proposed,
+certificado de paraisos fiscales,tax_havens_certificate,domain,proposed,
+administradores,administrators,domain,standard,Ya en uso: company_administrators
+accionistas / socios,shareholders,domain,standard,Ya en uso: company_shareholders
+representante legal,legal_representative,domain,proposed,
+gerente,manager,domain,proposed,
+empresa / compania,company,domain,standard,Ya en uso: companies
+contribuyente,taxpayer,domain,proposed,
+generacion / paquete (de documentos),document_batch,domain,proposed,Los cuatro documentos generados juntos
+adjunto,attachment,domain,proposed,
+evidencia,evidence,domain,standard,
+envio,dispatch,domain,proposed,Envío registrado del correo o aviso
+recepcion,receipt,domain,proposed,Documentos que devuelve el cliente
+respuesta (del Excel),response,domain,proposed,
+revision (de documento firmado),review,domain,proposed,
+constancia (de revision),review_record,domain,proposed,
+importacion,import,domain,standard,
+trazabilidad,provenance,domain,standard,Ya en uso: data_provenance
+traza,trace,domain,standard,
+fuente,source,domain,standard,Ya en uso: sources
+consulta (de fuente),lookup,domain,proposed,
+hallazgos,findings,domain,standard,
+alerta,alert,domain,standard,
+tratamiento (de alerta),treatment,domain,standard,Ya en uso: alert_treatments
+validacion / cruce,validation / cross_check,domain,proposed,
+requisito,requirement,domain,standard,
+resumen,summary,domain,standard,Ya en uso: services/summary.py
+ficha final,dossier,domain,standard,Ya en uso: services/dossier.py
+investigacion,research,domain,standard,Ya en uso: research_notes
+perfil,profile,domain,standard,
+ubicacion,location,domain,standard,
+indicadores,indicators,domain,standard,
+estados financieros,financial_statements,domain,standard,Ya en uso
+documentos economicos,economic_documents,domain,standard,Ya en uso
+ejercicio / anio fiscal,fiscal_year,domain,proposed,
+anio auditado,audited_year,domain,proposed,
+anio de los certificados,certified_year,domain,proposed,
+ultimo ejercicio cerrado,last_closed_year,domain,proposed,
+fecha de corte,cutoff_date,domain,proposed,
+fecha de los documentos,document_date,domain,proposed,
+fechas de inventario,inventory_dates,domain,proposed,
+cronograma,schedule,domain,proposed,
+entregable,deliverable,domain,proposed,
+equipo de auditoria,audit_team,domain,proposed,
+cuadro de detalle,detail_table,domain,proposed,Hojas 3 y 4 del Excel
+marca (cumplido / no aplica),mark,domain,proposed,
+cumplido,complied,domain,proposed,
+no aplica,not_applicable,domain,proposed,
+observacion,observation,domain,standard,
+precarga,prefill,domain,proposed,
+instantanea,snapshot,domain,standard,Ya en uso: financial_snapshots
+desactualizado,outdated,domain,proposed,
+vigente,current,domain,proposed,
+destinatario,recipient,domain,proposed,
+copia oculta (CCO),bcc,domain,proposed,
+asunto,subject,domain,proposed,
+borrador,draft,domain,proposed,
+aviso (WhatsApp),notice,domain,proposed,
+firma / firmado,signature / signed,domain,proposed,
+huella (SHA-256),fingerprint,domain,proposed,
+catalogo local,local_catalog,domain,standard,
+catastro (SRI),taxpayer_registry,domain,decision,El archivo sri_catastro.db y su tabla son externos (scripts/update_catastro.py): decidir si se renombran
+directorio de companias,company_directory,domain,proposed,
+panel,dashboard,domain,standard,Ya en uso: views/*/dashboard.py
+pestana,tab,domain,standard,Ya en uso: tab_*.py
+vista previa,preview,domain,proposed,
+archivar / restaurar,archive / restore,domain,standard,Ya en uso
+asignar / reasignar,assign / reassign,domain,standard,Ya en uso
+usuario / sesion / cuenta,user / session / account,domain,standard,Ya en uso
+clave / contrasena,password,domain,standard,Ya en uso
+razon_social,legal_name,official_field,proposed,
+nombre_comercial,trade_name,official_field,proposed,Hoy convive con commercial_name
+estado_contribuyente,taxpayer_status,official_field,proposed,
+tipo_contribuyente,taxpayer_type,official_field,proposed,
+regimen,tax_regime,official_field,proposed,Valores GENERAL / RIMPE se conservan (son del SRI)
+obligado_contabilidad,accounting_required,official_field,proposed,
+contribuyente_especial,special_taxpayer,official_field,proposed,
+agente_retencion,withholding_agent,official_field,proposed,
+fecha_inicio_actividades,activity_start_date,official_field,proposed,
+actividad_economica,economic_activity,official_field,standard,Ya en uso: economic_activity
+situacion_legal,legal_status,official_field,proposed,Hoy convive con legal_status
+tipo_compania,company_type,official_field,proposed,
+expediente_supercias,supercias_file_number,official_field,proposed,No confundir con 'expediente' = auditoría
+fecha_constitucion,incorporation_date,official_field,proposed,
+plazo_social,corporate_term,official_field,proposed,
+objeto_social,corporate_purpose,official_field,proposed,
+capital_suscrito,subscribed_capital,official_field,proposed,
+ciiu_nivel1 / ciiu_nivel6,ciiu_level1 / ciiu_level6,official_field,proposed,
+ultimo_anio_balance,last_balance_year,official_field,proposed,
+contribuyente_fantasma,ghost_taxpayer,official_field,proposed,
+transacciones_inexistentes,nonexistent_transactions,official_field,proposed,
+provincia / ciudad / canton / parroquia,province / city / canton / parish,official_field,proposed,'canton' se mantiene
+calle / numero / interseccion / barrio / referencia,street / number / cross_street / neighborhood / reference,official_field,proposed,
+telefono,phone,official_field,proposed,
+identificacion / tipo_identificacion,id_number / id_type,official_field,proposed,
+cedula / pasaporte,national_id / passport,official_field,proposed,
+nacionalidad,nationality,official_field,proposed,
+cargo,position,official_field,proposed,
+participacion_porcentaje,ownership_percentage,official_field,proposed,
+beneficiario_final,ultimate_beneficial_owner,official_field,proposed,
+fecha_consulta,lookup_date,official_field,proposed,
+establecimiento,establishment,official_field,proposed,
+activo_total / pasivo_total / patrimonio_neto,total_assets / total_liabilities / net_equity,official_field,proposed,
+ingresos_401 / otros_ingresos_403,revenue_401 / other_income_403,official_field,proposed,El número es la casilla del formulario de Supercias: se conserva
+costo_ventas_501 / gastos_502,cost_of_sales_501 / expenses_502,official_field,proposed,
+utilidad_antes_part_imp / utilidad_neta_707,income_before_profit_sharing_and_tax / net_income_707,official_field,proposed,
+fecha_junta_aprobacion,board_approval_date,official_field,proposed,
+audits.status: pendiente / en_investigacion,pending / in_research,stored_value,proposed,En pantalla siguen 'Pendiente' / 'En investigación'
+source_checks.estado: pendiente / consultada,pending / checked,stored_value,proposed,
+economic_documents.estado: pendiente / revisado,pending / reviewed,stored_value,proposed,
+nomina_imports.estado: pendiente / importado / descartado,pending / imported / discarded,stored_value,proposed,Tiene CHECK: requiere reconstruir la tabla
+requerimiento_adjuntos.revision_resultado: conforme / observado,approved / objected,stored_value,proposed,Tiene CHECK
+requerimiento_adjuntos.importacion_estado: importado / rechazado / revision_manual,imported / rejected / manual_review,stored_value,proposed,Tiene CHECK
+requerimiento_envios.canal: correo / whatsapp,email / whatsapp,stored_value,proposed,Tiene CHECK
+data_provenance.bloque: sri / supercias / ubicacion / administradores / accionistas / financiero,sri / supercias / location / administrators / shareholders / financial,stored_value,proposed,"Tabla de solo inserción: leer con mapa, no reescribir"
+data_provenance.campo (nombres de columna),(según este glosario),stored_value,proposed,Tabla de solo inserción: leer con mapa de nombres antiguos a nuevos
+requerimiento_archivos.tipo: carta / cert_relacionadas / cert_paraisos / solicitud,engagement_letter / related_parties_certificate / tax_havens_certificate / information_request,stored_value,proposed,
+requerimiento_detalles.seccion: abogados / contratos / activos_arrendados / bancos / obligaciones / inversiones / juicios,lawyers / contracts / leased_assets / bank_accounts / bank_loans / investments / lawsuits,stored_value,proposed,
+source_checks.fuente y economic_documents.nombre,clave interna + etiqueta visible,stored_value,decision,Hoy el texto de pantalla hace de clave; separar en fase 3
+requerimiento_paquetes.datos_json (claves),(según este glosario),stored_value,proposed,"Instantáneas inmutables: leer con adaptador, no reescribir"
+guardar / leer / borrar,save / read / delete,general,standard,
+validar / normalizar / generar,validate / normalize / generate,general,standard,
+registrar / importar / descargar / subir,record / import / download / upload,general,standard,
+buscar / agregar / actualizar / completar,search / add / update / complete,general,standard,
+faltantes / pendientes,missing / pending,general,standard,
+fecha / anio / mes / dia,date / year / month / day,general,standard,
+fila / columna / celda / hoja / libro,row / column / cell / sheet / workbook,general,standard,
+campo / valor / etiqueta / titulo / texto,field / value / label / title / text,general,standard,
+estado / tipo / motivo / nota / detalle,status / type / reason / note / detail,general,standard,
+archivo / ruta / nombre / contenido / formato,file / path / name / content / format,general,standard,
+plantilla / seccion / paso / mensaje / error,template / section / step / message / error,general,standard,
+correo / cuerpo,email / body,general,standard,
+origen / destino,source / target,general,standard,
+prueba / caso,test / case,general,standard,
+ruc / sri / supercias / sercop / iess / ciiu,(igual),keep,keep,Siglas e instituciones del Ecuador
+auddit / atlas / whatsapp,(igual),keep,keep,Nombres propios
+pdf / xlsx / eml / csv / sha256,(igual),keep,keep,Formatos
+canton,(igual),keep,keep,División administrativa sin equivalente exacto
