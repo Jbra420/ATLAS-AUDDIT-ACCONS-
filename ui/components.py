@@ -8,16 +8,11 @@ from datetime import date
 
 from database import AUDIT_STATUSES
 from services.identificacion import TIPOS_IDENTIFICACION
-from services.ruc_validator import validate_ruc
 from services.rowutil import row_get
 from ui.helpers import esc, hidden_inputs
 from ui.icons import (
-    SVG_ALERT,
-    SVG_CHECK,
     SVG_CIRCLE,
     SVG_CLOCK,
-    SVG_CROSS,
-    SVG_INFO,
     SVG_SAVE,
 )
 
@@ -230,18 +225,3 @@ def source_check_control(
     </div>
     """
 
-
-def ruc_banner_html(ruc: str | None) -> str:
-    """Genera el banner de estado del RUC (válido / advertencia / inválido / no registrado)."""
-    if not ruc:
-        return f'<div class="ruc-banner neutral">{SVG_INFO} <span>El RUC no ha sido registrado. El jefe debe añadirlo antes de iniciar la investigación.</span></div>'  # noqa: E501
-
-    valid, warn, msg = validate_ruc(ruc)
-    if warn:
-        css, icon = "warning", SVG_ALERT
-    elif valid:
-        css, icon = "valid", SVG_CHECK
-    else:
-        css, icon = "invalid", SVG_CROSS
-
-    return f'<div class="ruc-banner {css}">{icon} <div><span class="ruc-val">{esc(ruc)}</span> <span style="margin-left:8px">{esc(msg)}</span></div></div>'  # noqa: E501

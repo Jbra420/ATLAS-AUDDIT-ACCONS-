@@ -68,7 +68,7 @@ class TestCompanySearchMap(unittest.TestCase):
 
     def test_marked_source_can_complete_sri_card(self):
         sri_check = next(sc for sc in list_source_checks(self.audit_id, self.db) if "SRI" in sc["fuente"])
-        mark_source_checked(sri_check["id"], self.auditor["id"], "Consulta confirmada", self.db)
+        mark_source_checked(self.audit_id, sri_check["id"], self.auditor["id"], "Consulta confirmada", self.db)
 
         source_map = self._source_map()
         sri = next(card for card in source_map["cards"] if card["key"] == "sri")
@@ -137,7 +137,7 @@ class TestCompanySearchMap(unittest.TestCase):
 
     def test_complete_levantamiento_enables_summary_with_optional_warnings(self):
         source_map = build_source_map(
-            {"ruc": "0190377210001"}, {"observations": ""}, self.PROFILE, self.LOCATION,
+            {"ruc": "0190377210001", "anio_fiscal_eeff": 2025}, {"observations": ""}, self.PROFILE, self.LOCATION,
             self.ADMINS, self.SHAREHOLDERS, [], self.SNAPSHOT, self.CHECKS, [],
         )
         readiness = source_map["readiness"]
@@ -152,7 +152,7 @@ class TestCompanySearchMap(unittest.TestCase):
     def test_process_controls_still_block(self):
         checks = [{"fuente": "SRI", "estado": "pendiente"}, {"fuente": "Supercias", "estado": "consultada"}]
         source_map = build_source_map(
-            {"ruc": "0190377210001"}, {}, self.PROFILE, self.LOCATION,
+            {"ruc": "0190377210001", "anio_fiscal_eeff": 2025}, {}, self.PROFILE, self.LOCATION,
             self.ADMINS, self.SHAREHOLDERS, [], self.SNAPSHOT, checks, [],
         )
         self.assertEqual([b["label"] for b in source_map["readiness"]["blockers"]], ["Fuente SRI consultada"])

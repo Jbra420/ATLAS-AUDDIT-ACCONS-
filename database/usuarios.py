@@ -13,6 +13,16 @@ from database.base import DB_PATH, connect, now_iso
 
 
 USERNAME_RE = re.compile(r"^[a-z0-9_.-]{3,32}$")
+PASSWORD_MIN = 8
+PASSWORD_MAX = 128
+
+
+def _validar_clave(password: str, etiqueta: str) -> None:
+    """Misma regla para toda clave nueva: la temporal y la que elige el usuario."""
+    if not PASSWORD_MIN <= len(password) <= PASSWORD_MAX:
+        raise ValueError(f"{etiqueta} debe tener entre {PASSWORD_MIN} y {PASSWORD_MAX} caracteres")
+    if password.strip() != password:
+        raise ValueError(f"{etiqueta} no puede empezar ni terminar con espacios")
 
 
 def hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
@@ -37,18 +47,20 @@ def create_user(
     full_name: str,
     role: str,
     password: str,
+    *,
+    must_change_password: bool = False,
 ) -> int:
+    """Crea una cuenta. must_change_password obliga a cambiar la clave en el
+    primer ingreso (clave inicial del jefe o temporal de un auditor)."""
     username = username.strip().lower()
     full_name = full_name.strip()
-    password = password.strip()
     if role not in {"admin", "auditor"}:
         raise ValueError("Rol no permitido")
     if not username or not full_name or not password:
         raise ValueError("Usuario, nombre y clave son obligatorios")
     if not USERNAME_RE.fullmatch(username):
         raise ValueError("El usuario debe tener entre 3 y 32 caracteres y usar solo letras, números, punto, guion o guion bajo")
-    if len(password) < 6:
-        raise ValueError("La clave temporal debe tener al menos 6 caracteres")
+    _validar_clave(password, "La clave")
 
     existing = conn.execute(
         "SELECT deleted_at FROM users WHERE username = ?",
@@ -63,10 +75,11 @@ def create_user(
     try:
         cur = conn.execute(
             """
-            INSERT INTO users (username, full_name, role, password_salt, password_hash, active, created_at)
-            VALUES (?, ?, ?, ?, ?, 1, ?)
+            INSERT INTO users (username, full_name, role, password_salt, password_hash, active,
+                               must_change_password, created_at)
+            VALUES (?, ?, ?, ?, ?, 1, ?, ?)
             """,
-            (username, full_name, role, salt, pw_hash, now_iso()),
+            (username, full_name, role, salt, pw_hash, int(must_change_password), now_iso()),
         )
     except sqlite3.IntegrityError as exc:
         raise ValueError("El nombre de usuario ya existe") from exc
@@ -84,8 +97,6 @@ def authenticate(username: str, password: str, db_path: Path | str = DB_PATH) ->
         return None
 
 
-PASSWORD_MIN = 8
-PASSWORD_MAX = 128
 
 
 def change_password(
@@ -103,10 +114,7 @@ def change_password(
         raise ValueError("Ingrese la contraseña actual y la nueva")
     if new_password != confirmation:
         raise ValueError("La nueva contraseña y su confirmación no coinciden")
-    if not PASSWORD_MIN <= len(new_password) <= PASSWORD_MAX:
-        raise ValueError(f"La nueva contraseña debe tener entre {PASSWORD_MIN} y {PASSWORD_MAX} caracteres")
-    if new_password.strip() != new_password:
-        raise ValueError("La nueva contraseña no puede empezar ni terminar con espacios")
+    _validar_clave(new_password, "La nueva contraseña")
     with connect(db_path) as conn:
         user = conn.execute(
             "SELECT * FROM users WHERE id = ? AND active = 1 AND deleted_at IS NULL", (user_id,),
@@ -119,7 +127,8 @@ def change_password(
             raise ValueError("La nueva contraseña debe ser distinta de la actual")
         salt, pw_hash = hash_password(new_password)
         conn.execute(
-            "UPDATE users SET password_salt = ?, password_hash = ? WHERE id = ?", (salt, pw_hash, user_id),
+            "UPDATE users SET password_salt = ?, password_hash = ?, must_change_password = 0 WHERE id = ?",
+            (salt, pw_hash, user_id),
         )
         conn.execute(
             "DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",

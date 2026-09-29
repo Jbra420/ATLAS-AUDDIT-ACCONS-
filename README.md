@@ -51,6 +51,8 @@ de 9 pasos que la pantalla del expediente muestra en ese orden.
 
 - **Búsqueda automática:** "Iniciar búsqueda" completa lo que publican los
   catálogos locales. Lo demás se captura a mano con una fecha de consulta.
+  Al repetirla, un dato que el auditor corrigió a mano se conserva, y la
+  razón social, ciudad y actividad que registró el jefe no se reemplazan.
 - **Trazabilidad:** cada dato registra su fuente y fecha de consulta en
   `data_provenance`, un historial de solo inserción.
 - **Clave RUC:** la información financiera se guarda por RUC y año fiscal
@@ -97,10 +99,14 @@ http://127.0.0.1:8765
 Usuarios:
 
 - Una base nueva crea solo al **jefe auditor**, el usuario principal:
-  `admin` / `admin123`. Cambie esa contraseña al primer ingreso en
-  **Mi cuenta** (clic en su nombre, arriba a la derecha).
+  `admin` / `admin123`. Al primer ingreso, Atlas lo lleva a **Mi cuenta**
+  (clic en su nombre, arriba a la derecha) y no deja usar otras páginas
+  hasta cambiar esa contraseña. Una base existente que aún conserve
+  `admin123` queda marcada igual al actualizarse.
 - El jefe auditor crea a los **auditores** desde Usuarios, con una contraseña
-  temporal que cada auditor cambia en Mi cuenta.
+  temporal que cada auditor debe cambiar en su primer ingreso.
+- Toda contraseña, temporal o propia, tiene entre 8 y 128 caracteres y no
+  empieza ni termina con espacios.
 - Todos los usuarios cambian su propia contraseña en Mi cuenta: se pide la
   actual, y las demás sesiones abiertas de la cuenta se cierran.
 
@@ -197,8 +203,10 @@ sin reemplazar el ejercicio anterior.
 Tras importar, el auditor debe pulsar **Iniciar búsqueda** de nuevo en el
 expediente para cargar las cifras disponibles. La búsqueda solo llena
 casilleros vacíos: conserva las correcciones manuales y registra fuente y
-fecha por dato. El año fiscal de la auditoría sigue requiriendo confirmación
-explícita. El jefe puede ver la información, pero no ejecutar la búsqueda ni
+fecha por dato. La pestaña muestra el ejercicio más reciente con cifras, pero
+el año fiscal de la auditoría requiere confirmación explícita ("Confirmar
+ejercicio … como año auditado"): hasta entonces, el requisito queda pendiente.
+Un año confirmado sin cifras nunca se sustituye por otro ejercicio. El jefe puede ver la información, pero no ejecutar la búsqueda ni
 editarla. Este reporte agregado no sustituye la revisión del documento
 económico original, las notas ni el acta de junta.
 
@@ -245,8 +253,9 @@ guiar la consulta y guardar evidencia.
   `supercias_catalog.db` son catálogos locales separados, generados por los
   scripts de arriba (ninguno de los tres se versiona en git).
 - `tests/`: pruebas unitarias (bases temporales) y de integración HTTP
-  (`tests/test_http.py`: escribe en `auddit.db`, así que solo corre con
-  `ATLAS_HTTP_TEST_PORT` y sobre una copia del proyecto; ver su docstring).
+  (`tests/test_http.py`: escribe en la base del servidor, así que solo corre
+  con `ATLAS_HTTP_TEST_PORT` y `ATLAS_DB_PATH` apuntando a una base
+  desechable, la misma para el servidor y los tests; ver su docstring).
 
 ## Arquitectura y convenciones
 
@@ -262,7 +271,10 @@ database/  SQL y persistencia (única capa que escribe en SQLite)
 
 Excepciones conocidas: `services/company_research.py` orquesta la búsqueda
 automática y por eso usa `database`; `ui/components.py` lee
-`AUDIT_STATUSES` de `database`.
+`AUDIT_STATUSES` de `database`. A la inversa, `database/` usa funciones puras
+y constantes de `services/` (casilleros, fuentes, validación de
+identificaciones y `generate_summary_from_context` para componer el resumen),
+nunca al revés con SQL.
 
 **Agregar una ruta**
 
@@ -288,6 +300,8 @@ automática y por eso usa `database`; `ui/components.py` lee
 | Historial de un bloque | `ui.components.provenance_history` |
 | Lectura segura de filas | `services.rowutil.row_get` |
 | Mapa de fuentes y requisitos del expediente | `services.company_search.source_map_from_context` |
+| Avance del expediente (requisitos obligatorios, también en el panel del auditor) | `source_map_from_context(...)["readiness"]` |
+| Resumen preliminar a partir del contexto | `services.summary.generate_summary_from_context` |
 
 Un bloque del levantamiento se define una sola vez como tupla `CAMPOS`
 `(campo, etiqueta, …)` en su pestaña. De ella salen las tarjetas, el

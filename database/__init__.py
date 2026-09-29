@@ -95,7 +95,6 @@ from database.catalogos import (
 )
 from database.expedientes import (
     AUDIT_STATUSES,
-    STAGE_FIELDS,
     DEFAULT_ECONOMIC_DOCUMENTS,
     create_company_audit,
     register_audit_ruc,
@@ -110,7 +109,6 @@ from database.expedientes import (
     mark_document_reviewed,
     mark_document_pending,
     load_demo_if_ruc_matches,
-    compute_progress,
 )
 from database.investigacion import (
     SOURCE_TYPES,

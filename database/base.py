@@ -1,6 +1,7 @@
 """database/base.py — Conexión SQLite y utilidades compartidas por todo el paquete."""
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -9,7 +10,8 @@ from typing import Any
 
 # Raíz del proyecto: las bases locales viven junto a app.py.
 BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = BASE_DIR / "auddit.db"
+# ATLAS_DB_PATH permite usar otra base (p. ej. una desechable para tests/test_http.py).
+DB_PATH = Path(os.environ.get("ATLAS_DB_PATH") or BASE_DIR / "auddit.db")
 
 
 def now_iso() -> str:
@@ -39,6 +41,28 @@ def _today() -> str:
 
 def _touch_audit(conn: sqlite3.Connection, audit_id: int) -> None:
     conn.execute("UPDATE audits SET updated_at = ? WHERE id = ?", (now_iso(), audit_id))
+
+
+def _mark_in_research(conn: sqlite3.Connection, audit_id: int, ts: str | None = None) -> None:
+    """Un expediente pendiente pasa a "en investigación" (los demás estados no
+    cambian) y registra la actividad en updated_at."""
+    conn.execute(
+        """
+        UPDATE audits
+        SET status = CASE WHEN status = 'pendiente' THEN 'en_investigacion' ELSE status END,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (ts or now_iso(), audit_id),
+    )
+
+
+def _ensure_research(conn: sqlite3.Connection, audit_id: int) -> sqlite3.Row:
+    """Fila de notas de investigación del expediente; la crea vacía si no existe."""
+    conn.execute(
+        "INSERT OR IGNORE INTO research_notes (audit_id, updated_at) VALUES (?, ?)", (audit_id, now_iso()),
+    )
+    return conn.execute("SELECT * FROM research_notes WHERE audit_id = ?", (audit_id,)).fetchone()
 
 
 def _optional_number(

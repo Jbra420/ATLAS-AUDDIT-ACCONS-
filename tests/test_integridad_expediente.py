@@ -1,10 +1,14 @@
 """Pruebas de integridad del expediente (Fase 1 del levantamiento de información).
 
-Cubre tres garantías:
+Cubre estas garantías:
   - guardar una pestaña no vacía los datos de otra (actualización parcial);
   - crear un expediente con el RUC demo no carga datos que no provengan de
     una fuente o del auditor;
-  - la razón social de SRI y la de Supercias se conservan por separado.
+  - la razón social de SRI y la de Supercias se conservan por separado;
+  - un auditor no puede cambiar documentos ni fuentes de otro expediente;
+  - registrar evidencia no genera el resumen, y descargarlo no lo regenera;
+  - volver a buscar en el catastro SRI conserva las correcciones del auditor
+    y los datos de la empresa registrados por el jefe.
 """
 from __future__ import annotations
 
@@ -15,6 +19,8 @@ from unittest import mock
 
 import database
 from database import (
+    add_source,
+    append_research_source_note,
     apply_sri_research_result,
     apply_supercias_research_result,
     authenticate,
@@ -23,10 +29,18 @@ from database import (
     get_audit_context,
     get_company_location,
     get_company_profile,
+    get_research,
     init_db,
+    mark_document_pending,
+    mark_document_reviewed,
+    mark_source_checked,
+    mark_source_pending,
+    refresh_summary,
     update_company_location_fields,
     update_company_profile_fields,
 )
+from core import router
+from ui.helpers import form_id
 from seed_data import DEMO_RUC
 from services.company_research import build_sri_result
 from services.supercias_catalog import build_supercias_result
@@ -260,6 +274,139 @@ class TestFormsSendOnlyTheirFields(unittest.TestCase):
         sri = self._field_names(tab_sri.build(1, self.AUDIT, self.PROFILE, None, csrf_token="t"))
         sup = self._field_names(tab_supercias.build(1, self.AUDIT, self.PROFILE, None, csrf_token="t"))
         self.assertLessEqual(sri | sup, set(database.PROFILE_FORM_FIELDS))
+
+
+class TestAccesoEntreExpedientes(_TempDbCase):
+    """Un id de documento o de fuente de otro expediente no se acepta."""
+
+    def setUp(self):
+        super().setUp()
+        self.propio = self._create_audit()
+        self.ajeno = self._create_audit("0190314014001")
+        ctx = get_audit_context(self.ajeno, self.db)
+        self.doc_ajeno = ctx["docs"][0]["id"]
+        self.check_ajeno = ctx["source_checks"][0]["id"]
+
+    def _estado(self, tabla: str, row_id: int) -> str:
+        with connect(self.db) as conn:
+            return conn.execute(f"SELECT estado FROM {tabla} WHERE id = ?", (row_id,)).fetchone()[0]
+
+    def test_documento_de_otro_expediente(self):
+        with self.assertRaisesRegex(ValueError, "no encontrado"):
+            mark_document_reviewed(self.propio, self.doc_ajeno, self.auditor["id"], self.db)
+        with self.assertRaisesRegex(ValueError, "no encontrado"):
+            mark_document_pending(self.propio, self.doc_ajeno, self.db)
+        self.assertEqual(self._estado("economic_documents", self.doc_ajeno), "pendiente")
+
+    def test_fuente_de_otro_expediente(self):
+        with self.assertRaisesRegex(ValueError, "no encontrada"):
+            mark_source_checked(self.propio, self.check_ajeno, self.auditor["id"], "x", self.db)
+        with self.assertRaisesRegex(ValueError, "no encontrada"):
+            mark_source_pending(self.propio, self.check_ajeno, self.db)
+        self.assertEqual(self._estado("source_checks", self.check_ajeno), "pendiente")
+
+    def test_documento_propio_se_marca(self):
+        doc = get_audit_context(self.propio, self.db)["docs"][0]["id"]
+        mark_document_reviewed(self.propio, doc, self.auditor["id"], self.db)
+        self.assertEqual(self._estado("economic_documents", doc), "revisado")
+
+    def test_id_no_numerico_vale_cero(self):
+        self.assertEqual(form_id({"audit_id": ["abc"]}, "audit_id"), 0)
+        self.assertEqual(form_id({"audit_id": ["-3"]}, "audit_id"), 0)
+        self.assertEqual(form_id({}, "audit_id"), 0)
+        self.assertEqual(form_id({"audit_id": [" 12 "]}, "audit_id"), 12)
+
+
+class TestResumenSoloBajoPedido(_TempDbCase):
+    def setUp(self):
+        super().setUp()
+        self.audit_id = self._create_audit()
+
+    def test_registrar_evidencia_no_genera_resumen(self):
+        add_source(self.audit_id, "Consulta", "", "SRI", "", self.auditor["id"], self.db)
+        append_research_source_note(self.audit_id, self.auditor["id"], "SRI", "RUC activo", "", self.db)
+        research = get_research(self.audit_id, self.db)
+        self.assertIsNone(research["generated_summary"])
+        self.assertIn("SRI: RUC activo", research["sri_info"])
+        with connect(self.db) as conn:
+            status = conn.execute("SELECT status FROM audits WHERE id = ?", (self.audit_id,)).fetchone()[0]
+        self.assertEqual(status, "en_investigacion")
+
+    def test_registrar_evidencia_conserva_resumen_generado(self):
+        refresh_summary(self.audit_id, self.db)
+        antes = get_research(self.audit_id, self.db)["generated_summary"]
+        append_research_source_note(self.audit_id, self.auditor["id"], "SRI", "RUC activo", "", self.db)
+        self.assertEqual(get_research(self.audit_id, self.db)["generated_summary"], antes)
+
+    def test_descargar_resumen_no_lo_regenera(self):
+        audit = {"id": self.audit_id}
+        leer = lambda audit_id: get_research(audit_id, self.db)  # noqa: E731
+        with mock.patch.object(router, "get_research", leer):
+            self.assertEqual(router._summary_txt(audit), "No existe resumen generado.")
+            refresh_summary(self.audit_id, self.db)
+            antes = get_research(self.audit_id, self.db)["generated_summary"]
+            update_company_profile_fields(self.audit_id, {"objeto_social": "Otro objeto"}, self.db)
+            self.assertEqual(router._summary_txt(audit), antes)
+        self.assertEqual(get_research(self.audit_id, self.db)["generated_summary"], antes)
+
+    def test_guardar_avance_permite_vaciar_un_campo(self):
+        user = {"id": self.auditor["id"]}
+        audit = {"id": self.audit_id}
+        guardar = lambda audit_id, user_id, fields: database.patch_research(  # noqa: E731
+            audit_id, user_id, fields, self.db)
+        with mock.patch.object(router, "patch_research", guardar):
+            router._save_research({"observations": ["Nota"], "risk_flags": ["Riesgo"]}, audit, user)
+            router._save_research({"observations": [""]}, audit, user)
+        research = get_research(self.audit_id, self.db)
+        self.assertEqual(research["observations"], "")
+        self.assertEqual(research["risk_flags"], "Riesgo")
+
+
+class TestBusquedaSriConservaCorrecciones(_TempDbCase):
+    def setUp(self):
+        super().setUp()
+        self.audit_id = self._create_audit()
+        with connect(self.db) as conn:
+            conn.execute(
+                "UPDATE companies SET name = 'NOMBRE DEL JEFE', city = 'Gualaceo' "
+                "WHERE id = (SELECT company_id FROM audits WHERE id = ?)", (self.audit_id,),
+            )
+        self.buscar()
+
+    def buscar(self, **cambios):
+        apply_sri_research_result(
+            self.audit_id, self.auditor["id"], build_sri_result({**SRI_RECORD, **cambios}), self.db,
+        )
+
+    def test_correccion_manual_sobrevive_a_otra_busqueda(self):
+        update_company_profile_fields(
+            self.audit_id, {"estado_contribuyente": "SUSPENDIDO"}, self.db, user_id=self.auditor["id"],
+        )
+        update_company_location_fields(self.audit_id, {"canton": "GUALACEO"}, self.db)
+        self.buscar(update_date="2026-01-10 00:00:00")
+        profile = get_company_profile(self.audit_id, self.db)
+        self.assertEqual(profile["estado_contribuyente"], "SUSPENDIDO")
+        self.assertEqual(profile["fecha_actualizacion"], "2026-01-10")
+        self.assertEqual(get_company_location(self.audit_id, self.db)["canton"], "GUALACEO")
+
+    def test_dato_del_catalogo_se_actualiza(self):
+        self.buscar(taxpayer_status="PASIVO")
+        self.assertEqual(get_company_profile(self.audit_id, self.db)["estado_contribuyente"], "PASIVO")
+
+    def test_empresa_registrada_por_el_jefe_no_cambia(self):
+        with connect(self.db) as conn:
+            company = conn.execute(
+                "SELECT c.name, c.city, c.activity_hint FROM companies c "
+                "JOIN audits a ON a.company_id = c.id WHERE a.id = ?", (self.audit_id,),
+            ).fetchone()
+        self.assertEqual((company["name"], company["city"]), ("NOMBRE DEL JEFE", "Gualaceo"))
+        # La actividad estaba vacía: la búsqueda la completa.
+        self.assertEqual(company["activity_hint"], SRI_RECORD["activity_hint"])
+
+    def test_actividad_escrita_por_el_auditor_en_notas_se_conserva(self):
+        database.patch_research(self.audit_id, self.auditor["id"], {"economic_activity": "Hotel boutique"}, self.db)
+        self.buscar()
+        self.assertEqual(get_research(self.audit_id, self.db)["economic_activity"], "Hotel boutique")
 
 
 if __name__ == "__main__":

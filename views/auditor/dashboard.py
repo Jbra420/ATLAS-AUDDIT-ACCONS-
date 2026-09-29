@@ -5,12 +5,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from database import (
-    compute_progress,
-    get_research,
-    list_auditor_audits,
-    list_sources,
-)
+from database import get_audit_context, list_auditor_audits
+from services.company_search import source_map_from_context
 from ui.components import badge
 from ui.helpers import esc, form_value
 from ui.icons import SVG_ARROW_RIGHT, SVG_SEARCH
@@ -23,10 +19,10 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
 
     cards_html = ""
     for a in audits:
-        research = get_research(a["id"])
-        source_count = len(list_sources(a["id"]))
-        progress = compute_progress(a, research, source_count)
-        pct = progress["percent"]
+        # Mismo avance que decide en el expediente si el resumen puede generarse.
+        readiness = source_map_from_context(a, get_audit_context(a["id"]))["readiness"]
+        pct = readiness["required_percent"]
+        requisitos = f'{readiness["required_completed"]} de {readiness["required_total"]} requisitos'
         has_ruc = bool(a["ruc"])
         next_label = "Buscar por RUC" if not has_ruc or a["status"] == "pendiente" else "Continuar expediente"
         next_icon = SVG_SEARCH if next_label == "Buscar por RUC" else SVG_ARROW_RIGHT
@@ -50,10 +46,10 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
             
             <div style="margin-top: 16px; margin-bottom: 16px;">
               <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px;">
-                <span>Progreso</span>
+                <span>Requisitos obligatorios</span>
                 <span>{pct}%</span>
               </div>
-              <div class="mini-progress" title="{pct}% completado" style="height: 6px; background: var(--line); border-radius: 4px; overflow: hidden;">
+              <div class="mini-progress" title="{requisitos}" style="height: 6px; background: var(--line); border-radius: 4px; overflow: hidden;">
                 <div class="mini-progress-fill" style="width:{pct}%; height: 100%; background: var(--grad-primary); transition: width 0.3s ease;"></div>
               </div>
             </div>

@@ -68,7 +68,7 @@ from services.company_search import source_map_from_context
 from services.company_research import research_company_by_ruc
 from services.identificacion import validar_identificacion
 from services.trazabilidad import FUENTE_CERTIFICADO_SUPERCIAS, validar_fecha_consulta
-from ui.helpers import form_value
+from ui.helpers import form_id, form_value
 from views import auth_views, cuenta
 from views.admin import dashboard as admin_dashboard
 from views.admin import users as admin_users
@@ -100,7 +100,8 @@ def radar_url(audit_id: int, tab: str, *, msg: str = "", err: str = "") -> str:
 
 
 def _int(form: dict, key: str) -> int:
-    return int(form_value(form, key, "0"))
+    # Un id no numérico vale 0: la acción responde "no encontrado" con su propio mensaje.
+    return form_id(form, key)
 
 
 # ── Acciones POST del jefe: (form, admin) -> mensaje ────────────────────────
@@ -108,8 +109,9 @@ def _int(form: dict, key: str) -> int:
 def _create_user(form: dict, admin: sqlite3.Row) -> str:
     # El jefe auditor es el usuario principal: desde Usuarios solo se crean auditores.
     with connect() as conn:
+        # La clave que asigna el jefe es temporal: el auditor la cambia al primer ingreso.
         create_user(conn, form_value(form, "username"), form_value(form, "full_name"), "auditor",
-                    form_value(form, "password"))
+                    form.get("password", [""])[0], must_change_password=True)
     return "Auditor creado exitosamente"
 
 
@@ -150,8 +152,9 @@ ADMIN_POSTS = {
 # El dispatcher ya validó CSRF, rol auditor y acceso al expediente.
 
 def _save_research(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
-    # Solo los campos enviados con contenido: patch_research no toca el resto.
-    fields = {k: v for k in RESEARCH_FIELDS if (v := form_value(form, k))}
+    # Solo los campos que trae el formulario (vacíos incluidos, para poder
+    # borrarlos): patch_research no toca el resto.
+    fields = {k: form_value(form, k) for k in RESEARCH_FIELDS if k in form}
     patch_research(audit["id"], user["id"], fields)
     return "Avance guardado correctamente"
 
@@ -205,17 +208,17 @@ def _investigate(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
 
 def _toggle_source_check(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
     if form_value(form, "accion", "consultar") == "revertir":
-        mark_source_pending(_int(form, "check_id"))
+        mark_source_pending(audit["id"], _int(form, "check_id"))
     else:
-        mark_source_checked(_int(form, "check_id"), user["id"], form_value(form, "observacion"))
+        mark_source_checked(audit["id"], _int(form, "check_id"), user["id"], form_value(form, "observacion"))
     return "Fuente actualizada"
 
 
 def _toggle_document(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
     if form_value(form, "accion", "revisar") == "revertir":
-        mark_document_pending(_int(form, "doc_id"))
+        mark_document_pending(audit["id"], _int(form, "doc_id"))
     else:
-        mark_document_reviewed(_int(form, "doc_id"), user["id"])
+        mark_document_reviewed(audit["id"], _int(form, "doc_id"), user["id"])
     return "Documento actualizado"
 
 
@@ -443,8 +446,9 @@ RADAR_POSTS = {
 # ── Exportaciones: kind -> (prefijo del archivo, extensión, build(audit) -> contenido) ─
 
 def _summary_txt(audit: sqlite3.Row) -> str:
-    has_summary = get_research(audit["id"])["generated_summary"]
-    return refresh_summary(audit["id"]) if has_summary else "No existe resumen generado."
+    # Entrega el resumen tal como lo generó el auditor: descargarlo (también el
+    # jefe, en solo lectura) no lo regenera ni escribe en el expediente.
+    return get_research(audit["id"])["generated_summary"] or "No existe resumen generado."
 
 
 def _levantamiento_xlsx(audit: sqlite3.Row) -> bytes:

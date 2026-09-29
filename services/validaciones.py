@@ -202,10 +202,13 @@ def _requisitos(audit, profile, location, admins, shareholders, snapshot) -> tup
     rec("Beneficiario final", _FUENTE_ACCIONISTAS, "accionistas",
         all(_v(s, "beneficiario_final") for s in shareholders))
 
-    # Bloque 6 — Financiero
+    # Bloque 6 — Financiero. El año lo confirma el auditor: el ejercicio que
+    # solo se muestra por ser el más reciente no cumple el requisito.
     anio = row_get(snapshot, "anio_fiscal", None)
-    req("Año fiscal de los estados financieros", _FUENTE_FINANCIERO, "indicadores", bool(anio))
-    if anio:
+    confirmado = row_get(audit, "anio_fiscal_eeff", None)
+    req("Año fiscal de los estados financieros", _FUENTE_FINANCIERO, "indicadores",
+        bool(confirmado) and anio == confirmado)
+    if anio and anio == confirmado:
         faltan = [c for campo, c in CASILLEROS_OBLIGATORIOS if _num(snapshot, campo) is None]
         req(f"Casilleros del ejercicio {anio}" + (f" (falta: {', '.join(faltan)})" if faltan else ""),
             _FUENTE_FINANCIERO, "indicadores", not faltan)

@@ -107,16 +107,12 @@ class TestRadarEmpresarial(unittest.TestCase):
     # 4. test_auditor_isolation — Auditor no puede ver auditoría ajena
     def test_auditor_isolation(self):
         with connect(self.db) as conn:
-            create_user(conn, "auditor2", "Auditor Dos", "auditor", "clave2")
-        auditor2 = authenticate("auditor2", "clave2", self.db)
+            create_user(conn, "auditor2", "Auditor Dos", "auditor", "clave-dos")
+        auditor2 = authenticate("auditor2", "clave-dos", self.db)
         
         # Auditor2 intenta ver audit_id asignado a auditor1
         audit = get_audit(self.audit_id, auditor2, self.db)
         self.assertIsNone(audit)
-
-    # Nota: el comportamiento de mark_ready se prueba una sola vez, en
-    # tests/test_database.py::test_mark_ready_no_longer_sends_to_review,
-    # para no duplicar la misma aserción en dos archivos.
 
     # 5. test_document_mark_reviewed — Documento pasa a estado revisado
     def test_document_mark_reviewed(self):
@@ -125,7 +121,7 @@ class TestRadarEmpresarial(unittest.TestCase):
         self.assertGreater(len(docs), 0)
         
         doc_id = docs[0]["id"]
-        mark_document_reviewed(doc_id, self.auditor["id"], self.db)
+        mark_document_reviewed(self.audit_id, doc_id, self.auditor["id"], self.db)
         
         docs_updated = list_economic_documents(self.audit_id, self.db)
         doc = next(d for d in docs_updated if d["id"] == doc_id)

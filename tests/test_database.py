@@ -14,7 +14,6 @@ from database import (
     archive_audit,
     authenticate,
     change_password,
-    compute_progress,
     connect,
     create_company_audit,
     create_session,
@@ -146,8 +145,14 @@ class TestAuthentication(unittest.TestCase):
 
     def test_short_password_is_rejected(self):
         with connect(self.db) as conn:
-            with self.assertRaisesRegex(ValueError, "al menos 6"):
-                create_user(conn, "nuevo", "Usuario Nuevo", "auditor", "12345")
+            with self.assertRaisesRegex(ValueError, "entre 8 y 128"):
+                create_user(conn, "nuevo", "Usuario Nuevo", "auditor", "clave12")
+
+    def test_password_with_edge_spaces_is_rejected(self):
+        """Antes se guardaba recortada y luego no servía para entrar."""
+        with connect(self.db) as conn:
+            with self.assertRaisesRegex(ValueError, "espacios"):
+                create_user(conn, "nuevo", "Usuario Nuevo", "auditor", " clave123 ")
 
     def test_inactive_user_cannot_authenticate(self):
         with connect(self.db) as conn:
@@ -280,7 +285,7 @@ class TestRBAC(unittest.TestCase):
         self.db = _make_db()
         # Crear segundo auditor y nueva empresa asignada a él
         with connect(self.db) as conn:
-            self.auditor2_id = create_user(conn, "auditor2", "Auditor Dos", "auditor", "clave2")
+            self.auditor2_id = create_user(conn, "auditor2", "Auditor Dos", "auditor", "clave-dos")
         admin = _admin_row(self.db)
         self.audit_for_auditor2 = create_company_audit(
             "Empresa Solo Auditor2", "0190000000001", "Guayaquil",
@@ -307,7 +312,7 @@ class TestRBAC(unittest.TestCase):
         self.assertIsNotNone(audit)
 
     def test_auditor2_sees_own_assignment(self):
-        auditor2 = authenticate("auditor2", "clave2", self.db)
+        auditor2 = authenticate("auditor2", "clave-dos", self.db)
         audits = list_auditor_audits(auditor2["id"], self.db)
         self.assertEqual(len(audits), 1)
         self.assertEqual(audits[0]["company_name"], "Empresa Solo Auditor2")
@@ -349,12 +354,11 @@ class TestRBAC(unittest.TestCase):
         self.assertEqual(clean_ruc, "0190000000001")
         self.assertIn("0190000000001", msg)
 
-        auditor2 = authenticate("auditor2", "clave2", self.db)
+        auditor2 = authenticate("auditor2", "clave-dos", self.db)
         audit = get_audit(audit_id, auditor2, self.db)
         self.assertEqual(audit["ruc"], "0190000000001")
 
     def test_auditor_search_ruc_cannot_replace_assigned_ruc(self):
-        admin = _admin_row(self.db)
         with self.assertRaisesRegex(ValueError, "no coincide"):
             register_audit_ruc(self.audit_for_auditor2, "0191111111111", self.db)
 
@@ -381,22 +385,13 @@ class TestResearchFlow(unittest.TestCase):
         self.assertEqual(audit["status"], "pendiente")
 
     def test_save_research_changes_status_to_en_investigacion(self):
-        update_research(self.audit_id, self.auditor["id"], _full_data(), mark_ready=False, db_path=self.db)
-        audit = get_audit(self.audit_id, self.admin, self.db)
-        self.assertEqual(audit["status"], "en_investigacion")
-
-    def test_mark_ready_no_longer_sends_to_review(self):
-        """mark_ready es un parámetro heredado que update_research() ya no lee
-        en su cuerpo: se conserva en la firma por compatibilidad con llamadores
-        existentes, pero no cambia el resultado. Este test documenta ese hecho
-        (True y False deben dar el mismo status) en vez de asumir que hace algo."""
-        update_research(self.audit_id, self.auditor["id"], _full_data(), mark_ready=True, db_path=self.db)
+        update_research(self.audit_id, self.auditor["id"], _full_data(), db_path=self.db)
         audit = get_audit(self.audit_id, self.admin, self.db)
         self.assertEqual(audit["status"], "en_investigacion")
 
     def test_research_generates_summary(self):
         summary = update_research(
-            self.audit_id, self.auditor["id"], _full_data(), mark_ready=False, db_path=self.db
+            self.audit_id, self.auditor["id"], _full_data(), db_path=self.db
         )
         self.assertIn("GRUCANQUI", summary)
         research = get_research(self.audit_id, self.db)
@@ -418,14 +413,14 @@ class TestResearchFlow(unittest.TestCase):
 
     def test_summary_contains_disclaimer(self):
         summary = update_research(
-            self.audit_id, self.auditor["id"], _full_data(), mark_ready=False, db_path=self.db
+            self.audit_id, self.auditor["id"], _full_data(), db_path=self.db
         )
         self.assertIn("PRELIMINAR", summary.upper())
 
     def test_negated_obligations_not_flagged_as_risk(self):
         data = _full_data(tax_obligations="Sin obligaciones pendientes con el SRI")
         summary = update_research(
-            self.audit_id, self.auditor["id"], data, mark_ready=False, db_path=self.db
+            self.audit_id, self.auditor["id"], data, db_path=self.db
         )
         self.assertNotIn("Posibles obligaciones tributarias pendientes", summary)
 
@@ -504,51 +499,47 @@ class TestCompanyPeople(unittest.TestCase):
 # Tests de progreso
 # ---------------------------------------------------------------------------
 
-class TestProgress(unittest.TestCase):
-    """Usa la empresa demo auto-sembrada por seed_defaults/seed_demo_radar
-    (RUC, SRI, Supercias y financieros ya completos; solo 'fuentes guiadas
-    consultadas' y 'resumen' quedan pendientes), así que las aserciones
-    comparan el progreso antes/después de update_research en vez de fijar
-    umbrales absolutos: un umbral fijo se vuelve falso en cuanto cambie
-    cualquier dato del fixture demo, sin que compute_progress esté mal.
-    """
+class TestAvanceDelPanel(unittest.TestCase):
+    """El panel del auditor muestra el mismo avance de requisitos obligatorios
+    que el expediente usa para permitir el resumen (readiness)."""
 
     def setUp(self):
         self.db = _make_db()
         self.auditor = _auditor_row(self.db)
-        audits = list_auditor_audits(self.auditor["id"], self.db)
-        self.audit_id = audits[0]["id"]
-        self.admin = _admin_row(self.db)
+        self.audit_id = list_auditor_audits(self.auditor["id"], self.db)[0]["id"]
 
-    def _progress(self, source_count: int = 0) -> dict:
-        audit = get_audit(self.audit_id, self.admin, self.db)
-        research = get_research(self.audit_id, self.db)
-        return compute_progress(audit, research, source_count=source_count, db_path=self.db)
+    def _panel(self) -> str:
+        from unittest import mock
+        from database import get_audit_context
+        from views.auditor import dashboard
+        with mock.patch.object(dashboard, "list_auditor_audits",
+                               lambda uid: list_auditor_audits(uid, self.db)), \
+             mock.patch.object(dashboard, "get_audit_context",
+                               lambda audit_id: get_audit_context(audit_id, self.db)):
+            return dashboard.render(self.auditor, {}, "/auditor")
 
-    def test_initial_progress_low(self):
-        """La demo trae RUC/SRI/Supercias/financieros, pero ninguna fuente
-        guiada marcada como consultada ni resumen generado todavía."""
-        progress = self._progress()
-        self.assertFalse(progress["stages"]["has_sources"])
-        self.assertFalse(progress["stages"]["has_summary"])
-        self.assertLess(progress["percent"], 100)
+    def _readiness(self) -> dict:
+        from database import get_audit_context
+        from services.company_search import source_map_from_context
+        audit = get_audit(self.audit_id, self.auditor, self.db)
+        return source_map_from_context(audit, get_audit_context(self.audit_id, self.db))["readiness"]
 
-    def test_progress_increases_after_research(self):
-        before = self._progress(source_count=2)
-        update_research(
-            self.audit_id, self.auditor["id"], _full_data(), mark_ready=False, db_path=self.db
-        )
-        after = self._progress(source_count=2)
-        self.assertGreater(after["percent"], before["percent"])
-        self.assertTrue(after["stages"]["has_summary"])
+    def test_panel_usa_el_avance_del_expediente(self):
+        readiness = self._readiness()
+        html = self._panel()
+        self.assertIn("Requisitos obligatorios", html)
+        self.assertIn(f'<span>{readiness["required_percent"]}%</span>', html)
+        self.assertIn(f'{readiness["required_completed"]} de {readiness["required_total"]} requisitos', html)
+        self.assertLess(readiness["required_percent"], 100)
 
-    def test_progress_includes_summary_without_send_step(self):
-        update_research(
-            self.audit_id, self.auditor["id"], _full_data(), mark_ready=True, db_path=self.db
-        )
-        progress = self._progress(source_count=2)
-        self.assertTrue(progress["stages"]["has_summary"])
-        self.assertNotIn("is_sent", progress["stages"])
+    def test_avance_sube_al_completar_un_requisito(self):
+        from database import get_audit_context, mark_source_checked
+        before = self._readiness()["required_percent"]
+        sri = next(c for c in get_audit_context(self.audit_id, self.db)["source_checks"] if "SRI" in c["fuente"])
+        mark_source_checked(self.audit_id, sri["id"], self.auditor["id"], "Consultada", self.db)
+        after = self._readiness()["required_percent"]
+        self.assertGreater(after, before)
+        self.assertIn(f"<span>{after}%</span>", self._panel())
 
 
 class TestCambiarContrasena(unittest.TestCase):
@@ -589,6 +580,37 @@ class TestCambiarContrasena(unittest.TestCase):
             with self.subTest(error=error), self.assertRaisesRegex(ValueError, error):
                 self._cambiar(**kwargs)
         self.assertIsNotNone(authenticate("auditor", "auditor123", self.db), "Nada cambió")
+
+
+class TestClaveInicial(unittest.TestCase):
+    """La clave inicial del jefe y la temporal de un auditor deben cambiarse."""
+
+    def setUp(self):
+        self.db = _make_db()
+
+    def test_base_nueva_marca_la_clave_del_jefe(self):
+        self.assertEqual(_admin_row(self.db)["must_change_password"], 1)
+
+    def test_clave_temporal_de_auditor_y_su_cambio(self):
+        with connect(self.db) as conn:
+            uid = create_user(conn, "temporal", "Auditor Temporal", "auditor", "temporal-1",
+                              must_change_password=True)
+        self.assertEqual(authenticate("temporal", "temporal-1", self.db)["must_change_password"], 1)
+        change_password(uid, "temporal-1", "propia-clave-1", "propia-clave-1", "", self.db)
+        self.assertEqual(authenticate("temporal", "propia-clave-1", self.db)["must_change_password"], 0)
+
+    def test_migracion_marca_solo_la_clave_por_defecto(self):
+        with connect(self.db) as conn:
+            conn.execute("ALTER TABLE users DROP COLUMN must_change_password")
+        init_db(self.db)
+        self.assertEqual(_admin_row(self.db)["must_change_password"], 1)
+
+        admin = _admin_row(self.db)
+        change_password(admin["id"], "admin123", "jefe-clave-1", "jefe-clave-1", "", self.db)
+        with connect(self.db) as conn:
+            conn.execute("ALTER TABLE users DROP COLUMN must_change_password")
+        init_db(self.db)
+        self.assertEqual(authenticate("admin", "jefe-clave-1", self.db)["must_change_password"], 0)
 
 
 class TestArchivarEmpresa(unittest.TestCase):

@@ -6,8 +6,6 @@ No hace scraping automático: las instrucciones guían al auditor manualmente.
 """
 from __future__ import annotations
 
-from urllib.parse import quote_plus
-
 from .base import BaseProvider, ProviderLink
 
 
@@ -17,8 +15,6 @@ class SuperciasProvider(BaseProvider):
     icon = "🏛️"
 
     def get_links(self, ruc: str, company_name: str = "") -> list[ProviderLink]:
-        name_encoded = quote_plus(company_name or ruc)
-        ruc_encoded = quote_plus(ruc)
         return [
             ProviderLink(
                 name="Supercias — Consulta por RUC",

@@ -1,8 +1,9 @@
 """views/auditor/radar/tab_financiero.py — Tab de información financiera por año fiscal.
 
 Bloque 6 del levantamiento:
-  1. Ejercicio mostrado: el registrado con cifras o, si no, el más reciente
-     con cifras del RUC. No se pide el año antes de mostrar la información.
+  1. Ejercicio mostrado: el confirmado por el auditor o, sin confirmar, el más
+     reciente con cifras del RUC. Las cifras se muestran antes de confirmar,
+     pero el requisito del año fiscal solo se cumple con el año confirmado.
   2. Casilleros del Estado de Situación Financiera (1, 2, 3) y del Estado de
      Resultados Integral (401, 403, 501, 502, 707) de ese año.
   3. Comparativo entre ejercicios del mismo RUC.
@@ -132,6 +133,25 @@ def _figures_form(audit_id: int, anio_edicion: int, fila, desde_sin_anio: bool, 
       </form>
     </section>
     """
+
+
+def _confirmation(audit_id: int, anio: int | None, confirmado: int | None, con_cifras: bool,
+                  read_only: bool, csrf_token: str) -> str:
+    """Año auditado: el ejercicio mostrado no cuenta para el levantamiento
+    hasta que el auditor lo confirma."""
+    if confirmado and confirmado == anio:
+        return (f'<p class="fin-year-confirmed" style="font-size:13px;margin:0 0 12px;">'
+                f"Año fiscal auditado: <strong>{confirmado}</strong> (confirmado).</p>")
+    estado = (f"Año fiscal auditado confirmado: <strong>{confirmado}</strong>. "
+              if confirmado else "El año fiscal auditado está pendiente de confirmar. ")
+    if read_only or not anio or not con_cifras:
+        return _notice("alert-medium", estado + (
+            "Abra el ejercicio auditado y confirme sus cifras." if not read_only else ""))
+    return _notice("alert-medium", f"""{estado}Confirme el ejercicio {anio} si es el que se audita.
+      <form method="post" action="/auditor/radar/financial-year" style="margin-top:8px;">
+        {hidden_inputs(csrf_token, audit_id=audit_id, anio_fiscal=anio)}
+        <button type="submit" class="btn btn-sm btn-primary">Confirmar ejercicio {anio} como año auditado</button>
+      </form>""")
 
 
 def _other_year_selector(audit_id: int, anio_edicion: int) -> str:
@@ -268,6 +288,8 @@ def build(
       {estado_badge}
     </div>
     {_year_status(anio, years, anio_sugerido, ruc)}
+    {_confirmation(audit_id, anio, financial.get("anio_confirmado"), origen == "anual", read_only, csrf_token)
+     if len(ruc or "") == 13 and (years or financial.get("anio_confirmado")) else ""}
     {selector_html}
     {catalog_notice}
     {sin_anio_html}

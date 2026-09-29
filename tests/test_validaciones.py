@@ -31,7 +31,8 @@ from services.validaciones import (
 from views.auditor.radar import tab_sri
 
 REFERENCE_RUC = "0190377210001"
-AUDIT = {"ruc": REFERENCE_RUC, "company_name": "GRUCANQUI CIA. LTDA", "period": "2025", "city": "", "activity_hint": ""}
+AUDIT = {"ruc": REFERENCE_RUC, "company_name": "GRUCANQUI CIA. LTDA", "period": "2025", "city": "", "activity_hint": "",
+         "anio_fiscal_eeff": 2025}
 PROFILE = {
     "razon_social_sri": "GRUCANQUI CIA. LTDA", "razon_social_supercias": "GRUCANQUI CIA. LTDA.",
     "estado_contribuyente": "ACTIVO", "tipo_contribuyente": "SOCIEDAD", "regimen": "GENERAL",
@@ -132,6 +133,13 @@ class TestRequisitos(unittest.TestCase):
 
     def test_financial_year_and_boxes(self):
         labels = {p["label"] for p in evaluar(snapshot={**SNAPSHOT, "anio_fiscal": None})["pendientes"]}
+        self.assertIn("Año fiscal de los estados financieros", labels)
+        # El ejercicio que solo se muestra por ser el más reciente no cuenta.
+        sin_confirmar = {**AUDIT, "anio_fiscal_eeff": None}
+        labels = {p["label"] for p in evaluar(audit=sin_confirmar)["pendientes"]}
+        self.assertIn("Año fiscal de los estados financieros", labels)
+        otro_anio = {**AUDIT, "anio_fiscal_eeff": 2024}
+        labels = {p["label"] for p in evaluar(audit=otro_anio)["pendientes"]}
         self.assertIn("Año fiscal de los estados financieros", labels)
         labels = {p["label"] for p in evaluar(snapshot={**SNAPSHOT, "otros_ingresos_403": None})["pendientes"]}
         self.assertIn("Casilleros del ejercicio 2025 (falta: 403)", labels)

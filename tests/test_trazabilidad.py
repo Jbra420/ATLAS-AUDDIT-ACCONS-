@@ -7,7 +7,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 from database import (

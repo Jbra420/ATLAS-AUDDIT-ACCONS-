@@ -34,6 +34,8 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
       </div>
       <div class="panel col-8">
         <h2>Cambiar contraseña</h2>
+        {'<p class="field-hint">Su contraseña actual es inicial o temporal: cámbiela para usar Atlas.</p>'
+         if user["must_change_password"] else ''}
         <form method="post" action="/cuenta/password">
           {csrf_input(csrf_token)}
           <input type="text" name="username" value="{esc(user["username"])}" autocomplete="username" hidden>
