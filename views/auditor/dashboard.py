@@ -24,7 +24,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
         pct = readiness["required_percent"]
         requisitos = f'{readiness["required_completed"]} de {readiness["required_total"]} requisitos'
         has_ruc = bool(a["ruc"])
-        next_label = "Buscar por RUC" if not has_ruc or a["status"] == "pendiente" else "Continuar expediente"
+        next_label = "Buscar por RUC" if not has_ruc or a["status"] == "pendiente" else "Continuar levantamiento"
         next_icon = SVG_SEARCH if next_label == "Buscar por RUC" else SVG_ARROW_RIGHT
         ruc_line = f"RUC: {esc(a['ruc'])}" if has_ruc else "RUC pendiente de validar"
 
@@ -58,6 +58,9 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
           <div style="margin-top: 20px;">
             <a class="btn btn-primary" href="/auditor/radar?audit_id={a['id']}&tab=sri" style="width: 100%;">
               {next_icon} {next_label}
+            </a>
+            <a class="btn" href="/auditor/requerimiento?audit_id={a['id']}" style="width: 100%; margin-top: 8px;">
+              Requerimiento inicial
             </a>
           </div>
         </div>

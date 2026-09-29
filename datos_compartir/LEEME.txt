@@ -1,0 +1,45 @@
+ATLAS · AUDDIT — CATÁLOGOS LOCALES PARA TRABAJAR CON EL REPOSITORIO
+=====================================================================
+
+Estos archivos no están en Git (son grandes y se regeneran con datos
+públicos). Con ellos, "Iniciar búsqueda" autocompleta los datos del SRI y de
+Supercias sin tener que descargarlos e importarlos.
+
+Contenido (copiados el 24/09/2026)
+----------------------------------
+  sri_catastro.db        Catastro RUC del SRI — provincia de Azuay
+                         (360.024 registros).
+  supercias_catalog.db   Directorio de Compañías de Supercias, versión del
+                         21/09/2026.
+  supercias_balances.db  Estados financieros por ramo de Supercias,
+                         ejercicio 2025 (153.626 compañías).
+
+Instalación
+-----------
+1. Clone el repositorio e instale las dependencias:
+       python3 -m pip install -r requirements.txt
+2. Copie los tres archivos .db a la CARPETA RAÍZ del proyecto (junto a
+   app.py). Atlas los busca ahí; en otra carpeta no los encuentra.
+3. Inicie Atlas:
+       python3 app.py --port 8765
+   La base de la aplicación (auddit.db) se crea sola la primera vez, con el
+   usuario admin / admin123. Cambie esa contraseña en "Mi cuenta".
+
+Actualizar los catálogos
+------------------------
+Envejecen: el SRI publica el catastro cada mes, el directorio de Supercias
+cambia a diario y los balances salen por ejercicio fiscal.
+
+  - Catastro SRI (u otras provincias): descargue el CSV de la provincia desde
+    https://www.sri.gob.ec/datasets, descomprímalo y ejecute
+        python3 scripts/update_catastro.py SRI_RUC_<Provincia>.csv
+  - Directorio de Compañías (lo descarga el script):
+        python3 scripts/update_supercias_catalog.py
+  - Estados financieros de otro año: descargue balances_AAAA_*.txt y
+    catalogo_AAAA_*.txt desde
+    https://appscvsgen.supercias.gob.ec/consultaCompanias/societario/estadosFinancierosPorRamo.jsf
+    y ejecute
+        python3 scripts/update_balances_catalog.py <carpeta con los txt>
+
+Importante: nunca comparta auddit.db. Contiene usuarios, contraseñas y los
+expedientes de los clientes.

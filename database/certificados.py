@@ -3,16 +3,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 from services.certificados import NOMINAS, TITULO_CERTIFICADO
 
-from database.base import BASE_DIR, DB_PATH, connect, now_iso
+from database.base import DB_PATH, connect, now_iso
 
-# Los PDF se guardan fuera de la base, uno por contenido: adjuntos/<audit_id>/<sha256>.pdf
-ADJUNTOS_DIR = BASE_DIR / "adjuntos"
+# Los PDF se guardan fuera de la base, uno por contenido: adjuntos/<audit_id>/<sha256>.pdf.
+# La carpeta acompaña a la base: con ATLAS_DB_PATH (p. ej. una base de prueba)
+# los adjuntos van junto a esa base y nunca a los del proyecto.
+# ATLAS_ADJUNTOS_DIR permite fijarla explícitamente.
+ADJUNTOS_DIR = Path(os.environ.get("ATLAS_ADJUNTOS_DIR") or Path(DB_PATH).parent / "adjuntos")
 
 
 def _import_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:

@@ -15,10 +15,26 @@ función y una línea aquí, sin tocar server.py.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
+from email.message import EmailMessage
 from urllib.parse import quote_plus
 
 from database import (
+    get_audit,
+    get_requerimiento_context,
+    get_requerimiento_file,
+    get_requerimiento_paquete,
+    next_requerimiento_numero,
+    register_requerimiento_envio,
+    register_requerimiento_paquete,
+    review_requerimiento_adjunto,
+    ruta_archivo,
+    save_requerimiento_adjunto,
+    save_requerimiento_datos,
+    save_requerimiento_detalle,
+    save_requerimiento_importacion,
+    save_requerimiento_items,
     LOCATION_FORM_FIELDS,
     PROFILE_FORM_FIELDS,
     RESEARCH_FIELDS,
@@ -68,12 +84,47 @@ from services.company_search import source_map_from_context
 from services.company_research import research_company_by_ruc
 from services.identificacion import validar_identificacion
 from services.trazabilidad import FUENTE_CERTIFICADO_SUPERCIAS, validar_fecha_consulta
+from services.requerimiento import (
+    ADJUNTOS,
+    CAMPOS_ANIO,
+    CAMPOS_FECHA,
+    CAMPOS_TEXTO,
+    CUADROS,
+    DOCUMENTOS,
+    ENTREGABLES,
+    ITEMS,
+    MAX_FILAS_CUADRO,
+    RECEPCIONES,
+    VERIFICACIONES_REVISION,
+    correo,
+    datos_efectivos,
+    describir_pdf,
+    faltantes,
+    instantanea_actual,
+    nombre_archivo,
+    normalizar_datos,
+    paquete_desactualizado,
+    referencia_paquete,
+    revisado,
+    validar_archivo,
+    validar_fecha_envio,
+    validar_fecha_pasada,
+)
+from services.requerimiento_docs import (
+    build_carta,
+    build_certificado,
+    build_solicitud_xlsx,
+    leer_respuesta_xlsx,
+    referencia_del_libro,
+    verificar_procedencia,
+)
 from ui.helpers import form_id, form_value
 from views import auth_views, cuenta
 from views.admin import dashboard as admin_dashboard
 from views.admin import users as admin_users
 from views.admin import companies as admin_companies
 from views.auditor import dashboard as auditor_dashboard
+from views.auditor import requerimiento as requerimiento_page
 from views.auditor.radar import page as radar_page
 
 
@@ -88,6 +139,9 @@ GET_ROUTES: dict[str, tuple[bool, bool, object]] = {
     "/auditor":         (False, True,  lambda u, q, p, csrf: auditor_dashboard.render(u, q, p)),
     "/auditor/radar":   (False, True,  lambda u, q, p, csrf: radar_page.render(u, q, p, csrf_token=csrf)),
     "/cuenta":          (False, True,  lambda u, q, p, csrf: cuenta.render(u, q, p, csrf_token=csrf)),
+    # Requerimiento inicial: pestaña principal propia, al nivel del levantamiento.
+    "/auditor/requerimiento": (False, True, lambda u, q, p, csrf: requerimiento_page.render(u, q, p, csrf_token=csrf)),
+    "/admin/requerimiento":   (True,  False, lambda u, q, p, csrf: requerimiento_page.render(u, q, p, csrf_token=csrf)),
 }
 
 
@@ -440,6 +494,381 @@ RADAR_POSTS = {
     "/auditor/radar/certificado/importar": ("admins", _import_certificate),
     "/auditor/radar/certificado/descartar": ("admins", _discard_certificate),
     "/auditor/radar/summary": ("resumen", _generate_summary),
+}
+
+
+# ── Requerimiento inicial: acciones del auditor (form, audit, user) -> mensaje ─
+# El dispatcher es el mismo del radar (CSRF, rol auditor y auditoría asignada);
+# solo cambia la página a la que se vuelve.
+
+def requerimiento_url(audit_id: int, seccion: str, *, msg: str = "", err: str = "") -> str:
+    key, text = ("err", err) if err else ("msg", msg)
+    return f"/auditor/requerimiento?audit_id={audit_id}&{key}={quote_plus(text)}#{quote_plus(seccion)}"
+
+
+def _un_archivo(form: dict, campo: str, requerido: bool = True) -> tuple[str, bytes] | None:
+    archivos = getattr(form, "files", {}).get(campo, [])
+    if len(archivos) > 1:
+        raise ValueError("Adjunte un solo archivo")
+    if not archivos:
+        if requerido:
+            raise ValueError("Seleccione el archivo")
+        return None
+    return archivos[0]
+
+
+def _datos_para_generar(audit: sqlite3.Row) -> tuple[dict, dict]:
+    """(contexto del requerimiento, datos confirmados) si se puede generar;
+    si falta el contrato o algún dato, ValueError con lo pendiente."""
+    req = get_requerimiento_context(audit["id"])
+    if req["guardado"] is None:
+        raise ValueError("Confirme primero los datos del requerimiento")
+    datos = datos_efectivos(req["guardado"], {})
+    if not audit["ruc"] or datos.get("ruc") != audit["ruc"]:
+        raise ValueError("El RUC del requerimiento no coincide con el de la auditoría. "
+                         "Valide el RUC en Levantamiento de información y confirme los datos de nuevo")
+    pendientes = faltantes(datos)
+    if pendientes:
+        raise ValueError("Faltan datos: " + ", ".join(pendientes))
+    return req, datos
+
+
+def _aviso_desactualizado(audit_id: int) -> str:
+    """Tras editar datos, marcas o cuadros: la última generación ya no sirve
+    para un envío nuevo (sus documentos y envíos anteriores no cambian)."""
+    req = get_requerimiento_context(audit_id)
+    if req["paquetes"] and paquete_desactualizado(req["paquetes"][0], instantanea_actual(req)):
+        return (f". La generación {req['paquetes'][0]['numero']} quedó desactualizada: genere los documentos "
+                "otra vez antes de preparar un nuevo correo")
+    return ""
+
+
+def _req_contrato(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
+    nombre, contenido = _un_archivo(form, "archivo")
+    formato = validar_archivo(nombre, contenido, ADJUNTOS["contrato"][1])
+    fecha = form_value(form, "fecha")
+    fecha = validar_fecha_pasada(fecha, "Fecha de firma") if fecha else ""
+    save_requerimiento_adjunto(audit["id"], "contrato", nombre, contenido, formato, user["id"], fecha=fecha,
+                               detalle=describir_pdf(contenido))
+    return "Contrato adjuntado, pendiente de revisión: revíselo y deje constancia antes de generar los documentos"
+
+
+def _req_revisar(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
+    resultado = form_value(form, "resultado")
+    if resultado == "conforme":
+        faltan = [texto for clave, texto in VERIFICACIONES_REVISION if form_value(form, f"verif_{clave}") != "1"]
+        if faltan:
+            raise ValueError("Para dejarlo conforme confirme cada verificación: " + "; ".join(faltan))
+    review_requerimiento_adjunto(audit["id"], form_id(form, "adjunto_id"), resultado, form_value(form, "nota"),
+                                 user["id"])
+    return ("Revisión registrada: documento conforme" if resultado == "conforme" else
+            "Revisión registrada con observaciones: el documento no cuenta como válido")
+
+
+def _req_datos(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
+    ruc_auditoria = (audit["ruc"] or "").strip()
+    ruc_enviado = form_value(form, "ruc").strip()
+    if ruc_enviado and ruc_enviado != ruc_auditoria:
+        raise ValueError("El RUC del requerimiento debe coincidir con el de la auditoría. "
+                         "Corríjalo primero en Levantamiento de información")
+    campos = (*CAMPOS_TEXTO, *CAMPOS_ANIO, *CAMPOS_FECHA, "equipo",
+              *(f"cronograma_{i}" for i in range(len(ENTREGABLES))))
+    datos = normalizar_datos({campo: form_value(form, campo) for campo in campos})
+    datos["ruc"] = ruc_auditoria
+    save_requerimiento_datos(audit["id"], datos, user["id"])
+    pendientes = faltantes(datos)
+    return ("Datos confirmados" + (f". Pendiente: {', '.join(pendientes)}" if pendientes else "")
+            + _aviso_desactualizado(audit["id"]))
+
+
+def _req_items(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
+    marcas = {}
+    for hoja, filas in ITEMS.items():
+        for numero, _texto in filas:
+            estado = form_value(form, f"item_{hoja}_{numero}")
+            if estado not in ("", "cumplido", "no_aplica"):
+                raise ValueError(f"Req. #{hoja} ítem {numero}: estado no válido")
+            marcas[(hoja, numero)] = {
+                "cumplido": estado == "cumplido", "no_aplica": estado == "no_aplica",
+                "observacion": form_value(form, f"obs_{hoja}_{numero}"),
+            }
+    save_requerimiento_items(audit["id"], marcas)
+    return "Marcas de la solicitud guardadas" + _aviso_desactualizado(audit["id"])
+
+
+def _req_detalle(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
+    seccion = form_value(form, "seccion")
+    if seccion not in CUADROS:
+        raise ValueError("Cuadro de detalle no válido")
+    columnas = CUADROS[seccion][2]
+    filas = [
+        [form_value(form, f"{seccion}_{r}_{c}") for c in range(len(columnas))]
+        for r in range(min(form_id(form, "filas"), MAX_FILAS_CUADRO + 2))
+    ]
+    total = save_requerimiento_detalle(audit["id"], seccion, filas)
+    return f"Cuadro guardado con {total} fila(s)" + _aviso_desactualizado(audit["id"])
+
+
+def _req_generar(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
+    req, datos = _datos_para_generar(audit)
+    if not any(revisado(c) for c in req["adjuntos"]["contrato"]):
+        raise ValueError("Adjunte el contrato de auditoría firmado y registre su revisión antes de generar")
+    usados = instantanea_actual(req)
+    # Sin cambios de datos ni de plantilla no hay generación nueva: sería el mismo paquete.
+    if req["paquetes"] and not paquete_desactualizado(req["paquetes"][0], usados):
+        return (f"Sin cambios desde la generación {req['paquetes'][0]['numero']}: los documentos vigentes siguen "
+                "siendo los mismos y no se creó otra")
+    numero = next_requerimiento_numero(audit["id"])
+    referencia = referencia_paquete(audit["id"], numero)
+    # Los cuatro se arman en memoria antes de guardar nada.
+    contenidos = {
+        "carta": build_carta(datos),
+        "cert_relacionadas": build_certificado("cert_relacionadas", datos),
+        "cert_paraisos": build_certificado("cert_paraisos", datos),
+        "solicitud": build_solicitud_xlsx(datos, req["items"], req["detalles"],
+                                          {"referencia": referencia, "audit_id": audit["id"]}),
+    }
+    register_requerimiento_paquete(
+        audit["id"], numero, referencia,
+        {tipo: (nombre_archivo(tipo, datos, numero), contenido) for tipo, contenido in contenidos.items()},
+        usados, user["id"],
+    )
+    return f"Documentos generados (generación {numero}). Revíselos antes de enviarlos"
+
+
+def _req_envio(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
+    req = get_requerimiento_context(audit["id"])
+    fecha = validar_fecha_envio(form_value(form, "fecha"))
+    destinatario = form_value(form, "destinatario")
+    if not destinatario:
+        raise ValueError("Indique el destinatario")
+    # Se envía una generación completa, nunca documentos sueltos de varias.
+    paquete_id = form_id(form, "paquete_id")
+    posicion = next((i for i, p in enumerate(req["paquetes"]) if p["id"] == paquete_id), None)
+    if posicion is None or len(req["paquetes"][posicion]["archivos"]) != len(DOCUMENTOS):
+        raise ValueError("Indique la generación de los cuatro documentos que se envió")
+    paquete = req["paquetes"][posicion]
+    if json.loads(paquete["datos_json"]).get("ruc") != (audit["ruc"] or ""):
+        raise ValueError("El RUC de esta generación no coincide con el de la auditoría")
+    if fecha[:16] < paquete["generado_at"][:16]:
+        raise ValueError("La fecha del correo no puede ser anterior a la generación de sus documentos")
+    modo = form_value(form, "modo", "actual")
+    if modo not in ("actual", "historico"):
+        raise ValueError("Tipo de registro de envío no válido")
+    desactualizado = posicion != 0 or paquete_desactualizado(paquete, instantanea_actual(req))
+    justificacion = form_value(form, "justificacion_historica").strip()
+    if modo == "actual" and desactualizado:
+        raise ValueError("No registre un envío nuevo con documentos desactualizados. Genere el paquete vigente "
+                         "o use el registro histórico si el correo ya se había enviado")
+    if modo == "historico":
+        if not desactualizado:
+            raise ValueError("La generación vigente debe registrarse como envío actual")
+        if len(" ".join(justificacion.split())) < 15:
+            raise ValueError("Explique por qué registra ahora un correo enviado anteriormente (mínimo 15 caracteres)")
+        limites = [req["paquetes"][posicion - 1]["generado_at"]] if posicion else []
+        cambio = req["guardado"]["updated_at"] if req["guardado"] else None
+        anterior = json.loads(paquete["datos_json"])
+        actual = instantanea_actual(req) or {}
+        contenido_cambio = any(anterior.get(clave) != actual.get(clave)
+                              for clave in set(anterior) | set(actual) if clave != "plantilla")
+        if cambio and contenido_cambio and cambio >= paquete["generado_at"]:
+            limites.append(cambio)
+        if limites and fecha[:16] >= min(limites)[:16]:
+            raise ValueError("El correo histórico debe haberse enviado antes de que esta generación quedara "
+                             "desactualizada")
+    nombre, contenido = _un_archivo(form, "evidencia")
+    formato = validar_archivo(nombre, contenido, ADJUNTOS["evidencia_correo"][1])
+    evidencia = save_requerimiento_adjunto(
+        audit["id"], "evidencia_correo", nombre, contenido, formato, user["id"], fecha=fecha[:10],
+    )
+    register_requerimiento_envio(
+        audit["id"], "correo", destinatario, fecha, user["id"], copia=form_value(form, "copia"),
+        asunto=form_value(form, "asunto"), paquete_id=paquete_id, evidencia_id=evidencia,
+        registro_historico=modo == "historico", justificacion_historica=justificacion,
+    )
+    return "Envío histórico del correo registrado" if modo == "historico" else "Envío del correo registrado"
+
+
+def _req_whatsapp(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
+    req = get_requerimiento_context(audit["id"])
+    if not any(e["canal"] == "correo" for e in req["envios"]):
+        raise ValueError("Registre primero el envío del correo")
+    fecha = validar_fecha_envio(form_value(form, "fecha"))
+    destinatario = form_value(form, "destinatario")
+    if not destinatario:
+        raise ValueError("Indique el grupo o contacto notificado")
+    evidencia = None
+    archivo = _un_archivo(form, "evidencia", requerido=False)
+    if archivo:
+        formato = validar_archivo(archivo[0], archivo[1], ADJUNTOS["evidencia_whatsapp"][1])
+        evidencia = save_requerimiento_adjunto(
+            audit["id"], "evidencia_whatsapp", archivo[0], archivo[1], formato, user["id"], fecha=fecha[:10],
+        )
+    register_requerimiento_envio(audit["id"], "whatsapp", destinatario, fecha, user["id"], evidencia_id=evidencia)
+    return "Aviso por WhatsApp registrado"
+
+
+def _req_recepcion(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
+    tipo = form_value(form, "tipo")
+    if tipo not in RECEPCIONES:
+        raise ValueError("Indique qué documento se recibió")
+    fecha = validar_fecha_pasada(form_value(form, "fecha"), "Fecha de recepción")
+    nombre, contenido = _un_archivo(form, "archivo")
+    formato = validar_archivo(nombre, contenido, RECEPCIONES[tipo][1])
+    adjunto = save_requerimiento_adjunto(
+        audit["id"], tipo, nombre, contenido, formato, user["id"], fecha=fecha, nota=form_value(form, "nota"),
+        detalle=describir_pdf(contenido) if formato == "pdf" else "",
+    )
+    if tipo != "solicitud_respondida":
+        return f"{RECEPCIONES[tipo][0]}: archivo recibido, pendiente de revisión"
+    return _importar_respuesta(audit, adjunto, contenido, user)
+
+
+def _importar_respuesta(audit: sqlite3.Row, adjunto: int, contenido: bytes, user: sqlite3.Row) -> str:
+    """Valida estructura y procedencia del Excel ya guardado y solo entonces
+    importa sus respuestas. Si no corresponde, queda como evidencia con el
+    motivo y el auditor ve el error."""
+    paquete = None
+    try:
+        leida = leer_respuesta_xlsx(contenido)
+        refs, _error = referencia_del_libro(leida["identificacion"])
+        paquete = get_requerimiento_paquete(next(iter(refs))) if len(refs) == 1 else None
+        req = get_requerimiento_context(audit["id"])
+        enviados = {e["paquete_id"] for e in req["envios"] if e["canal"] == "correo" and e["paquete_id"]}
+        estado, motivo = verificar_procedencia(
+            leida["identificacion"], paquete, audit_id=audit["id"], ruc_auditoria=audit["ruc"] or "",
+            enviados=enviados,
+        )
+    except ValueError as exc:
+        estado, motivo = "rechazado", str(exc)
+    propio = paquete["id"] if paquete is not None and paquete["audit_id"] == audit["id"] else None
+    if estado == "importado":
+        save_requerimiento_importacion(audit["id"], adjunto, estado, motivo, user["id"], paquete_id=propio,
+                                       respuesta={"items": leida["items"], "detalles": leida["detalles"]})
+        marcados = sum(1 for i in leida["items"] if i["cumplido"] or i["no_aplica"])
+        return (f"Excel respondido importado ({motivo.lower()}): {marcados} de {len(leida['items'])} ítems "
+                "con respuesta")
+    save_requerimiento_importacion(audit["id"], adjunto, estado, motivo, user["id"], paquete_id=propio)
+    if estado == "revision_manual":
+        raise ValueError(f"Excel recibido y conservado, NO importado: requiere revisión manual. {motivo}")
+    raise ValueError(f"Excel recibido y conservado como evidencia, NO importado. {motivo}. "
+                     "Puede cargar una versión corregida: el original se conserva")
+
+
+# path -> (sección de la página a la que se vuelve, acción)
+REQUERIMIENTO_POSTS = {
+    "/auditor/requerimiento/contrato": ("contrato", _req_contrato),
+    "/auditor/requerimiento/revisar": ("contrato", _req_revisar),
+    "/auditor/requerimiento/datos": ("datos", _req_datos),
+    "/auditor/requerimiento/items": ("solicitud", _req_items),
+    "/auditor/requerimiento/detalle": ("solicitud", _req_detalle),
+    "/auditor/requerimiento/generar": ("documentos", _req_generar),
+    "/auditor/requerimiento/envio": ("correo", _req_envio),
+    "/auditor/requerimiento/whatsapp": ("whatsapp", _req_whatsapp),
+    "/auditor/requerimiento/recepcion": ("recepcion", _req_recepcion),
+}
+
+
+# ── Descargas del requerimiento: (user, query) -> (contenido, nombre, tipo, en línea) ─
+# Leer es consultar: el jefe auditor (solo lectura) y el auditor asignado
+# pueden descargar; cualquier otro recibe "no disponible".
+
+_TIPOS_ARCHIVO = {
+    "pdf": "application/pdf",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "eml": "message/rfc822",
+}
+
+
+def _auditoria_visible(user: sqlite3.Row, query: dict) -> sqlite3.Row:
+    audit = get_audit(form_id(query, "audit_id"), user)
+    if not audit:
+        raise PermissionError("Auditoría no disponible")
+    return audit
+
+
+def _auditoria_del_auditor(user: sqlite3.Row, query: dict) -> sqlite3.Row:
+    """Armar documentos nuevos (vista previa, borrador de correo) es trabajo
+    del auditor asignado: el jefe solo consulta lo ya registrado."""
+    if user["role"] != "auditor":
+        raise PermissionError("El jefe auditor está en solo lectura: puede descargar los archivos registrados, "
+                              "no preparar documentos ni correos")
+    return _auditoria_visible(user, query)
+
+
+def _descargar_archivo(user: sqlite3.Row, query: dict) -> tuple[bytes, str, str, bool]:
+    audit = _auditoria_visible(user, query)
+    row = get_requerimiento_file(audit["id"], form_value(query, "origen"), form_id(query, "id"))
+    if row is None:
+        raise ValueError("Archivo no disponible")
+    ruta = ruta_archivo(row["ruta"])
+    extension = ruta.suffix.lstrip(".")
+    return ruta.read_bytes(), row["nombre"], _TIPOS_ARCHIVO.get(extension, "application/octet-stream"), extension == "pdf"
+
+
+def _vista_previa(user: sqlite3.Row, query: dict) -> tuple[bytes, str, str, bool]:
+    """Documento armado con los datos actuales, sin guardarlo como versión
+    (el Excel no lleva referencia de Atlas: no se puede importar)."""
+    audit = _auditoria_del_auditor(user, query)
+    tipo = form_value(query, "doc")
+    if tipo not in DOCUMENTOS:
+        raise ValueError("Documento no válido")
+    req, datos = _datos_para_generar(audit)
+    if tipo == "carta":
+        contenido = build_carta(datos)
+    elif tipo == "solicitud":
+        contenido = build_solicitud_xlsx(datos, req["items"], req["detalles"])
+    else:
+        contenido = build_certificado(tipo, datos)
+    extension = DOCUMENTOS[tipo][1]
+    nombre = "VISTA PREVIA " + nombre_archivo(tipo, datos, 0).replace(" v0.", ".")
+    return contenido, nombre, _TIPOS_ARCHIVO[extension], extension == "pdf"
+
+
+def _borrador_correo(user: sqlite3.Row, query: dict) -> tuple[bytes, str, str, bool]:
+    """Borrador .eml (sin enviar) de la generación vigente: asunto, cuerpo y
+    destinatarios salen de su instantánea y los adjuntos son sus cuatro
+    archivos, para que el correo nunca mezcle datos actuales con documentos
+    de otra generación. Si los datos cambiaron, hay que regenerar antes."""
+    audit = _auditoria_del_auditor(user, query)
+    req = get_requerimiento_context(audit["id"])
+    if not req["paquetes"]:
+        raise ValueError("Genere primero los cuatro documentos")
+    paquete = req["paquetes"][0]
+    if paquete_desactualizado(paquete, instantanea_actual(req)):
+        raise ValueError(f"Los datos cambiaron después de la generación {paquete['numero']}: genere los documentos "
+                         "otra vez antes de preparar el nuevo correo")
+    if len(paquete["archivos"]) != len(DOCUMENTOS):
+        raise ValueError("La generación vigente no tiene los cuatro documentos")
+    datos = json.loads(paquete["datos_json"])
+    if datos.get("ruc") != (audit["ruc"] or ""):
+        raise ValueError("El RUC de la generación no coincide con el de la auditoría. "
+                         "Confirme los datos y genere los documentos de nuevo")
+    mensaje = correo(datos)
+    email = EmailMessage()
+    email["Subject"] = mensaje["asunto"]
+    if datos.get("correo_para"):
+        email["To"] = datos["correo_para"]
+    if datos.get("correo_cc"):
+        email["Bcc"] = datos["correo_cc"]
+    email["X-Unsent"] = "1"
+    email["X-Atlas-Generacion"] = f"{paquete['numero']} ({paquete['referencia']})"
+    email.set_content(mensaje["cuerpo"])
+    for tipo in DOCUMENTOS:
+        version = paquete["archivos"][tipo]
+        ruta = ruta_archivo(version["ruta"])
+        principal, secundario = _TIPOS_ARCHIVO[ruta.suffix.lstrip(".")].split("/")
+        email.add_attachment(ruta.read_bytes(), maintype=principal, subtype=secundario, filename=version["nombre"])
+    return (email.as_bytes(), f"borrador_requerimiento_inicial_g{paquete['numero']}.eml", "message/rfc822",
+            False)
+
+
+DOWNLOADS = {
+    "/requerimiento/archivo": _descargar_archivo,
+    "/requerimiento/vista-previa": _vista_previa,
+    "/requerimiento/correo.eml": _borrador_correo,
 }
 
 

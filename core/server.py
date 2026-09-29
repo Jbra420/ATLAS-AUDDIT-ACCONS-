@@ -18,7 +18,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, quote_plus, urlparse
+from urllib.parse import parse_qs, quote, quote_plus, urlparse
 
 from database import (
     DB_PATH,
@@ -33,8 +33,17 @@ from database import (
     validate_csrf_token,
 )
 from ui.layout import layout, set_css
-from ui.helpers import form_id, form_value
-from core.router import ADMIN_POSTS, EXPORTS, GET_ROUTES, RADAR_POSTS, radar_url
+from ui.helpers import esc, form_id, form_value
+from core.router import (
+    ADMIN_POSTS,
+    DOWNLOADS,
+    EXPORTS,
+    GET_ROUTES,
+    RADAR_POSTS,
+    REQUERIMIENTO_POSTS,
+    radar_url,
+    requerimiento_url,
+)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 COOKIE_NAME = "atlas_session"
@@ -44,7 +53,7 @@ CSS_DIR = STATIC_DIR / "css"
 # porque sus reglas (y el modo solo lectura) deben ganar sobre todo lo demás.
 CSS_FILES = (
     "tokens", "base", "componentes", "login", "paneles",
-    "expediente", "financiero", "personas", "resumen", "ficha", "utilidades",
+    "expediente", "financiero", "personas", "resumen", "ficha", "requerimiento", "utilidades",
 )
 _CSS_CONTENT: str = ""
 # Cuerpo máximo de un POST: los certificados PDF (hasta 5 de 10 MB) más los campos del formulario.
@@ -62,6 +71,14 @@ _CONTENT_TYPES = {
     "txt": "text/plain; charset=utf-8",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
+
+
+def content_disposition(filename: str, inline: bool = False) -> str:
+    """Cabecera de descarga segura: nombre ASCII de respaldo sin comillas ni
+    rutas, y el nombre original en UTF-8 (RFC 6266 / 5987)."""
+    limpio = re.sub(r'[\x00-\x1f\x7f"\\/]', "", filename).strip() or "archivo"
+    ascii_nombre = limpio.encode("ascii", "ignore").decode() or "archivo"
+    return f'{"inline" if inline else "attachment"}; filename="{ascii_nombre}"; filename*=UTF-8\'\'{quote(limpio)}'
 
 
 class FormData(dict):
@@ -160,11 +177,15 @@ class AtlasHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
-    def send_download(self, content: str | bytes, filename: str, content_type: str = "text/plain; charset=utf-8") -> None:
+    def send_download(
+        self, content: str | bytes, filename: str, content_type: str = "text/plain; charset=utf-8",
+        inline: bool = False,
+    ) -> None:
         encoded = content.encode("utf-8") if isinstance(content, str) else content
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-type", content_type)
-        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Disposition", content_disposition(filename, inline))
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
@@ -239,7 +260,7 @@ class AtlasHandler(BaseHTTPRequestHandler):
         if user["role"] != "auditor":
             body = layout(
                 "Solo lectura", user,
-                '<div class="error-msg">El jefe auditor solo puede ver el expediente. Las consultas, verificaciones, ediciones y generación de resumen pertenecen al auditor asignado.</div>',
+                '<div class="error-msg">El jefe auditor solo puede ver la auditoría. Las consultas, ediciones, documentos y registros pertenecen al auditor asignado.</div>',
                 active_path="/admin",
             )
             self.send_html(body, 403)
@@ -363,6 +384,18 @@ class AtlasHandler(BaseHTTPRequestHandler):
                 self.export_audit(current, query, path)
             return
 
+        if path in DOWNLOADS:
+            current = self.require_user()
+            if not current:
+                return
+            try:
+                contenido, nombre, tipo, inline = DOWNLOADS[path](current, query)
+            except (ValueError, PermissionError) as exc:
+                self.deny(current, esc(str(exc)))
+                return
+            self.send_download(contenido, nombre, tipo, inline)
+            return
+
         if path == "/":
             user = self.current_user()
             if not user:
@@ -447,7 +480,11 @@ class AtlasHandler(BaseHTTPRequestHandler):
                 self.redirect(f"{back}?err={quote_plus(_ERROR_INTERNO)}")
             return
 
-        if path in RADAR_POSTS:
+        # Acciones del auditor sobre una auditoría: levantamiento (radar) y
+        # requerimiento inicial comparten validación y solo cambian la vuelta.
+        for posts, volver in ((RADAR_POSTS, radar_url), (REQUERIMIENTO_POSTS, requerimiento_url)):
+            if path not in posts:
+                continue
             current = self.require_auditor()
             if not current:
                 return
@@ -456,15 +493,15 @@ class AtlasHandler(BaseHTTPRequestHandler):
             if not audit:
                 self.deny(current, "Auditoría no disponible.")
                 return
-            default_tab, action = RADAR_POSTS[path]
+            default_tab, action = posts[path]
             tab = form_value(form, "return_tab") or default_tab
             try:
-                self.redirect(radar_url(audit_id, tab, msg=action(form, audit, current)))
+                self.redirect(volver(audit_id, tab, msg=action(form, audit, current)))
             except ValueError as exc:
-                self.redirect(radar_url(audit_id, tab, err=str(exc)))
+                self.redirect(volver(audit_id, tab, err=str(exc)))
             except Exception:
-                logger.exception("Error en %s (expediente %s)", path, audit_id)
-                self.redirect(radar_url(audit_id, tab, err=_ERROR_INTERNO))
+                logger.exception("Error en %s (auditoría %s)", path, audit_id)
+                self.redirect(volver(audit_id, tab, err=_ERROR_INTERNO))
             return
 
         self.send_html(

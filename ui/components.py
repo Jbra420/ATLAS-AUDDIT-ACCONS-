@@ -225,3 +225,29 @@ def source_check_control(
     </div>
     """
 
+
+
+# Pantallas principales de una auditoría, en el orden del proceso:
+# clave -> (etiqueta, ruta del auditor, ruta del jefe en solo lectura).
+PANTALLAS_AUDITORIA = {
+    "levantamiento": ("Levantamiento de información", "/auditor/radar", "/admin/audit"),
+    "requerimiento": ("Requerimiento inicial", "/auditor/requerimiento", "/admin/requerimiento"),
+}
+
+
+def proceso_nav(audit_id: int, company_name: str, activa: str, read_only: bool) -> str:
+    """Navegación principal de la auditoría: una pestaña por paso del proceso.
+    Las dos pantallas comparten la auditoría, no la interfaz."""
+    tabs = ""
+    for i, (clave, (etiqueta, ruta, ruta_jefe)) in enumerate(PANTALLAS_AUDITORIA.items(), start=1):
+        activa_attr = ' aria-current="page"' if clave == activa else ""
+        tabs += (
+            f'<a class="proceso-tab{" active" if clave == activa else ""}" '
+            f'href="{ruta_jefe if read_only else ruta}?audit_id={int(audit_id)}"{activa_attr}>'
+            f'<span class="proceso-paso">{i}</span>{esc(etiqueta)}</a>'
+        )
+    return f"""
+    <nav class="proceso-nav" aria-label="Pasos de la auditoría">
+      <span class="proceso-empresa">{esc(company_name)}</span>
+      <div class="proceso-tabs">{tabs}</div>
+    </nav>"""

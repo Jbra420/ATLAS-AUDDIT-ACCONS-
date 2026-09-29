@@ -93,7 +93,8 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
           <td>{auditor_html}</td>
           <td>{badge(a['status'])}</td>
           <td>
-            <a class="btn btn-sm" href="/admin/audit?audit_id={a['id']}">{SVG_ARROW_RIGHT} Ver expediente</a>
+            <a class="btn btn-sm" href="/admin/audit?audit_id={a['id']}">{SVG_ARROW_RIGHT} Levantamiento</a>
+            <a class="btn btn-sm" href="/admin/requerimiento?audit_id={a['id']}">Requerimiento</a>
           </td>
         </tr>
         """
@@ -120,7 +121,7 @@ def render(user: sqlite3.Row, query: dict, active_path: str) -> str:
     <div class="panel-header mb-0">
       <div>
         <h1 class="page-title">Vista general</h1>
-        <p class="page-subtitle muted">Seguimiento de expedientes de auditoría en modo lectura.</p>
+        <p class="page-subtitle muted">Seguimiento de las auditorías en modo lectura.</p>
       </div>
       <div class="actions mt-0">
         <a class="btn btn-primary" href="/admin/companies">{SVG_FILE} + Asignar empresa</a>
