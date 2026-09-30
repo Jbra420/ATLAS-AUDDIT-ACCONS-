@@ -138,11 +138,21 @@ La página tiene tres pasos:
    navegador). El rango se escribe en la carta y el correo como «entre el 15
    de octubre y el 15 de diciembre». Debajo, una tabla muestra los datos tal
    como entran en los documentos y se actualiza mientras se edita.
+   Con los ocho campos completos, «Confirmar y continuar» lleva al paso 2.
    Lo que los documentos usan y el paso no pide se deriva: los certificados y
    el último ejercicio cerrado se refieren al año anterior al de auditoría;
-   cargo y nacionalidad del representante salen del levantamiento cuando
-   constan (si no, el documento deja la línea en blanco).
-2. **Documentos**: carta de encargo, certificado de compañías relacionadas y
+   la nacionalidad del representante sale del levantamiento cuando consta (si
+   no, el documento deja la línea en blanco).
+2. **Documentos**: una tarjeta por documento con sus requisitos editables,
+   que se cambian en un modal («Editar requisitos») antes de generar. La carta
+   de encargo pide el cargo del representante (del levantamiento), la firma de
+   Auddit (por defecto FERNANDO PARRA SUAREZ, GERENTE), el equipo de auditoría
+   (una lista en la que se agregan, editan y quitan integrantes; por defecto
+   los de la carta 2026 de Auddit) y el mes y año de entrega de cada informe
+   (por defecto febrero, marzo, abril y julio del año siguiente). Se generan
+   la carta de encargo (con el formato de la carta 2026 de
+   Auddit: tamaño carta y su logo, `static/logo_auddit_carta.jpg`, en cada
+   página), certificado de compañías relacionadas y
    certificado de paraísos fiscales (PDF) y solicitud inicial de información
    (Excel de 4 hojas; no reemplaza el Excel del levantamiento). Hay vista
    previa sin guardar. Los cuatro se generan juntos como una **generación**

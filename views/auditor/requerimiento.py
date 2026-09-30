@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime
 
 from database import get_audit, get_audit_context, get_requerimiento_context
 from services.requerimiento import (
@@ -21,21 +21,28 @@ from services.requerimiento import (
     AVISO_PLANTILLA,
     CAMPOS_TEXTO,
     DOCUMENTOS,
+    ENTREGABLES,
+    EQUIPO_PREDETERMINADO,
     ETIQUETAS_FORMULARIO,
+    MAX_EQUIPO,
+    cronograma_predeterminado,
     correo,
     datos_efectivos,
     estado_proceso,
     faltantes,
+    faltantes_carta,
+    faltantes_paso1,
     fecha_larga,
     instantanea_actual,
+    leer_entrega,
     paquete_desactualizado,
     precarga,
     texto_inventario,
 )
 from services.rowutil import row_get
-from ui.components import proceso_nav
+from ui.components import modal, proceso_nav
 from ui.helpers import esc, form_id, form_value, hidden_inputs
-from ui.icons import SVG_CHECK, SVG_DOWNLOAD, SVG_FILE, SVG_INFO, SVG_SAVE
+from ui.icons import SVG_ARROW_RIGHT, SVG_CHECK, SVG_DOWNLOAD, SVG_FILE, SVG_INFO, SVG_SAVE, SVG_TRASH
 from ui.layout import layout
 
 
@@ -98,7 +105,8 @@ def _pasos(estado: dict) -> str:
 _AYUDAS = {
     "anio_auditado": "Ejercicio económico que se audita.",
     "ruc": "RUC de la auditoría: se corrige en Levantamiento de información.",
-    "fecha_documentos": "Fecha que llevan la carta de encargo y los certificados.",
+    "fecha_documentos": "Fecha en que se envía el correo: la llevan la carta de encargo y los certificados.",
+    "representante_cargo": "Va bajo la firma del representante en la carta.",
     "fecha_corte": "Fecha de la información financiera de la auditoría preliminar, dentro del año de auditoría.",
 }
 _PENDIENTE = '<span class="muted">Pendiente</span>'
@@ -116,7 +124,8 @@ def _origen(campo: str, valor: str, sugeridos: dict) -> str:
     if campo not in sugeridos:
         return ""
     if valor == sugeridos[campo][0]:
-        return f'<span class="req-origen" title="{esc(sugeridos[campo][1])}">Del levantamiento</span>'
+        texto = "Del levantamiento" if sugeridos[campo][1].startswith("Levantamiento") else "Predeterminado"
+        return f'<span class="req-origen" title="{esc(sugeridos[campo][1])}">{texto}</span>'
     return f'<span class="req-origen editado" title="Levantamiento: {esc(sugeridos[campo][0])}">Editado</span>'
 
 
@@ -205,10 +214,31 @@ def _hoja_datos(datos: dict, ruc_auditoria: str) -> str:
     cabecera = "".join(f"<th>{esc(etiqueta)}</th>" for _c, etiqueta, _v in celdas)
     fila = "".join(f'<td data-resumen="{c}">{esc(v) or "—"}</td>' for c, _e, v in celdas)
     return f"""
-      <h3 class="req-subtitle">Así se usan en los documentos</h3>
-      <div class="table-wrap req-hoja"><table>
-        <thead><tr>{cabecera}</tr></thead><tbody><tr>{fila}</tr></tbody>
-      </table></div>"""
+      <details class="req-datos-preview">
+        <summary>{SVG_FILE} Ver datos en los documentos</summary>
+        <div class="table-wrap req-hoja"><table>
+          <thead><tr>{cabecera}</tr></thead><tbody><tr>{fila}</tr></tbody>
+        </table></div>
+      </details>"""
+
+
+def _resumen_datos(datos: dict, ruc_auditoria: str) -> str:
+    empresa = (_valor("empresa", datos, "") or "Empresa pendiente").upper()
+    representante = _valor("representante_nombre", datos, "") or "Pendiente"
+    carta = _fecha_texto(datos.get("fecha_documentos") or "") or "Pendiente"
+    return f"""
+      <div class="req-datos-overview" aria-label="Resumen de los datos del requerimiento">
+        <div class="req-datos-empresa">
+          <span class="req-datos-caption">Empresa</span>
+          <strong data-resumen="empresa">{esc(empresa)}</strong>
+          <span>RUC <span data-resumen="ruc">{esc(ruc_auditoria) or '—'}</span></span>
+        </div>
+        <dl class="req-datos-facts">
+          <div><dt>Ejercicio</dt><dd data-resumen="anio_auditado">{esc(_valor('anio_auditado', datos, '')) or '—'}</dd></div>
+          <div><dt>Representante</dt><dd data-resumen="representante_nombre">{esc(representante)}</dd></div>
+          <div><dt>Fecha de la carta</dt><dd data-resumen="fecha_documentos">{esc(carta)}</dd></div>
+        </dl>
+      </div>"""
 
 
 def _datos(audit_id: int, datos: dict, sugeridos: dict, guardado, falt: list, read_only: bool, csrf_token: str,
@@ -225,32 +255,171 @@ def _datos(audit_id: int, datos: dict, sugeridos: dict, guardado, falt: list, re
     fechas = (_campo_fecha("fecha_documentos", datos.get("fecha_documentos") or "", read_only, anio)
               + _campo_fecha("fecha_corte", datos.get("fecha_corte") or "", read_only, anio)
               + _campo_inventario(datos, read_only))
-    aviso = ""
+    pendientes = ""
     if falt:
-        aviso = (f'<div class="fin-alert alert-medium">{SVG_INFO}<div><strong>Faltan datos para generar:</strong> '
-                 f'{esc(", ".join(falt))}.</div></div>')
+        items = "".join(f"<li>{esc(campo)}</li>" for campo in falt)
+        pendientes = (f'<div class="req-datos-pendientes"><strong>{len(falt)} dato(s) por completar</strong>'
+                      f'<ul>{items}</ul></div>')
     estado = (_estado_badge(True, f"Confirmados {_cuando(row_get(guardado, 'confirmado_at'))}", "")
               if confirmado and not falt else
               _estado_badge(False, "", "Por confirmar" if not confirmado else "Incompletos"))
-    cuerpo = f"""
+    campos = f"""
       <p class="req-help">Los datos de la empresa y del representante vienen del Levantamiento de información;
         revíselos y elija las fechas del requerimiento en el calendario.</p>
-      {aviso}
+      {pendientes}
       <h3 class="req-subtitle">Empresa y representante</h3>
       <div class="grid req-grid">{empresa}</div>
       <h3 class="req-subtitle">Fechas del requerimiento</h3>
       <div class="grid req-grid">{fechas}</div>"""
     if not read_only:
-        cuerpo = f"""
+        campos = f"""
       <form method="post" action="/auditor/requerimiento/datos" id="req-datos-form">
         {hidden_inputs(csrf_token, audit_id=audit_id)}
-        {cuerpo}
+        {campos}
         <div class="actions req-actions">
-          <button type="submit" class="btn btn-primary">{SVG_SAVE} Confirmar datos</button>
+          <button type="submit" class="btn btn-primary">{SVG_SAVE} Confirmar y continuar</button>
         </div>
       </form>"""
-    cuerpo += _hoja_datos(datos, ruc_auditoria)
+    accion = ("Ver detalles" if read_only else "Completar datos" if falt else "Editar datos")
+    total = f"{len(falt)} pendiente(s)" if falt else "Datos completos"
+    cuerpo = f"""
+      {_resumen_datos(datos, ruc_auditoria)}
+      <details class="req-datos-editor" id="req-datos-editor">
+        <summary><span>{accion}</span><span class="req-datos-toggle-meta">{total}</span>
+          <span class="req-datos-chevron">{SVG_ARROW_RIGHT}</span></summary>
+        <div class="req-datos-editor-body">{campos}</div>
+      </details>
+      {_hoja_datos(datos, ruc_auditoria)}"""
     return _seccion("datos", 1, "Datos del requerimiento", cuerpo, estado)
+
+
+# ── 2a. Requisitos editables de cada documento (modales del paso 2) ────
+
+_MESES_NOMBRE = ("Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre",
+                 "Octubre", "Noviembre", "Diciembre")
+
+
+def _equipo(datos: dict, read_only: bool) -> str:
+    """Integrantes del equipo: se editan, se quitan y se agregan. Sin datos
+    guardados se proponen los de la carta de Auddit."""
+    integrantes = datos.get("equipo") or list(EQUIPO_PREDETERMINADO)
+    if read_only:
+        return ('<ul class="req-list">' + "".join(f"<li>{esc(n)}</li>" for n in integrantes) + "</ul>")
+    filas = "".join(
+        f"""<li class="req-lista-fila">
+          <input name="equipo_integrante" value="{esc(n)}" maxlength="120"
+            aria-label="Integrante {i} del equipo" placeholder="Título y nombre, p. ej. Lcda. Ana Pérez">
+          <button type="button" class="btn btn-sm req-lista-quitar" title="Quitar integrante"
+            aria-label="Quitar a {esc(n) or f'integrante {i}'}">{SVG_TRASH}</button></li>"""
+        # Sin JavaScript no se pueden agregar filas: van dos vacías de reserva.
+        for i, n in enumerate([*integrantes, "", ""][:MAX_EQUIPO], start=1)
+    )
+    return f"""
+      <ol class="req-lista" data-max="{MAX_EQUIPO}">{filas}</ol>
+      <button type="button" class="btn btn-sm req-lista-agregar" hidden>+ Agregar integrante</button>
+      <div class="field-hint">Uno por fila, con su título. Se imprimen en la sección 4 de la carta en este orden.</div>"""
+
+
+def _cronograma(datos: dict, read_only: bool) -> str:
+    """Mes y año de entrega de cada informe ("Hasta febrero 2027")."""
+    propuestas = {c["entregable"]: c["fecha"] for c in cronograma_predeterminado(datos.get("anio_auditado"))}
+    guardadas = {c.get("entregable"): c.get("fecha") for c in datos.get("cronograma") or []}
+    anio_base = int(datos["anio_auditado"]) if str(datos.get("anio_auditado") or "").isdigit() else date.today().year
+    filas = ""
+    for i, entregable in enumerate(ENTREGABLES):
+        texto = guardadas.get(entregable) or propuestas.get(entregable) or ""
+        if read_only:
+            filas += f"<tr><td>{esc(entregable)}</td><td>{esc(texto) or _PENDIENTE}</td></tr>"
+            continue
+        mes, anio = leer_entrega(texto) or (0, 0)
+        meses = '<option value="">Mes</option>' + "".join(
+            f'<option value="{m}"{" selected" if m == mes else ""}>{nombre}</option>'
+            for m, nombre in enumerate(_MESES_NOMBRE, start=1))
+        anios = '<option value="">Año</option>' + "".join(
+            f'<option value="{a}"{" selected" if a == anio else ""}>{a}</option>'
+            for a in sorted({*range(anio_base, anio_base + 4), *([anio] if anio else [])}))
+        filas += f"""<tr><td>{esc(entregable)}</td><td><div class="req-entrega">
+          <span>Hasta</span>
+          <select name="entrega_mes_{i}" aria-label="Mes de entrega: {esc(entregable)}">{meses}</select>
+          <select name="entrega_anio_{i}" aria-label="Año de entrega: {esc(entregable)}">{anios}</select>
+        </div></td></tr>"""
+    return f"""
+      <div class="table-wrap"><table class="req-table req-cronograma">
+        <thead><tr><th>Entregable</th><th>Fecha de entrega</th></tr></thead><tbody>{filas}</tbody>
+      </table></div>"""
+
+
+def _modal_carta(audit_id: int, datos: dict, sugeridos: dict, csrf_token: str) -> str:
+    """Requisitos editables de la carta de encargo: cargo del representante,
+    firma de Auddit, equipo y cronograma."""
+    firmas = (_campo_texto("representante_cargo", _valor("representante_cargo", datos, ""), sugeridos, False,
+                           "col-4")
+              + _campo_texto("auddit_representante", _valor("auddit_representante", datos, ""), sugeridos,
+                             False, "col-4")
+              + _campo_texto("auddit_cargo", _valor("auddit_cargo", datos, ""), sugeridos, False, "col-4"))
+    contenido = f"""
+      <p class="modal-desc">Solo se usan en la carta. La empresa, el gerente, el año y las fechas vienen del
+        paso 1.</p>
+      <form method="post" action="/auditor/requerimiento/carta">
+        {hidden_inputs(csrf_token, audit_id=audit_id)}
+        <div class="grid req-grid">{firmas}</div>
+        <div class="grid req-grid">
+          <div class="col-6"><div class="req-label"><label>Equipo de auditoría</label></div>
+            {_equipo(datos, False)}</div>
+          <div class="col-6"><div class="req-label"><label>Cronograma de entrega de informes</label></div>
+            {_cronograma(datos, False)}</div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn" onclick="closeModal('req-modal-carta')">Cancelar</button>
+          <button type="submit" class="btn btn-primary">{SVG_SAVE} Guardar requisitos</button>
+        </div>
+      </form>"""
+    return modal("req-modal-carta", "Carta de encargo: requisitos editables", contenido, wide=True)
+
+
+def _resumen_carta(datos: dict) -> list[str]:
+    equipo = datos.get("equipo") or []
+    ultima = next((c.get("fecha") for c in reversed(datos.get("cronograma") or []) if c.get("fecha")), "")
+    cargo = _valor("representante_cargo", datos, "") or "sin cargo"
+    return [
+        f"Gerente: {_valor('representante_nombre', datos, '') or '—'} ({cargo})",
+        f"Equipo: {len(equipo)} integrante{'' if len(equipo) == 1 else 's'}",
+        f"Cronograma: {ultima.lower() if ultima else 'sin fechas'}",
+        f"Firma de Auddit: {_valor('auddit_representante', datos, '') or '—'}",
+    ]
+
+
+def _tarjetas(audit_id: int, datos: dict, sugeridos: dict, estado: dict, read_only: bool, csrf_token: str) -> str:
+    """Una tarjeta por documento: sus requisitos, el botón que abre su modal
+    y la vista previa sin guardar."""
+    tarjetas, modales = "", ""
+    for tipo, (nombre, extension, _p) in DOCUMENTOS.items():
+        editar = ""
+        if tipo == "carta":
+            pendientes = faltantes_carta(datos)
+            lineas = _resumen_carta(datos)
+            estado_doc = (f'<span class="badge badge-amber">Falta: {esc(", ".join(pendientes))}</span>'
+                          if pendientes else _estado_badge(True, "Requisitos completos", ""))
+            if not read_only:
+                editar = ('<button type="button" class="btn btn-sm btn-primary" '
+                          'onclick="openModal(\'req-modal-carta\')">Editar requisitos</button>')
+                modales += _modal_carta(audit_id, datos, sugeridos, csrf_token)
+        else:
+            lineas = ["Usa los datos del paso 1."]
+            estado_doc = '<span class="badge badge-gray">Requisitos por definir</span>'
+        previa = ("" if read_only or not estado["puede_generar"] else
+                  f'<a class="btn btn-sm" href="/requerimiento/vista-previa?audit_id={audit_id}&doc={tipo}">'
+                  f'{SVG_FILE} Vista previa</a>')
+        tarjetas += f"""
+        <article class="req-doc-card">
+          <div class="req-doc-card-head">
+            <strong>{esc(nombre)}</strong><span class="badge badge-gray">{extension.upper()}</span>
+          </div>
+          <div>{estado_doc}</div>
+          <ul class="req-doc-card-lista">{"".join(f"<li>{esc(linea)}</li>" for linea in lineas)}</ul>
+          <div class="req-doc-card-acciones">{editar}{previa}</div>
+        </article>"""
+    return f'<div class="req-doc-cards">{tarjetas}</div>{modales}'
 
 
 # ── 2. Vista previa, generación y versiones ─────────────────────────────
@@ -273,16 +442,10 @@ def _alerta_desactualizada(paquete) -> str:
             'de preparar el correo.</div></div>')
 
 
-def _documentos(audit_id: int, req: dict, estado: dict, falt: list, confirmado: bool, read_only: bool,
+def _documentos(audit_id: int, req: dict, estado: dict, datos: dict, sugeridos: dict, read_only: bool,
                 csrf_token: str) -> str:
     enviadas = _enviadas(req["envios"])
     enviados = {row_get(e, "paquete_id") for e in req["envios"] if row_get(e, "paquete_id")}
-    previas = ""
-    if confirmado and not falt and not read_only:
-        previas = '<div class="req-inline-actions"><span class="req-meta">Vista previa sin guardar:</span>' + "".join(
-            f'<a class="req-file" href="/requerimiento/vista-previa?audit_id={audit_id}&doc={tipo}">'
-            f'{SVG_FILE} {esc(nombre)}</a>' for tipo, (nombre, _e, _p) in DOCUMENTOS.items()
-        ) + "</div>"
     generaciones = ""
     for i, paquete in enumerate(req["paquetes"]):
         etiquetas = ""
@@ -315,7 +478,7 @@ def _documentos(audit_id: int, req: dict, estado: dict, falt: list, confirmado: 
         </div>"""
     if read_only:
         accion = ""
-    elif estado["puede_generar"] and confirmado:
+    elif estado["puede_generar"]:
         accion = f"""
         <form method="post" action="/auditor/requerimiento/generar" class="req-generar">
           {hidden_inputs(csrf_token, audit_id=audit_id)}
@@ -324,17 +487,23 @@ def _documentos(audit_id: int, req: dict, estado: dict, falt: list, confirmado: 
             enviadas no cambian.</span>
         </form>"""
     else:
-        motivo = "confirmar los datos del paso 1" if not confirmado else "completar los datos pendientes del paso 1"
-        accion = (f'<div class="fin-alert alert-medium">{SVG_INFO}<div>Para generar los documentos falta '
-                  f'{motivo}.</div></div>')
+        accion = (f'<div class="fin-alert alert-medium">{SVG_INFO}<div>Para generar los documentos complete los '
+                  'requisitos de cada documento.</div></div>')
     alerta = _alerta_desactualizada(req["paquetes"][0]) if estado["desactualizado"] else ""
-    cuerpo = f"""
-      <p class="req-help">{esc(AVISO_PLANTILLA)} Las firmas no se reproducen: cada documento deja la línea
-        para firmar.</p>
+    historial = f'<div class="req-docs">{generaciones or "<p class=req-empty>Sin documentos generados.</p>"}</div>'
+    if not estado["paso1_completo"]:
+        # Hasta completar el paso 1 no se editan requisitos ni se genera.
+        cuerpo = (f'<div class="fin-alert alert-medium">{SVG_INFO}<div>Complete y confirme los datos del paso 1 '
+                  'para continuar.</div></div>' + (historial if req["paquetes"] else ""))
+    else:
+        cuerpo = f"""
+      <p class="req-help">Revise los requisitos de cada documento con «Editar requisitos» y genere los cuatro
+        juntos. {esc(AVISO_PLANTILLA)}</p>
       {alerta}
+      {_tarjetas(audit_id, datos, sugeridos, estado, read_only, csrf_token)}
       {accion}
-      {previas}
-      <div class="req-docs">{generaciones or '<p class="req-empty">Sin documentos generados.</p>'}</div>"""
+      <h3 class="req-subtitle">Generaciones</h3>
+      {historial}"""
     if not estado["generado"]:
         badge = _estado_badge(False, "", "Sin generar")
     elif estado["desactualizado"]:
@@ -481,7 +650,8 @@ def _generacion_enviada(req: dict, envio) -> str:
 
 
 # Calendario del paso 1 (static/js/calendario.js) y hoja de datos en vivo.
-_CALENDARIO_JS = '<script src="/static/js/calendario.js" defer></script>'
+_CALENDARIO_JS = ('<script src="/static/js/calendario.js" defer></script>'
+                  '<script src="/static/js/lista_editable.js" defer></script>')
 
 _COPIAR_JS = """
 <script>
@@ -512,12 +682,15 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     req = get_requerimiento_context(audit_id)
     sugeridos = precarga(audit, get_audit_context(audit_id))
     datos = datos_efectivos(req["guardado"], sugeridos)
-    falt = faltantes(datos)
+    falt, falt_paso1 = faltantes(datos), faltantes_paso1(datos)
     ruc_inconsistente = bool(req["guardado"]) and (datos.get("ruc") or "") != (audit["ruc"] or "")
     if ruc_inconsistente:
-        falt.append("RUC del requerimiento: confirme los datos con el RUC de la auditoría")
+        aviso_ruc = "RUC del requerimiento: confirme los datos con el RUC de la auditoría"
+        falt.append(aviso_ruc)
+        falt_paso1.append(aviso_ruc)
     estado = estado_proceso({
         "paquetes": req["paquetes"], "confirmado": req["guardado"] is not None, "faltantes": falt,
+        "faltantes_paso1": falt_paso1,
         "envios": req["envios"],
         "desactualizado": bool(req["paquetes"]) and (ruc_inconsistente or
                                                        paquete_desactualizado(req["paquetes"][0],
@@ -537,8 +710,8 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
         {solo_lectura}
       </div>
       {_pasos(estado)}
-      {_datos(audit_id, datos, sugeridos, req["guardado"], falt, read_only, csrf_token, audit["ruc"] or "")}
-      {_documentos(audit_id, req, estado, falt, req["guardado"] is not None, read_only, csrf_token)}
+      {_datos(audit_id, datos, sugeridos, req["guardado"], falt_paso1, read_only, csrf_token, audit["ruc"] or "")}
+      {_documentos(audit_id, req, estado, datos, sugeridos, read_only, csrf_token)}
       {_correo(audit_id, datos, req, estado, read_only, csrf_token)}
     </div>
     {_COPIAR_JS}

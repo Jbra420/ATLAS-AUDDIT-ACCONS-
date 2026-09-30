@@ -199,6 +199,27 @@ def save_requerimiento_datos(
         _touch_audit(conn, audit_id)
 
 
+def save_requerimiento_carta(
+    audit_id: int, datos: dict[str, Any], db_path: Path | str = DB_PATH,
+) -> None:
+    """Requisitos editables de la carta de encargo (ya validados por
+    normalizar_datos): cargo del representante, firma de Auddit, equipo y
+    cronograma. No cambia los datos confirmados en el paso 1."""
+    columnas = ("representante_cargo", "auddit_representante", "auddit_cargo")
+    with connect(db_path) as conn:
+        cambiados = conn.execute(
+            f"""UPDATE requerimientos SET {", ".join(f"{c} = ?" for c in columnas)},
+                    equipo_json = ?, cronograma_json = ?, updated_at = ?
+                WHERE audit_id = ?""",  # noqa: S608 — columnas constantes
+            (*(datos.get(c) or None for c in columnas),
+             json.dumps(datos.get("equipo") or [], ensure_ascii=False),
+             json.dumps(datos.get("cronograma") or [], ensure_ascii=False), now_iso(), audit_id),
+        ).rowcount
+        if not cambiados:
+            raise ValueError("Confirme primero los datos del paso 1")
+        _touch_audit(conn, audit_id)
+
+
 def save_requerimiento_destinatario(
     audit_id: int, datos: dict[str, str], db_path: Path | str = DB_PATH,
 ) -> None:

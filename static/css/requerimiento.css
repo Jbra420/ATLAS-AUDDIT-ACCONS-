@@ -225,6 +225,69 @@
 }
 .req-hoja th:last-child, .req-hoja td:last-child { border-right: 0; }
 
+.req-datos-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 2fr);
+  align-items: center;
+  gap: 24px;
+  padding: 4px 0 16px;
+}
+.req-datos-empresa { display: grid; gap: 3px; min-width: 0; }
+.req-datos-caption, .req-datos-facts dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.req-datos-empresa strong { color: var(--ink); font-size: 15px; overflow-wrap: anywhere; }
+.req-datos-empresa > span:last-child { color: var(--ink-2); font-size: 12px; }
+.req-datos-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 0; }
+.req-datos-facts > div { min-width: 0; }
+.req-datos-facts dd { margin: 4px 0 0; color: var(--ink); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.req-datos-editor, .req-datos-preview { border-top: 1px solid var(--line); }
+.req-datos-editor > summary, .req-datos-preview > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  cursor: pointer;
+  color: var(--brand-navy);
+  font-size: 13px;
+  font-weight: 700;
+  list-style: none;
+}
+.req-datos-editor > summary::-webkit-details-marker,
+.req-datos-preview > summary::-webkit-details-marker { display: none; }
+.req-datos-editor > summary:hover, .req-datos-preview > summary:hover { color: var(--accent-base); }
+.req-datos-editor > summary:focus-visible, .req-datos-preview > summary:focus-visible {
+  outline: 2px solid var(--accent-base);
+  outline-offset: 2px;
+}
+.req-datos-toggle-meta { margin-left: auto; color: var(--muted); font-size: 12px; font-weight: 500; }
+.req-datos-chevron { display: inline-flex; color: var(--muted); transition: transform 0.15s; }
+.req-datos-chevron svg, .req-datos-preview > summary svg { width: 16px; height: 16px; }
+.req-datos-editor[open] .req-datos-chevron { transform: rotate(90deg); }
+.req-datos-editor-body { padding: 8px 0 18px; }
+.req-datos-editor .req-grid > * { min-width: 0; }
+.req-datos-editor-body .req-subtitle:first-of-type { margin-top: 12px; }
+.req-datos-pendientes { padding: 10px 0; color: var(--ink-2); font-size: 12px; }
+.req-datos-pendientes strong { color: var(--amber-800); }
+.req-datos-pendientes ul { display: flex; flex-wrap: wrap; gap: 5px 16px; margin: 6px 0 0; padding-left: 18px; }
+.req-datos-preview > summary { color: var(--ink-2); font-weight: 600; }
+.req-datos-preview > summary svg { color: var(--muted); }
+.req-datos-preview .req-hoja { margin-top: 0; }
+
+@media (max-width: 900px) {
+  .req-datos-overview { grid-template-columns: 1fr; gap: 12px; }
+}
+@media (max-width: 600px) {
+  .req-datos-editor .req-grid { grid-template-columns: minmax(0, 1fr); }
+  .req-datos-facts { grid-template-columns: 1fr; gap: 6px; }
+  .req-datos-facts > div { display: flex; justify-content: space-between; gap: 12px; }
+  .req-datos-facts dd { margin: 0; text-align: right; }
+  .req-datos-toggle-meta { max-width: 40%; text-align: right; }
+}
+
 /* ── Calendario (static/js/calendario.js) ──────────────────────────── */
 .dp { position: relative; }
 .dp.dp-ready > .dp-input { display: none; }
@@ -401,4 +464,75 @@
 @media (max-width: 560px) {
   .dp-panel, .dp-panel.dp-derecha { left: 0; right: 0; width: auto; }
   .dp-day { height: 42px; }
+}
+
+/* ── Paso 2: requisitos de la carta de encargo (equipo y cronograma) ── */
+.req-lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.req-lista-fila { display: flex; gap: 8px; align-items: center; }
+.req-lista-fila input { flex: 1; min-width: 0; }
+.req-lista-quitar {
+  flex: 0 0 38px;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  color: var(--red-600);
+}
+.req-lista-quitar svg { width: 16px; height: 16px; }
+.req-lista-quitar:hover { background: var(--red-25); border-color: var(--red-200); }
+.req-lista-agregar { margin-top: 10px; }
+.req-lista-agregar[hidden] { display: none; }
+.req-cronograma td { vertical-align: middle; }
+.req-cronograma td:first-child { width: auto; font-weight: 500; }
+.req-entrega { display: flex; align-items: center; gap: 6px; }
+.req-entrega span { color: var(--muted); font-size: 13px; }
+.req-entrega select { width: auto; min-width: 0; padding: 6px 8px; font-size: 13px; }
+
+@media (max-width: 600px) {
+  .req-cronograma, .req-cronograma tbody, .req-cronograma tr, .req-cronograma td { display: block; width: 100%; }
+  .req-cronograma thead { display: none; }
+  .req-cronograma tr { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .req-cronograma td { padding: 4px 10px; border: 0; }
+  .req-cronograma .req-entrega { width: 100%; }
+  .req-cronograma .req-entrega select { flex: 1 1 0; width: 0; }
+}
+
+/* ── Paso 2: tarjetas de documentos y modal de requisitos ──────────── */
+.req-doc-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 12px 0 16px;
+}
+.req-doc-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+.req-doc-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.req-doc-card-head strong { font-size: 14px; line-height: 1.35; }
+.req-doc-card .badge { white-space: normal; text-align: left; }
+.req-doc-card-lista {
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+.req-doc-card-acciones { display: flex; flex-wrap: wrap; gap: 6px; }
+#req-modal-carta .modal-content { max-width: 920px; }
+#req-modal-carta .modal-actions { margin-top: 20px; }
+
+@media (max-width: 1100px) {
+  .req-doc-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .req-doc-cards { grid-template-columns: 1fr; }
 }

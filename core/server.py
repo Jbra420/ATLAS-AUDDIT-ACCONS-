@@ -496,7 +496,12 @@ class AtlasHandler(BaseHTTPRequestHandler):
             default_tab, action = posts[path]
             tab = form_value(form, "return_tab") or default_tab
             try:
-                self.redirect(volver(audit_id, tab, msg=action(form, audit, current)))
+                # Una acción puede devolver (mensaje, sección) para indicar a
+                # dónde seguir, p. ej. al paso siguiente cuando termina uno.
+                mensaje = action(form, audit, current)
+                if isinstance(mensaje, tuple):
+                    mensaje, tab = mensaje
+                self.redirect(volver(audit_id, tab, msg=mensaje))
             except ValueError as exc:
                 self.redirect(volver(audit_id, tab, err=str(exc)))
             except Exception:
