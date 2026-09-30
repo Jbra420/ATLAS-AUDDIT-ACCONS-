@@ -4,7 +4,6 @@ tests/test_database.py — Pruebas de base de datos y lógica de negocio para At
 from __future__ import annotations
 
 import sqlite3
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -39,19 +38,12 @@ from database import (
     update_research,
     user_from_session,
 )
+from tests._base import base_temporal
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _make_db() -> Path:
-    """Crea una base de datos temporal para pruebas."""
-    tmp_dir = tempfile.mkdtemp()
-    db_path = Path(tmp_dir) / "test.db"
-    init_db(db_path, demo=True)
-    return db_path
-
 
 def _auditor_row(db_path: Path) -> sqlite3.Row:
     return authenticate("auditor", "auditor123", db_path)
@@ -88,7 +80,7 @@ def _full_data(**overrides) -> dict:
 class TestAuthentication(unittest.TestCase):
 
     def setUp(self):
-        self.db = _make_db()
+        self.db = base_temporal(self)
 
     def test_admin_correct_credentials(self):
         user = authenticate("admin", "admin123", self.db)
@@ -117,7 +109,7 @@ class TestAuthentication(unittest.TestCase):
         self.assertIn("auditor", usernames)
 
     def test_base_nueva_solo_crea_al_jefe_auditor(self):
-        db = Path(tempfile.mkdtemp()) / "nueva.db"
+        db = self.db.parent / "nueva.db"
         init_db(db)
         self.assertEqual([(u["username"], u["role"]) for u in list_users(db)], [("admin", "admin")])
         self.assertIsNone(authenticate("auditor", "auditor123", db), "Sin auditor demo")
@@ -163,7 +155,7 @@ class TestAuthentication(unittest.TestCase):
 class TestUserLifecycle(unittest.TestCase):
 
     def setUp(self):
-        self.db = _make_db()
+        self.db = base_temporal(self)
         self.admin = _admin_row(self.db)
         self.auditor = _auditor_row(self.db)
 
@@ -282,7 +274,7 @@ class TestUserLifecycle(unittest.TestCase):
 class TestRBAC(unittest.TestCase):
 
     def setUp(self):
-        self.db = _make_db()
+        self.db = base_temporal(self)
         # Crear segundo auditor y nueva empresa asignada a él
         with connect(self.db) as conn:
             self.auditor2_id = create_user(conn, "auditor2", "Auditor Dos", "auditor", "clave-dos")
@@ -374,7 +366,7 @@ class TestRBAC(unittest.TestCase):
 class TestResearchFlow(unittest.TestCase):
 
     def setUp(self):
-        self.db = _make_db()
+        self.db = base_temporal(self)
         self.auditor = _auditor_row(self.db)
         audits = list_auditor_audits(self.auditor["id"], self.db)
         self.audit_id = audits[0]["id"]
@@ -441,7 +433,7 @@ class TestResearchFlow(unittest.TestCase):
 
 class TestCompanyPeople(unittest.TestCase):
     def setUp(self):
-        self.db = _make_db()
+        self.db = base_temporal(self)
         self.auditor = _auditor_row(self.db)
         self.admin = _admin_row(self.db)
         self.audit_id = create_company_audit(
@@ -504,7 +496,7 @@ class TestAvanceDelPanel(unittest.TestCase):
     que el expediente usa para permitir el resumen (readiness)."""
 
     def setUp(self):
-        self.db = _make_db()
+        self.db = base_temporal(self)
         self.auditor = _auditor_row(self.db)
         self.audit_id = list_auditor_audits(self.auditor["id"], self.db)[0]["id"]
 
@@ -544,7 +536,7 @@ class TestAvanceDelPanel(unittest.TestCase):
 
 class TestCambiarContrasena(unittest.TestCase):
     def setUp(self):
-        self.db = _make_db()
+        self.db = base_temporal(self)
         self.auditor = _auditor_row(self.db)
 
     def _cambiar(self, actual="auditor123", nueva="nueva-clave-1", confirmacion=None, token=""):
@@ -586,7 +578,7 @@ class TestClaveInicial(unittest.TestCase):
     """La clave inicial del jefe y la temporal de un auditor deben cambiarse."""
 
     def setUp(self):
-        self.db = _make_db()
+        self.db = base_temporal(self)
 
     def test_base_nueva_marca_la_clave_del_jefe(self):
         self.assertEqual(_admin_row(self.db)["must_change_password"], 1)
@@ -615,7 +607,7 @@ class TestClaveInicial(unittest.TestCase):
 
 class TestArchivarEmpresa(unittest.TestCase):
     def setUp(self):
-        self.db = _make_db()
+        self.db = base_temporal(self)
         self.auditor = _auditor_row(self.db)
         self.admin = _admin_row(self.db)
         self.audit_id = create_company_audit(

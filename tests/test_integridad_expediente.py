@@ -12,9 +12,7 @@ Cubre estas garantías:
 """
 from __future__ import annotations
 
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
 import database
@@ -23,9 +21,7 @@ from database import (
     append_research_source_note,
     apply_sri_research_result,
     apply_supercias_research_result,
-    authenticate,
     connect,
-    create_company_audit,
     get_audit_context,
     get_company_location,
     get_company_profile,
@@ -45,6 +41,7 @@ from seed_data import DEMO_RUC
 from services.company_research import build_sri_result
 from services.supercias_catalog import build_supercias_result
 from views.auditor.radar import tab_sri, tab_supercias
+from tests._base import BaseTemporal
 
 
 # Caso de referencia del requisito, con los valores reales de los catálogos
@@ -85,18 +82,12 @@ SUPERCIAS_RECORD = {
 }
 
 
-class _TempDbCase(unittest.TestCase):
+class _TempDbCase(BaseTemporal):
     def setUp(self):
-        self.db = Path(tempfile.mkdtemp()) / "atlas.db"
-        init_db(self.db, demo=True)
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        self.admin = authenticate("admin", "admin123", self.db)
+        super().setUp()
 
     def _create_audit(self, ruc: str = "0190377210001") -> int:
-        return create_company_audit(
-            "GRUCANQUI CIA. LTDA", ruc, "Cuenca", "", "2025",
-            self.auditor["id"], self.admin["id"], self.db,
-        )
+        return self.crear_auditoria("GRUCANQUI CIA. LTDA", ruc, periodo="2025")
 
 
 class TestPartialSave(_TempDbCase):

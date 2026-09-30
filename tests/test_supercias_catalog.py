@@ -1,9 +1,7 @@
 """Pruebas del catálogo local de Supercías (Directorio de Compañías)."""
 from __future__ import annotations
 
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 import database
@@ -18,6 +16,7 @@ from database import (
 )
 from services.company_research import build_sri_result, research_company_by_ruc
 from services.supercias_catalog import build_supercias_result
+from tests._base import BaseTemporal, carpeta_temporal
 
 
 SUPERCIAS_RECORD = {
@@ -79,17 +78,10 @@ class TestBuildSuperciasResult(unittest.TestCase):
         self.assertEqual(result["profile"]["situacion_legal"], "")
 
 
-class TestApplySuperciasResearchResult(unittest.TestCase):
+class TestApplySuperciasResearchResult(BaseTemporal):
     def setUp(self):
-        directory = Path(tempfile.mkdtemp())
-        self.db = directory / "atlas.db"
-        init_db(self.db, demo=True)
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        self.admin = authenticate("admin", "admin123", self.db)
-        self.audit_id = create_company_audit(
-            "Empresa pendiente", "0190314014001", "", "", "2026",
-            self.auditor["id"], self.admin["id"], self.db,
-        )
+        super().setUp()
+        self.audit_id = self.crear_auditoria("Empresa pendiente", "0190314014001", ciudad="")
 
     def test_preserves_sri_fields_and_marks_only_supercias(self):
         sri_result = build_sri_result(SRI_RECORD)
@@ -151,13 +143,13 @@ class TestLookupSuperciasCatalogMissing(unittest.TestCase):
     """Cuando el catálogo no fue importado, todo debe degradar sin excepciones."""
 
     def test_returns_none_when_catalog_file_absent(self):
-        with patch.object(database.catalogos, "SUPERCIAS_CATALOG_PATH", Path(tempfile.mkdtemp()) / "no_existe.db"):
+        with patch.object(database.catalogos, "SUPERCIAS_CATALOG_PATH", carpeta_temporal(self) / "no_existe.db"):
             self.assertIsNone(database.lookup_supercias_catalog("0190377210001"))
 
     def test_returns_none_when_ruc_not_in_an_existing_catalog(self):
         """Distinto del catálogo ausente: aquí el archivo existe (con su
         esquema real) pero el RUC buscado simplemente no está en él."""
-        catalog_path = Path(tempfile.mkdtemp()) / "supercias_catalog.db"
+        catalog_path = carpeta_temporal(self) / "supercias_catalog.db"
         with connect(catalog_path) as conn:
             conn.execute(
                 "CREATE TABLE supercias_catalog (ruc TEXT PRIMARY KEY, razon_social TEXT)"
@@ -174,7 +166,7 @@ class TestLookupSuperciasCatalogMissing(unittest.TestCase):
             self.assertIsNotNone(database.lookup_supercias_catalog("9999999999001"))
 
     def test_research_company_by_ruc_reports_pending_when_catalog_absent(self):
-        directory = Path(tempfile.mkdtemp())
+        directory = carpeta_temporal(self)
         db = directory / "atlas.db"
         init_db(db, demo=True)
         auditor = authenticate("auditor", "auditor123", db)
@@ -183,7 +175,7 @@ class TestLookupSuperciasCatalogMissing(unittest.TestCase):
             "Empresa sin Supercias", "0190314014001", "", "", "2026",
             auditor["id"], admin["id"], db,
         )
-        with patch.object(database.catalogos, "SUPERCIAS_CATALOG_PATH", Path(tempfile.mkdtemp()) / "no_existe.db"):
+        with patch.object(database.catalogos, "SUPERCIAS_CATALOG_PATH", carpeta_temporal(self) / "no_existe.db"):
             with patch("services.company_research.lookup_catastro", return_value=dict(SRI_RECORD)):
                 outcome = research_company_by_ruc(audit_id, "0190314014001", auditor["id"], db)
 
@@ -192,20 +184,13 @@ class TestLookupSuperciasCatalogMissing(unittest.TestCase):
         self.assertEqual(outcome["supercias_populated_fields"], 0)
 
 
-class TestResearchCompanyByRucPartialResults(unittest.TestCase):
+class TestResearchCompanyByRucPartialResults(BaseTemporal):
     """SRI y Supercias se consultan de forma independiente: ninguna es un
     requisito para la otra, solo fallan juntas si ninguna tiene el RUC."""
 
     def setUp(self):
-        directory = Path(tempfile.mkdtemp())
-        self.db = directory / "atlas.db"
-        init_db(self.db, demo=True)
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        self.admin = authenticate("admin", "admin123", self.db)
-        self.audit_id = create_company_audit(
-            "Empresa parcial", "0190314014001", "", "", "2026",
-            self.auditor["id"], self.admin["id"], self.db,
-        )
+        super().setUp()
+        self.audit_id = self.crear_auditoria("Empresa parcial", "0190314014001", ciudad="")
 
     def test_supercias_only_when_sri_catastro_missing(self):
         with patch("services.company_research.lookup_catastro", return_value=None), \

@@ -3,37 +3,25 @@ tests/test_source_evidence.py — Pruebas de evidencia y bitacora de fuentes.
 """
 from __future__ import annotations
 
-import tempfile
 import unittest
-from pathlib import Path
 
 from database import (
     add_source,
     append_research_source_note,
-    authenticate,
     get_audit,
     get_research,
-    init_db,
     list_sources,
     list_source_checks,
     mark_matching_source_checked,
     refresh_summary,
 )
+from tests._base import BaseTemporal
 
 
-def _make_db() -> Path:
-    tmp_dir = tempfile.mkdtemp()
-    db_path = Path(tmp_dir) / "test_source_evidence.db"
-    init_db(db_path, demo=True)
-    return db_path
-
-
-class TestSourceEvidence(unittest.TestCase):
+class TestSourceEvidence(BaseTemporal):
 
     def setUp(self):
-        self.db = _make_db()
-        self.admin = authenticate("admin", "admin123", self.db)
-        self.auditor = authenticate("auditor", "auditor123", self.db)
+        super().setUp()
         self.audit_id = get_audit(1, self.admin, self.db)["id"]
 
     def test_source_requires_valid_url_when_present(self):

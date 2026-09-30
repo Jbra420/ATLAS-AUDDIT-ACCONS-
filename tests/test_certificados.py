@@ -7,19 +7,14 @@ evidencia y el panel de revisión.
 """
 from __future__ import annotations
 
-import tempfile
 import unittest
-from pathlib import Path
 
 from core.server import parse_multipart
 from database import (
-    authenticate,
     close_certificate_import,
     connect,
-    create_company_audit,
     get_audit_context,
     get_certificate_import,
-    init_db,
     save_certificate,
 )
 from services.certificados import (
@@ -30,6 +25,7 @@ from services.certificados import (
     verificar_compania,
 )
 from views.auditor.radar.certificado import assisted_panel, review_panel
+from tests._base import BaseTemporal
 
 RUC_EMPRESA = "0190444619001"
 
@@ -288,17 +284,11 @@ class TestParseMultipart(unittest.TestCase):
         self.assertEqual(parse_multipart(f"multipart/form-data; boundary={limite}", cuerpo).files, {})
 
 
-class TestGuardarCertificado(unittest.TestCase):
+class TestGuardarCertificado(BaseTemporal):
     def setUp(self):
-        tmp = Path(tempfile.mkdtemp())
-        self.db, self.adjuntos = tmp / "test.db", tmp / "adjuntos"
-        init_db(self.db, demo=True)
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        admin = authenticate("admin", "admin123", self.db)
-        self.audit_id = create_company_audit(
-            "COBBLERCOMPANY CIA. LTDA.", RUC_EMPRESA, "Cuenca", "", "2026",
-            self.auditor["id"], admin["id"], self.db,
-        )
+        super().setUp()
+        self.adjuntos = self.tmp / "adjuntos"
+        self.audit_id = self.crear_auditoria("COBBLERCOMPANY CIA. LTDA.", RUC_EMPRESA)
         self.pdf = _pdf_con_texto(["certificado"])
         self.analisis = analizar_nomina(NOMINA, RUC_EMPRESA)
 

@@ -9,21 +9,18 @@ Verifica que cuando read_only=True (modo jefe auditor):
 """
 from __future__ import annotations
 
-import tempfile
 import unittest
-from pathlib import Path
 
 from database import (
-    authenticate,
     create_company_audit,
     get_audit,
-    init_db,
     load_demo_if_ruc_matches,
     get_financial_context,
     get_financial_snapshot,
     set_audit_fiscal_year,
 )
 from services.financial import compute_indicators
+from tests._base import BaseTemporal
 
 
 def _sample_dossier() -> dict:
@@ -73,20 +70,11 @@ def _blocked_readiness() -> dict:
     }
 
 
-def _make_db() -> Path:
-    tmp = tempfile.mkdtemp()
-    db_path = Path(tmp) / "test_tabs.db"
-    init_db(db_path, demo=True)
-    return db_path
-
-
-class TestTabSriSourceCheckReadOnly(unittest.TestCase):
+class TestTabSriSourceCheckReadOnly(BaseTemporal):
     """tab_sri oculta el control de 'marcar consultada' en modo lectura."""
 
     def setUp(self):
-        self.db = _make_db()
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        self.admin = authenticate("admin", "admin123", self.db)
+        super().setUp()
         self.audit_id = create_company_audit(
             "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
             "Consultoría", "2026", self.auditor["id"], self.admin["id"], self.db,
@@ -108,13 +96,11 @@ class TestTabSriSourceCheckReadOnly(unittest.TestCase):
         self.assertIn("Marcar consultada", html)
 
 
-class TestTabSuperciasSourceCheckReadOnly(unittest.TestCase):
+class TestTabSuperciasSourceCheckReadOnly(BaseTemporal):
     """tab_supercias oculta el control de 'marcar consultada' en modo lectura."""
 
     def setUp(self):
-        self.db = _make_db()
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        self.admin = authenticate("admin", "admin123", self.db)
+        super().setUp()
         self.audit_id = create_company_audit(
             "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
             "Consultoría", "2026", self.auditor["id"], self.admin["id"], self.db,
@@ -136,13 +122,11 @@ class TestTabSuperciasSourceCheckReadOnly(unittest.TestCase):
         self.assertIn("Marcar pendiente", html)  # ya estaba 'consultada'
 
 
-class TestTabDocumentosReadOnly(unittest.TestCase):
+class TestTabDocumentosReadOnly(BaseTemporal):
     """tab_documentos: solo la bitácora de evidencia."""
 
     def setUp(self):
-        self.db = _make_db()
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        self.admin = authenticate("admin", "admin123", self.db)
+        super().setUp()
         self.audit_id = create_company_audit(
             "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
             "Consultoría", "2026", self.auditor["id"], self.admin["id"], self.db,
@@ -170,13 +154,11 @@ class TestTabDocumentosReadOnly(unittest.TestCase):
         self.assertIn("Sin evidencias registradas", build(self.audit_id, [], read_only=True))
 
 
-class TestTabAdminsReadOnly(unittest.TestCase):
+class TestTabAdminsReadOnly(BaseTemporal):
     """tab_admins acepta read_only sin error y no rompe el HTML."""
 
     def setUp(self):
-        self.db = _make_db()
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        self.admin = authenticate("admin", "admin123", self.db)
+        super().setUp()
         self.audit_id = create_company_audit(
             "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
             "Consultoría", "2026", self.auditor["id"], self.admin["id"], self.db,
@@ -242,13 +224,11 @@ class TestTabAdminsReadOnly(unittest.TestCase):
         self.assertIn("Certificado aún no registrado", html)
 
 
-class TestTabAccionistasReadOnly(unittest.TestCase):
+class TestTabAccionistasReadOnly(BaseTemporal):
     """tab_accionistas acepta read_only sin error."""
 
     def setUp(self):
-        self.db = _make_db()
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        self.admin = authenticate("admin", "admin123", self.db)
+        super().setUp()
         self.audit_id = create_company_audit(
             "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
             "Consultoría", "2026", self.auditor["id"], self.admin["id"], self.db,
@@ -302,13 +282,11 @@ class TestTabAccionistasReadOnly(unittest.TestCase):
         self.assertIn("Certificado registrado como evidencia", html)
 
 
-class TestTabResumenReadOnly(unittest.TestCase):
+class TestTabResumenReadOnly(BaseTemporal):
     """tab_resumen oculta el formulario de generación en modo lectura."""
 
     def setUp(self):
-        self.db = _make_db()
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        self.admin = authenticate("admin", "admin123", self.db)
+        super().setUp()
         self.audit_id = create_company_audit(
             "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
             "Consultoría", "2026", self.auditor["id"], self.admin["id"], self.db,
@@ -407,13 +385,11 @@ class TestTabResumenReadOnly(unittest.TestCase):
         self.assertNotIn("/auditor/radar/summary", html)
 
 
-class TestTabFinancieroReadOnly(unittest.TestCase):
+class TestTabFinancieroReadOnly(BaseTemporal):
     """tab_financiero oculta el formulario de edición en modo lectura."""
 
     def setUp(self):
-        self.db = _make_db()
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        self.admin = authenticate("admin", "admin123", self.db)
+        super().setUp()
         self.audit_id = create_company_audit(
             "GRUCANQUI CIA. LTDA", "0190377210001", "Quito",
             "Consultoría", "2026", self.auditor["id"], self.admin["id"], self.db,

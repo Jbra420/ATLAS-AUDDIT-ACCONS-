@@ -55,7 +55,8 @@ def _company_row(a: sqlite3.Row, auditors: list[sqlite3.Row], csrf_token: str) -
           <td>{auditor_label}{reassign_form}</td>
           <td>{badge(a['status'])}</td>
           <td><div class="user-actions company-actions">
-            <a class="btn btn-sm" href="/admin/audit?audit_id={a['id']}">{SVG_ARROW_RIGHT} Seguimiento</a>
+            <a class="btn btn-sm" href="/admin/audit?audit_id={a['id']}">{SVG_ARROW_RIGHT} Levantamiento</a>
+            <a class="btn btn-sm" href="/admin/requerimiento?audit_id={a['id']}">Requerimiento</a>
             <button type="button" class="user-action-btn user-action-warning"
                     data-audit-id="{a['id']}" data-company-name="{esc(a['company_name'])}"
                     title="Archivar empresa" aria-label="Archivar empresa"
@@ -79,7 +80,8 @@ def _archived_panel(archived: list[sqlite3.Row], csrf_token: str) -> str:
             <span class="user-state-meta">{esc(a['archive_reason'] or '')}</span>
           </td>
           <td><div class="user-actions company-actions">
-            <a class="btn btn-sm" href="/admin/audit?audit_id={a['id']}">{SVG_ARROW_RIGHT} Ver expediente</a>
+            <a class="btn btn-sm" href="/admin/audit?audit_id={a['id']}">{SVG_ARROW_RIGHT} Levantamiento</a>
+            <a class="btn btn-sm" href="/admin/requerimiento?audit_id={a['id']}">Requerimiento</a>
             <form method="post" action="/admin/companies/restore" class="user-inline-form">
               {hidden_inputs(csrf_token, audit_id=a['id'])}
               <button type="submit" class="user-action-btn user-action-success"

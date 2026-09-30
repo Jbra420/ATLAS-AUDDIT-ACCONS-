@@ -7,16 +7,12 @@ Reglas del requisito:
 """
 from __future__ import annotations
 
-import tempfile
 import unittest
 from datetime import date
-from pathlib import Path
 
 from database import (
     DEFAULT_ECONOMIC_DOCUMENTS,
-    authenticate,
     connect,
-    create_company_audit,
     get_audit_context,
     get_financial_context,
     init_db,
@@ -29,6 +25,7 @@ from database import (
 from services.financial import comparativo, compute_indicators
 from services.summary import generate_summary
 from views.auditor.radar import tab_financiero
+from tests._base import BaseTemporal
 
 REFERENCE_RUC = "0190377210001"
 CIFRAS_2025 = {
@@ -38,19 +35,13 @@ CIFRAS_2025 = {
 }
 
 
-class _FinancialCase(unittest.TestCase):
+class _FinancialCase(BaseTemporal):
     def setUp(self):
-        self.db = Path(tempfile.mkdtemp()) / "atlas.db"
-        init_db(self.db, demo=True)
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        self.admin = authenticate("admin", "admin123", self.db)
+        super().setUp()
         self.audit_id = self._audit(REFERENCE_RUC)
 
     def _audit(self, ruc: str, period: str = "2025") -> int:
-        return create_company_audit(
-            "GRUCANQUI CIA. LTDA", ruc, "Cuenca", "", period,
-            self.auditor["id"], self.admin["id"], self.db,
-        )
+        return self.crear_auditoria("GRUCANQUI CIA. LTDA", ruc, periodo=period)
 
     def _save(self, anio, data, audit_id=None, **kwargs):
         return upsert_financial_statement(audit_id or self.audit_id, anio, data, db_path=self.db, **kwargs)

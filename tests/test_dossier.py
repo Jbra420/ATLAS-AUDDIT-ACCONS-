@@ -3,20 +3,16 @@ tests/test_dossier.py - Pruebas de la ficha final de resultados.
 """
 from __future__ import annotations
 
-import tempfile
 import unittest
-from pathlib import Path
 
 from database import (
     add_source,
-    authenticate,
     create_company_audit,
     get_audit,
     get_company_location,
     get_company_profile,
     get_financial_snapshot,
     get_research,
-    init_db,
     list_administrators,
     list_economic_documents,
     list_shareholders,
@@ -27,21 +23,13 @@ from database import (
 from services.company_search import build_source_map
 from services.dossier import build_dossier_model
 from services.financial import compute_indicators
+from tests._base import BaseTemporal
 
 
-def _make_db() -> Path:
-    tmp_dir = tempfile.mkdtemp()
-    db_path = Path(tmp_dir) / "test_dossier.db"
-    init_db(db_path, demo=True)
-    return db_path
-
-
-class TestDossier(unittest.TestCase):
+class TestDossier(BaseTemporal):
 
     def setUp(self):
-        self.db = _make_db()
-        self.admin = authenticate("admin", "admin123", self.db)
-        self.auditor = authenticate("auditor", "auditor123", self.db)
+        super().setUp()
         self.audit_id = get_audit(1, self.admin, self.db)["id"]
 
     def _build(self, audit_id: int | None = None):

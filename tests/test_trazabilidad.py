@@ -5,23 +5,19 @@ Regla del requisito: cada dato registra su fuente y la fecha de consulta.
 from __future__ import annotations
 
 import sqlite3
-import tempfile
 import unittest
 from datetime import date
-from pathlib import Path
 
 from database import (
     add_administrator,
     add_shareholder,
     apply_sri_research_result,
     apply_supercias_research_result,
-    authenticate,
     connect,
     create_company_audit,
     delete_administrator,
     get_audit_context,
     get_company_profile,
-    init_db,
     list_administrators,
     list_provenance,
     list_shareholders,
@@ -46,6 +42,7 @@ from services.trazabilidad import (
     validar_fecha_consulta,
 )
 from views.auditor.radar import tab_accionistas, tab_admins, tab_sri, tab_ubicacion
+from tests._base import BaseTemporal
 
 # Cédula con formato y dígito verificador válidos (no corresponde a una persona real conocida).
 CEDULA_VALIDA = "0102030400"
@@ -103,16 +100,10 @@ class TestFechaConsulta(unittest.TestCase):
                 validar_fecha_consulta(value, HOY)
 
 
-class _AuditCase(unittest.TestCase):
+class _AuditCase(BaseTemporal):
     def setUp(self):
-        self.db = Path(tempfile.mkdtemp()) / "atlas.db"
-        init_db(self.db, demo=True)
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        self.admin = authenticate("admin", "admin123", self.db)
-        self.audit_id = create_company_audit(
-            "GRUCANQUI CIA. LTDA", REFERENCE_RUC, "Cuenca", "", "2025",
-            self.auditor["id"], self.admin["id"], self.db,
-        )
+        super().setUp()
+        self.audit_id = self.crear_auditoria("GRUCANQUI CIA. LTDA", REFERENCE_RUC, periodo="2025")
         self.uid = self.auditor["id"]
 
     def _history(self, bloque: str | None = None) -> list:

@@ -5,16 +5,11 @@ locales (GRUCANQUI y COBBLERCOMPANY).
 """
 from __future__ import annotations
 
-import tempfile
 import unittest
-from pathlib import Path
 
 import database
 from database import (
-    authenticate,
-    create_company_audit,
     get_audit_context,
-    init_db,
     list_provenance,
     register_alert_treatment,
 )
@@ -29,6 +24,7 @@ from services.validaciones import (
     normalizar_razon_social,
 )
 from views.auditor.radar import tab_sri
+from tests._base import BaseTemporal
 
 REFERENCE_RUC = "0190377210001"
 AUDIT = {"ruc": REFERENCE_RUC, "company_name": "GRUCANQUI CIA. LTDA", "period": "2025", "city": "", "activity_hint": "",
@@ -211,16 +207,10 @@ class TestAlertas(unittest.TestCase):
         self.assertEqual(tratado["alertas"][0]["tratamiento"], "Se revisó con el cliente.")
 
 
-class _DbCase(unittest.TestCase):
+class _DbCase(BaseTemporal):
     def setUp(self):
-        self.db = Path(tempfile.mkdtemp()) / "atlas.db"
-        init_db(self.db, demo=True)
-        self.auditor = authenticate("auditor", "auditor123", self.db)
-        self.admin = authenticate("admin", "admin123", self.db)
-        self.audit_id = create_company_audit(
-            "GRUCANQUI CIA. LTDA", REFERENCE_RUC, "Cuenca", "", "2025",
-            self.auditor["id"], self.admin["id"], self.db,
-        )
+        super().setUp()
+        self.audit_id = self.crear_auditoria("GRUCANQUI CIA. LTDA", REFERENCE_RUC, periodo="2025")
 
 
 class TestAlertTreatment(_DbCase):
