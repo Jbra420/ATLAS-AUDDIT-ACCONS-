@@ -474,6 +474,9 @@
   }
 
   function iniciar() {
+    var editor = document.getElementById('req-datos-editor');
+    if (editor && window.location.hash === '#datos' &&
+        new URLSearchParams(window.location.search).has('err')) editor.open = true;
     Array.prototype.forEach.call(document.querySelectorAll('.dp[data-dp]'), function (raiz) {
       new Calendario(raiz); // eslint-disable-line no-new
     });

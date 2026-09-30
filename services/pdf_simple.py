@@ -2,8 +2,9 @@
 services/pdf_simple.py — Generador mínimo de PDF con la biblioteca estándar.
 
 Alcanza para cartas y certificados: párrafos (justificados, centrados o
-alineados), viñetas, una tabla sencilla, un logo JPEG, bloques de firma y
-salto de página automático. Usa las fuentes estándar Helvetica y
+alineados), viñetas, una tabla sencilla, un logo JPEG (suelto o como
+cabecera que se repite en cada página), bloques de firma y salto de página
+automático. Usa las fuentes estándar Helvetica y
 Helvetica-Bold con codificación WinAnsi (tildes y eñes del español), así que
 no incrusta fuentes ni depende de librerías externas.
 
@@ -16,6 +17,7 @@ import unicodedata
 import zlib
 
 A4 = (595.28, 841.89)
+CARTA = (612.0, 792.0)  # Letter: el tamaño de la carta de encargo de Auddit
 
 # Anchos AFM (milésimas de em) de Helvetica y Helvetica-Bold, caracteres 32 a 126.
 _ANCHOS = {
@@ -88,6 +90,8 @@ class PdfDocumento:
         self.mx, self.my = margen_x, margen_y
         self.paginas: list[list[bytes]] = []
         self.imagenes: list[tuple[bytes, int, int, int]] = []
+        self._cabecera: bytes | None = None  # operación que dibuja el logo de cada página
+        self._inicio_y = self.alto - self.my
         self._nueva_pagina()
 
     # ── Página y posición ────────────────────────────────────────────────
@@ -96,8 +100,21 @@ class PdfDocumento:
         return self.ancho - 2 * self.mx
 
     def _nueva_pagina(self) -> None:
-        self.paginas.append([])
-        self.y = self.alto - self.my
+        self.paginas.append([] if self._cabecera is None else [self._cabecera])
+        self.y = self._inicio_y
+
+    def cabecera_jpeg(self, datos: bytes, ancho: float, *, margen_superior: float = 14,
+                      margen_derecho: float = 56, despues: float = 24) -> None:
+        """Logo arriba a la derecha en esta página y en las siguientes; el
+        texto empieza debajo. Se llama antes de escribir contenido."""
+        w, h, componentes = _dimensiones_jpeg(datos)
+        alto = ancho * h / w
+        self.imagenes.append((datos, w, h, componentes))
+        x, y = self.ancho - margen_derecho - ancho, self.alto - margen_superior - alto
+        self._cabecera = f"q {ancho:.2f} 0 0 {alto:.2f} {x:.2f} {y:.2f} cm /Im{len(self.imagenes)} Do Q".encode()
+        self._inicio_y = y - despues
+        self.paginas[-1].insert(0, self._cabecera)
+        self.y = self._inicio_y
 
     def _asegurar(self, alto: float) -> None:
         if self.y - alto < self.my:
@@ -105,6 +122,11 @@ class PdfDocumento:
 
     def espacio(self, puntos: float) -> None:
         self.y -= puntos
+
+    def mantener(self, alto: float) -> None:
+        """Pasa a otra página si no quedan `alto` puntos: un título no queda
+        solo al pie de la página, separado de su texto."""
+        self._asegurar(alto)
 
     def _texto(self, x: float, y: float, texto: str, fuente: str, tamano: float, tw: float = 0) -> None:
         op = f"BT /{_FUENTES[fuente]} {tamano:.2f} Tf {tw:.3f} Tw {x:.2f} {y:.2f} Td ".encode()
@@ -156,10 +178,10 @@ class PdfDocumento:
             self._texto(x, self.y, linea, fuente, tamano, tw)
         self.y -= despues
 
-    def vineta(self, texto: str, *, tamano: float = 10.5, despues: float = 3) -> None:
+    def vineta(self, texto: str, *, tamano: float = 10.5, despues: float = 3, sangria: float = 22) -> None:
         self._asegurar(tamano * 1.4)
-        self._texto(self.mx + 8, self.y - tamano * 1.35, "•", "Helvetica", tamano)
-        self.parrafo(texto, tamano=tamano, sangria=22, despues=despues, alineacion="izquierda")
+        self._texto(self.mx + max(0, sangria - 14), self.y - tamano * 1.35, "•", "Helvetica", tamano)
+        self.parrafo(texto, tamano=tamano, sangria=sangria, despues=despues, alineacion="izquierda")
 
     def tabla(self, encabezados: tuple[str, str], filas: list[tuple[str, str]], *, tamano: float = 10) -> None:
         """Tabla de dos columnas centrada, con líneas entre filas (cronograma)."""
@@ -199,16 +221,19 @@ class PdfDocumento:
         self.paginas[-1].append(f"q {ancho:.2f} 0 0 {alto:.2f} {x:.2f} {self.y:.2f} cm /{nombre} Do Q".encode())
         self.y -= despues
 
-    def firmas(self, bloques: list[list[str]], *, tamano: float = 10, espacio_firma: float = 64) -> None:
-        """Bloques de firma lado a lado: línea para firmar y datos en negrita, centrados."""
+    def firmas(self, bloques: list[list[str]], *, tamano: float = 10, espacio_firma: float = 64,
+               con_linea: bool = True, interlineado: float = 1.45) -> None:
+        """Bloques de firma lado a lado: espacio para firmar (con línea o sin
+        ella) y datos en negrita, centrados."""
         ancho_col = self.util / len(bloques)
-        alto = tamano * 1.45
+        alto = tamano * interlineado
         self._asegurar(espacio_firma + alto * max(len(b) for b in bloques))
         self.y -= espacio_firma
         for col, lineas in enumerate(bloques):
             x0 = self.mx + col * ancho_col
             margen = max(24, (ancho_col - 230) / 2)  # la línea de firma no pasa de ~8 cm
-            self.linea(x0 + margen, self.y, x0 + ancho_col - margen, self.y)
+            if con_linea:
+                self.linea(x0 + margen, self.y, x0 + ancho_col - margen, self.y)
             y = self.y
             for linea in lineas:
                 y -= alto

@@ -31,6 +31,7 @@ from database import (
     review_requerimiento_adjunto,
     ruta_archivo,
     save_requerimiento_adjunto,
+    save_requerimiento_carta,
     save_requerimiento_datos,
     save_requerimiento_destinatario,
     save_requerimiento_detalle,
@@ -90,7 +91,9 @@ from services.requerimiento import (
     CAMPOS_CORREO,
     CUADROS,
     DOCUMENTOS,
+    ENTREGABLES,
     FORMULARIO,
+    FORMULARIO_CARTA,
     ITEMS,
     MAX_FILAS_CUADRO,
     RECEPCIONES,
@@ -100,6 +103,8 @@ from services.requerimiento import (
     datos_efectivos,
     describir_pdf,
     faltantes,
+    faltantes_carta,
+    faltantes_paso1,
     formulario_desde,
     instantanea_actual,
     nombre_archivo,
@@ -107,6 +112,7 @@ from services.requerimiento import (
     paquete_desactualizado,
     precarga,
     referencia_paquete,
+    texto_entrega,
     validar_archivo,
     validar_fecha_envio,
     validar_fecha_pasada,
@@ -584,9 +590,41 @@ def _req_datos(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
     datos = completar_derivados(normalizar_datos(completo), sugeridos)
     datos["ruc"] = ruc_auditoria
     save_requerimiento_datos(audit["id"], datos, user["id"])
-    pendientes = faltantes(datos)
-    return ("Datos confirmados" + (f". Pendiente: {', '.join(pendientes)}" if pendientes else "")
-            + _aviso_desactualizado(audit["id"]))
+    pendientes = faltantes_paso1(datos)
+    if pendientes:
+        return f"Datos guardados. Para continuar complete: {', '.join(pendientes)}"
+    # Con el paso 1 completo se sigue en el paso 2 (documentos).
+    return "Datos confirmados: revise los requisitos de cada documento y genérelos" + \
+        _aviso_desactualizado(audit["id"]), "documentos"
+
+
+def _req_carta(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
+    """Requisitos editables de la carta de encargo (modal del paso 2): cargo
+    del representante, firma de Auddit, equipo y cronograma."""
+    req = get_requerimiento_context(audit["id"])
+    if req["guardado"] is None:
+        raise ValueError("Confirme primero los datos del paso 1")
+    completo = formulario_desde(datos_efectivos(req["guardado"], {}))
+    completo.update({campo: form_value(form, campo) for campo in FORMULARIO_CARTA})
+    # La lista del equipo (se agregan y quitan integrantes) y el mes y año de
+    # cada entrega del cronograma.
+    completo["equipo"] = "\n".join(v for v in form.get("equipo_integrante", []) if v.strip())
+    for i, entregable in enumerate(ENTREGABLES):
+        completo[f"cronograma_{i}"] = _entrega(form, i, entregable)
+    datos = normalizar_datos(completo)
+    save_requerimiento_carta(audit["id"], datos)
+    pendientes = faltantes_carta(datos)
+    return ("Requisitos de la carta de encargo guardados"
+            + (f". Pendiente: {', '.join(pendientes)}" if pendientes else "") + _aviso_desactualizado(audit["id"]))
+
+
+def _entrega(form: dict, i: int, entregable: str) -> str:
+    mes, anio = form_value(form, f"entrega_mes_{i}"), form_value(form, f"entrega_anio_{i}")
+    if not mes and not anio:
+        return ""
+    if not (mes.isdigit() and 1 <= int(mes) <= 12 and anio.isdigit() and 2000 <= int(anio) <= 2100):
+        raise ValueError(f"Fecha de entrega de «{entregable}»: elija el mes y el año")
+    return texto_entrega(int(mes), int(anio))
 
 
 def _req_destinatario(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
@@ -775,6 +813,7 @@ REQUERIMIENTO_POSTS = {
     "/auditor/requerimiento/items": ("solicitud", _req_items),
     "/auditor/requerimiento/detalle": ("solicitud", _req_detalle),
     "/auditor/requerimiento/generar": ("documentos", _req_generar),
+    "/auditor/requerimiento/carta": ("documentos", _req_carta),
     "/auditor/requerimiento/destinatario": ("correo", _req_destinatario),
     "/auditor/requerimiento/envio": ("correo", _req_envio),
     "/auditor/requerimiento/whatsapp": ("whatsapp", _req_whatsapp),

@@ -88,16 +88,27 @@ _FIRMAS = {
 _EXTENSIONES = {"pdf": ("pdf",), "xlsx": ("xlsx",), "png": ("png",), "jpg": ("jpg", "jpeg"), "eml": ("eml",)}
 
 # ── Carta de encargo ─────────────────────────────────────────────────────
-ENTREGABLES = (
-    "Informe de Control Interno",
-    "Borrador del Informe de Auditoría",
-    "Informe Final de Auditoria",
-    "Informe de Cumplimiento Tributario",
+# Entregables del cronograma y el mes en que vence cada uno, del año
+# siguiente al auditado (carta de encargo 2026 de Auddit). El auditor cambia
+# el mes y el año de cada entrega en el paso 1.
+ENTREGAS_PREDETERMINADAS = (
+    ("Informe de Control Interno", 2),
+    ("Borrador del Informe de Auditoría", 3),
+    ("Informe Final de Auditoria", 4),
+    ("Informe de Cumplimiento Tributario", 7),
 )
-# Datos de Auddit en los ejemplos del proceso; el auditor puede cambiarlos.
+ENTREGABLES = tuple(entregable for entregable, _mes in ENTREGAS_PREDETERMINADAS)
+# Datos de Auddit en la carta de encargo 2026; el auditor puede cambiarlos.
 AUDDIT_EMPRESA = "AUDDIT S.A.S."
-AUDDIT_REPRESENTANTE = "MGTR. FERNANDO PARRA SUAREZ"
+AUDDIT_REPRESENTANTE = "FERNANDO PARRA SUAREZ"
 AUDDIT_CARGO = "GERENTE"
+EQUIPO_PREDETERMINADO = (
+    "Mgtr. Fernando Parra Suarez",
+    "Mgtr. María de Lourdes Mosquera",
+    "Lcda. Jennifer Barreto Zhagui",
+    "Lcda. Camila Guevara Lucero",
+)
+MAX_EQUIPO = 12
 
 # ── Solicitud de información: hojas 1 y 2 ────────────────────────────────
 # {anio_auditado}, {anio_cerrado}, {rango} ("Enero a Julio de 2026") y
@@ -248,7 +259,10 @@ FORMULARIO = (
     "anio_auditado", "empresa", "representante_nombre", "fecha_documentos", "fecha_corte",
     "inventario_desde", "inventario_hasta", "representante_identificacion", "ruc",
 )
-OBLIGATORIOS = FORMULARIO
+# Requisitos editables de la carta de encargo (modal del paso 2), además del
+# equipo y el cronograma (listas).
+FORMULARIO_CARTA = ("representante_cargo", "auddit_representante", "auddit_cargo")
+OBLIGATORIOS = FORMULARIO + FORMULARIO_CARTA
 # El destinatario se registra en el paso del correo: no entra en los documentos.
 CAMPOS_CORREO = ("correo_para_nombre", "correo_para", "correo_cc")
 OBLIGATORIOS_CORREO = ("correo_para_nombre", "correo_para")
@@ -263,8 +277,12 @@ ETIQUETAS_FORMULARIO = {
     "inventario_hasta": "Levantamiento de inventarios: hasta",
     "representante_identificacion": "Cédula del representante",
     "ruc": "RUC de la empresa",
+    "representante_cargo": "Cargo del representante",
+    "auddit_representante": "Firma de Auddit: nombre",
+    "auddit_cargo": "Firma de Auddit: cargo",
 }
-CARGO_REPRESENTANTE = "GERENTE GENERAL"
+# Cargo del representante cuando el levantamiento no registra al gerente.
+CARGO_REPRESENTANTE = "GERENTE"
 
 _MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre",
           "noviembre", "diciembre")
@@ -306,6 +324,7 @@ def precarga(audit: Any, ctx: dict) -> dict[str, tuple[str, str]]:
         datos["representante_nombre"] = (_texto(row_get(profile, "representante_legal")), origen)
         if _texto(row_get(profile, "representante_cargo")):
             datos["representante_cargo"] = (_texto(row_get(profile, "representante_cargo")), origen)
+    datos.setdefault("representante_cargo", (CARGO_REPRESENTANTE, "Carta de encargo de Auddit"))
 
     periodo = _texto(row_get(audit, "period"))
     if re.fullmatch(r"\d{4}", periodo):
@@ -313,8 +332,8 @@ def precarga(audit: Any, ctx: dict) -> dict[str, tuple[str, str]]:
     if row_get(audit, "anio_fiscal_eeff", None):
         datos["anio_cerrado"] = (str(row_get(audit, "anio_fiscal_eeff")),
                                  "Levantamiento — año fiscal confirmado de los estados financieros")
-    datos["auddit_representante"] = (AUDDIT_REPRESENTANTE, "Ejemplo del documento de proceso de Auddit")
-    datos["auddit_cargo"] = (AUDDIT_CARGO, "Ejemplo del documento de proceso de Auddit")
+    datos["auddit_representante"] = (AUDDIT_REPRESENTANTE, "Carta de encargo de Auddit")
+    datos["auddit_cargo"] = (AUDDIT_CARGO, "Carta de encargo de Auddit")
     return datos
 
 
@@ -324,7 +343,8 @@ def datos_efectivos(guardado: Any, sugeridos: dict[str, tuple[str, str]]) -> dic
     sirve de propuesta. Incluye cronograma y equipo."""
     if guardado is None:
         datos: dict[str, Any] = {campo: valor for campo, (valor, _o) in sugeridos.items()}
-        datos["cronograma"], datos["equipo"] = [], []
+        datos["equipo"] = list(EQUIPO_PREDETERMINADO)
+        datos["cronograma"] = cronograma_predeterminado(datos.get("anio_auditado"))
         return datos
     datos = {
         campo: row_get(guardado, campo, None)
@@ -411,8 +431,8 @@ def normalizar_datos(form: dict[str, str], hoy: date | None = None) -> dict[str,
         cronograma.append({"entregable": entregable, "fecha": valor})
     datos["cronograma"] = cronograma
     equipo = [" ".join(linea.split()) for linea in _texto(form.get("equipo")).splitlines() if linea.strip()]
-    if len(equipo) > 12 or any(len(n) > 120 for n in equipo):
-        raise ValueError("Equipo de auditoría: hasta 12 integrantes de 120 caracteres")
+    if len(equipo) > MAX_EQUIPO or any(len(n) > 120 for n in equipo):
+        raise ValueError(f"Equipo de auditoría: hasta {MAX_EQUIPO} integrantes de 120 caracteres")
     datos["equipo"] = equipo
     return datos
 
@@ -426,6 +446,27 @@ def formulario_desde(datos: dict[str, Any]) -> dict[str, str]:
     form.update({f"cronograma_{i}": fechas.get(e, "") for i, e in enumerate(ENTREGABLES)})
     form["equipo"] = "\n".join(datos.get("equipo") or [])
     return form
+
+
+def texto_entrega(mes: int, anio: int) -> str:
+    """Fecha de entrega del cronograma, como en la carta: "Hasta febrero 2027"."""
+    return f"Hasta {_MESES[mes - 1]} {anio}"
+
+
+def leer_entrega(texto: str) -> tuple[int, int] | None:
+    """(mes, año) de un texto "Hasta febrero 2027"; None si tiene otro formato."""
+    m = re.fullmatch(r"hasta\s+([a-záéíóú]+)\s+(\d{4})", _texto(texto).lower())
+    if not m or m.group(1) not in _MESES:
+        return None
+    return _MESES.index(m.group(1)) + 1, int(m.group(2))
+
+
+def cronograma_predeterminado(anio_auditado: Any) -> list[dict[str, str]]:
+    """Entregas del año siguiente al auditado, en los meses de la carta de
+    Auddit; sin año de auditoría quedan sin fecha."""
+    anio = int(anio_auditado) if str(anio_auditado or "").isdigit() else None
+    return [{"entregable": e, "fecha": texto_entrega(mes, anio + 1) if anio else ""}
+            for e, mes in ENTREGAS_PREDETERMINADAS]
 
 
 def texto_inventario(desde: str, hasta: str) -> str:
@@ -448,28 +489,45 @@ def completar_derivados(datos: dict[str, Any], sugeridos: dict[str, tuple[str, s
     """Completa lo que los documentos usan y el paso 1 no pide: los
     certificados y el último ejercicio cerrado se refieren al año anterior al
     de auditoría (en el ejemplo del proceso, auditoría 2026 y certificados
-    2025), el texto del inventario sale de su rango, y el cargo y la
-    nacionalidad del representante del levantamiento cuando constan."""
+    2025), el texto del inventario sale de su rango, y la nacionalidad del
+    representante del levantamiento cuando consta."""
     anio = datos.get("anio_auditado")
     datos["anio_certificados"] = datos["anio_cerrado"] = anio - 1 if anio else None
     datos["fechas_inventario"] = texto_inventario(datos.get("inventario_desde") or "",
                                                   datos.get("inventario_hasta") or "")
-    for campo in ("representante_cargo", "representante_nacionalidad", "representante_ciudad"):
+    for campo in ("representante_nacionalidad", "representante_ciudad"):
         if not datos.get(campo) and campo in sugeridos:
             datos[campo] = sugeridos[campo][0]
-    datos["representante_cargo"] = datos.get("representante_cargo") or CARGO_REPRESENTANTE
-    datos["auddit_representante"] = datos.get("auddit_representante") or AUDDIT_REPRESENTANTE
-    datos["auddit_cargo"] = datos.get("auddit_cargo") or AUDDIT_CARGO
     return datos
 
 
-def faltantes(datos: dict[str, Any], *, para_correo: bool = False) -> list[str]:
-    """Datos del paso 1 que faltan para generar los documentos (o, para
-    preparar el correo, también el destinatario)."""
+def _vacios(datos: dict[str, Any], campos: tuple[str, ...]) -> list[str]:
     etiquetas = {**{c: e for c, (e, _l) in CAMPOS_TEXTO.items()}, **CAMPOS_ANIO, **CAMPOS_FECHA,
                  **ETIQUETAS_FORMULARIO}
-    campos = OBLIGATORIOS + (OBLIGATORIOS_CORREO if para_correo else ())
     return [etiquetas[c] for c in campos if datos.get(c) in (None, "")]
+
+
+def faltantes_paso1(datos: dict[str, Any]) -> list[str]:
+    """Campos del paso 1 sin completar: con todos, se pasa al paso 2."""
+    return _vacios(datos, FORMULARIO)
+
+
+def faltantes_carta(datos: dict[str, Any]) -> list[str]:
+    """Requisitos de la carta de encargo sin completar (modal del paso 2)."""
+    lista = _vacios(datos, FORMULARIO_CARTA)
+    if not datos.get("equipo"):
+        lista.append("Equipo de auditoría")
+    fechas = {c.get("entregable"): c.get("fecha") for c in datos.get("cronograma") or []}
+    if any(not fechas.get(e) for e in ENTREGABLES):
+        lista.append("Fechas del cronograma de entrega de informes")
+    return lista
+
+
+def faltantes(datos: dict[str, Any], *, para_correo: bool = False) -> list[str]:
+    """Todo lo que falta para generar los documentos: el paso 1 y los
+    requisitos de cada documento (y, para el correo, el destinatario)."""
+    return (faltantes_paso1(datos) + faltantes_carta(datos)
+            + (_vacios(datos, OBLIGATORIOS_CORREO) if para_correo else []))
 
 
 def validar_items(marcas: dict[tuple[int, int], dict[str, Any]]) -> None:
@@ -554,7 +612,9 @@ def estado_proceso(req: dict[str, Any]) -> dict[str, Any]:
     paquete_vigente = req["paquetes"][0]["id"] if generado and not req["desactualizado"] else None
     correo_vigente = any(row_get(e, "paquete_id") == paquete_vigente and
                          not row_get(e, "registro_historico", 0) for e in correo) if paquete_vigente else False
-    datos_ok = bool(req["confirmado"]) and not req["faltantes"]
+    # El paso 1 se cumple con sus campos; generar exige además los requisitos
+    # de cada documento (req["faltantes"] los incluye).
+    datos_ok = bool(req["confirmado"]) and not req.get("faltantes_paso1", req["faltantes"])
     pasos = [
         ("datos", "Datos del requerimiento", datos_ok),
         ("generacion", "Documentos generados", generado and not req["desactualizado"]),
@@ -563,7 +623,8 @@ def estado_proceso(req: dict[str, Any]) -> dict[str, Any]:
     siguiente = next((clave for clave, _l, hecho in pasos if not hecho), None)
     return {
         "pasos": [{"clave": c, "label": l, "hecho": h, "actual": c == siguiente} for c, l, h in pasos],
-        "puede_generar": datos_ok,
+        "paso1_completo": datos_ok,
+        "puede_generar": datos_ok and not req["faltantes"],
         "generado": generado,
         "desactualizado": generado and req["desactualizado"],
         "correo_enviado": correo_vigente,

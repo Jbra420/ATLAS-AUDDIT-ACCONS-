@@ -24,7 +24,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from services.normalizacion import normalizar_texto
-from services.pdf_simple import PdfDocumento
+from services.pdf_simple import CARTA, PdfDocumento
 from services.requerimiento import (
     CUADROS,
     FILAS_MINIMAS_CUADRO,
@@ -40,6 +40,10 @@ from services.requerimiento import (
 from services.resumen_excel import _poner
 
 LOGO_AUDDIT = Path(__file__).resolve().parent.parent / "static" / "logoauddit.jpeg"
+# Logo de la carta de encargo 2026 de Auddit (el que llevan sus cartas), que
+# va arriba a la derecha de cada página con el tamaño y la posición del original.
+LOGO_CARTA = Path(__file__).resolve().parent.parent / "static" / "logo_auddit_carta.jpg"
+ANCHO_LOGO_CARTA = 242.5
 
 
 # Dato que el paso 1 no pide y el levantamiento no trae: queda la línea para
@@ -54,16 +58,20 @@ def _anio_fin(datos: dict[str, Any]) -> str:
 # ── Carta de encargo ─────────────────────────────────────────────────────
 
 def build_carta(datos: dict[str, Any], logo: bytes | None = None) -> bytes:
+    """Carta de encargo con el formato de la carta 2026 de Auddit: tamaño
+    carta y su logo en cada página."""
     empresa = normalizar_nombre(datos["empresa"])
     representante = representante_completo(datos)
-    doc = PdfDocumento()
-    logo = logo if logo is not None else (LOGO_AUDDIT.read_bytes() if LOGO_AUDDIT.exists() else None)
+    doc = PdfDocumento(margen_x=66, tamano=CARTA)
+    logo = logo if logo is not None else (LOGO_CARTA.read_bytes() if LOGO_CARTA.exists() else None)
     if logo:
-        doc.imagen_jpeg(logo, 150, "derecha", despues=10)
+        doc.cabecera_jpeg(logo, ANCHO_LOGO_CARTA, despues=18)
+    margen_titulo = 55  # el título va en un bloque más angosto, centrado
     doc.parrafo(
         f"CARTA DE ENCARGO DE AUDITORÍA A LOS ESTADOS FINANCIEROS DE LA EMPRESA {empresa}, DEL AÑO QUE "
         f"TERMINA AL 31 DE DICIEMBRE DE {datos['anio_auditado']}",
-        negrita=True, alineacion="centro", tamano=11, despues=18,
+        negrita=True, alineacion="centro", tamano=11, despues=22,
+        sangria=margen_titulo, ancho=doc.util - margen_titulo,
     )
     doc.parrafo(fecha_larga(datos["fecha_documentos"]), negrita=True, alineacion="derecha", despues=14)
     for linea in (f"A LA DIRECCION DE {empresa}", f"ATT. {representante}", "Representante Legal", "Ciudad."):
@@ -78,6 +86,7 @@ def build_carta(datos: dict[str, Any], logo: bytes | None = None) -> bytes:
 
     def seccion(titulo: str, *parrafos: str) -> None:
         doc.espacio(4)
+        doc.mantener(110)  # el título y sus primeras líneas van juntos
         doc.parrafo(titulo, negrita=True, alineacion="izquierda", despues=6)
         for texto in parrafos:
             doc.parrafo(texto)
@@ -125,7 +134,8 @@ def build_carta(datos: dict[str, Any], logo: bytes | None = None) -> bytes:
     seccion("4. Equipo de auditoría",
             "El equipo de trabajo designado para la ejecución del encargo estará conformado por:")
     for integrante in datos.get("equipo") or [_EN_BLANCO]:
-        doc.vineta(integrante)
+        doc.vineta(integrante, sangria=12, despues=1)
+    doc.espacio(6)
     seccion(
         "5. Planificación y cronograma",
         "El proceso de auditoria preliminar se realizará con información financiera con corte al "
@@ -161,11 +171,13 @@ def build_carta(datos: dict[str, Any], logo: bytes | None = None) -> bytes:
         "La suscripción de este documento evidencia el reconocimiento y aceptación de las responsabilidades de "
         "la Administración y del auditor descritas anteriormente.",
     )
+    # Como en la carta de Auddit: sin línea (se firma electrónicamente) y
+    # nombre, cargo y empresa espaciados.
     doc.firmas([
         [representante, normalizar_nombre(datos["representante_cargo"]), empresa],
         [normalizar_nombre(datos["auddit_representante"]), normalizar_nombre(datos["auddit_cargo"]),
          "AUDDIT S.A.S."],
-    ])
+    ], con_linea=False, espacio_firma=90, interlineado=2.3)
     return doc.bytes()
 
 

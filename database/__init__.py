@@ -135,6 +135,7 @@ from database.requerimiento import (
     review_requerimiento_adjunto,
     ruta_archivo,
     save_requerimiento_adjunto,
+    save_requerimiento_carta,
     save_requerimiento_datos,
     save_requerimiento_destinatario,
     save_requerimiento_detalle,

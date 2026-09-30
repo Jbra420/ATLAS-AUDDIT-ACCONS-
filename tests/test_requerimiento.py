@@ -26,6 +26,7 @@ from database import add_administrator, authenticate, connect, create_company_au
 from services.requerimiento import (
     AUDDIT_REPRESENTANTE,
     CUADROS,
+    EQUIPO_PREDETERMINADO,
     DOCUMENTOS,
     FORMULARIO,
     HOJAS,
@@ -70,12 +71,17 @@ DATOS = {
     "correo_para_nombre": "Contadora", "correo_para": "contadora@cliente.ec", "correo_cc": "fparra@accons.ec",
     "equipo": "Mgtr. Fernando Parra Suarez\nLcda. Camila Guevara Lucero",
     **{f"cronograma_{i}": f"Hasta {m} 2027" for i, m in enumerate(("febrero", "marzo", "abril", "julio"))},
+    # Lo mismo como lo envía el formulario del paso 1 (lista del equipo; mes y año de cada entrega).
+    "equipo_integrante": ["Mgtr. Fernando Parra Suarez", "Lcda. Camila Guevara Lucero"],
+    **{f"entrega_mes_{i}": m for i, m in enumerate((2, 3, 4, 7))},
+    **{f"entrega_anio_{i}": 2027 for i in range(4)},
 }
 
 
 def _form(campos: dict | None = None, archivos: dict | None = None, **extra) -> FormData:
     todos = {**(campos or {}), **extra}
-    return FormData({k: [str(v)] for k, v in todos.items()}, archivos or {})
+    return FormData({k: [str(x) for x in v] if isinstance(v, list) else [str(v)] for k, v in todos.items()},
+                    archivos or {})
 
 
 class _Caso(BaseTemporal):
@@ -95,6 +101,7 @@ class _Caso(BaseTemporal):
             "get_audit_context": lambda a: expedientes.get_audit_context(a, db),
             "save_requerimiento_datos": lambda a, d, u: R.save_requerimiento_datos(a, d, u, db),
             "save_requerimiento_destinatario": lambda a, d: R.save_requerimiento_destinatario(a, d, db),
+            "save_requerimiento_carta": lambda a, d: R.save_requerimiento_carta(a, d, db),
             "save_requerimiento_items": lambda a, m: R.save_requerimiento_items(a, m, db),
             "save_requerimiento_detalle": lambda a, s, f: R.save_requerimiento_detalle(a, s, f, db),
             "get_requerimiento_paquete": lambda r: R.get_requerimiento_paquete(r, db),
@@ -122,7 +129,8 @@ class _Caso(BaseTemporal):
         return expedientes.get_audit(self.audit_id, self.auditor, self.db)
 
     def accion(self, ruta: str, form: FormData) -> str:
-        return router.REQUERIMIENTO_POSTS[ruta][1](form, self.audit, self.auditor)
+        resultado = router.REQUERIMIENTO_POSTS[ruta][1](form, self.audit, self.auditor)
+        return resultado[0] if isinstance(resultado, tuple) else resultado
 
     def contrato(self, revisar: bool = True):
         mensaje = self.accion("/auditor/requerimiento/contrato", _form(audit_id=self.audit_id,
@@ -139,6 +147,10 @@ class _Caso(BaseTemporal):
     def confirmar(self, **cambios):
         return self.accion("/auditor/requerimiento/datos", _form({**DATOS, **cambios}))
 
+    def carta(self, **cambios) -> str:
+        """Guarda los requisitos de la carta (modal del paso 2)."""
+        return self.accion("/auditor/requerimiento/carta", _form({**DATOS, **cambios}))
+
     def destinatario(self, **campos) -> str:
         return self.accion("/auditor/requerimiento/destinatario", _form(campos))
 
@@ -153,6 +165,7 @@ class _Caso(BaseTemporal):
 
     def listo(self):
         self.confirmar()
+        self.carta()
         self.generar()
 
 
@@ -192,7 +205,8 @@ class TestNavegacion(_Caso):
         self.assertEqual(pasos.count('<li class="req-step'), 3)
         for fuera in ("Contrato", "WhatsApp", "recibidos"):
             self.assertNotIn(fuera, pasos)
-        self.assertIn("confirmar los datos del paso 1", pagina)
+        self.assertIn("Complete y confirme los datos del paso 1 para continuar", pagina)
+        self.assertNotIn('id="req-modal-carta"', pagina, "Sin paso 1 no se editan requisitos")
         self.assertNotIn('action="/auditor/requerimiento/generar"', pagina)
 
     def test_ruc_del_requerimiento_usa_el_de_la_auditoria(self):
@@ -221,6 +235,21 @@ class TestNavegacion(_Caso):
 class TestPaso1Datos(_Caso):
     def _seccion_datos(self) -> str:
         return self.pagina(self.auditor).split('id="datos"', 1)[1].split("</section>", 1)[0]
+
+    def test_vista_compacta_mantiene_el_formulario_y_la_vista_documental(self):
+        datos = self._seccion_datos()
+        self.assertIn('class="req-datos-overview"', datos)
+        self.assertIn('data-resumen="empresa"', datos)
+        self.assertIn('data-resumen="representante_nombre"', datos)
+        self.assertIn('<details class="req-datos-editor" id="req-datos-editor">', datos)
+        self.assertIn('<details class="req-datos-preview">', datos)
+        self.assertIn('id="req-datos-form"', datos)
+        self.assertIn('name="fecha_corte"', datos)
+        self.assertIn('name="inventario_desde"', datos)
+        self.assertNotIn('name="equipo_integrante"', datos, "Los requisitos de la carta van en el paso 2")
+        self.assertIn('data-resumen="ruc"', datos)
+        self.assertIn('pendiente(s)', datos)
+        self.assertIn('Confirmar y continuar', datos)
 
     def test_formulario_con_los_campos_de_la_hoja_de_datos_y_calendarios(self):
         pagina = self.pagina(self.auditor)
@@ -258,9 +287,9 @@ class TestPaso1Datos(_Caso):
         self.assertEqual((guardado["anio_certificados"], guardado["anio_cerrado"]), (2025, 2025))
         self.assertEqual(guardado["fechas_inventario"], "entre el 15 de octubre y el 15 de diciembre")
         self.assertEqual(guardado["correo_para"], "contadora@cliente.ec")
-        self.assertEqual(guardado["representante_cargo"], "GERENTE GENERAL")
+        self.assertEqual(guardado["representante_cargo"], "GERENTE GENERAL", "Cargo del levantamiento")
         self.assertEqual(guardado["representante_nacionalidad"], "ECUATORIANA")
-        self.assertEqual(guardado["auddit_representante"], AUDDIT_REPRESENTANTE)
+        self.assertEqual(guardado["auddit_representante"], AUDDIT_REPRESENTANTE, "Propuesta de Auddit")
         hoja = self._seccion_datos().split("req-hoja", 1)[1]
         for texto in ("01 de septiembre de 2026", "30 de junio de 2026", "entre el 15 de octubre y el 15 de diciembre"):
             self.assertIn(texto, hoja)
@@ -271,6 +300,14 @@ class TestPaso1Datos(_Caso):
         self.assertEqual((guardado["anio_certificados"], guardado["anio_cerrado"]), (2026, 2026))
         with self.assertRaisesRegex(ValueError, "año auditado"):
             self.confirmar(anio_auditado="2026", fecha_corte="2027-06-30")
+
+    def test_con_el_paso_1_completo_se_pasa_al_paso_2(self):
+        accion = router.REQUERIMIENTO_POSTS["/auditor/requerimiento/datos"][1]
+        incompleto = accion(_form({**DATOS, "fecha_corte": ""}), self.audit, self.auditor)
+        self.assertIsInstance(incompleto, str, "Con datos pendientes se queda en el paso 1")
+        mensaje, seccion = accion(_form(DATOS), self.audit, self.auditor)
+        self.assertEqual(seccion, "documentos")
+        self.assertIn("Datos confirmados", mensaje)
 
     def test_rango_de_inventario_invertido(self):
         with self.assertRaisesRegex(ValueError, "fecha final no puede ser anterior"):
@@ -305,6 +342,84 @@ class TestPaso1Datos(_Caso):
         self.assertIn("01 de septiembre del 2026", carta)
         self.assertIn("31 de julio del 2026", carta)
         self.assertIn("entre el 15 de octubre y el 15 de diciembre", carta)
+
+
+class TestCartaDeEncargo(_Caso):
+    def _carta(self):
+        self.generar()
+        ruta = R.ruta_archivo(self.contexto()["paquetes"][0]["archivos"]["carta"]["ruta"], self.adjuntos)
+        lector = pypdf.PdfReader(ruta)
+        return lector, " ".join(p.extract_text() for p in lector.pages).replace("\n", " ")
+
+    def test_propuesta_de_la_carta_de_auddit(self):
+        add_administrator(self.audit_id, CEDULA, "SERPA GARCIA EDUARDO", "ECUATORIANA", "GERENTE GENERAL",
+                          self.db, user_id=self.auditor["id"])
+        self.confirmar()
+        pagina = self.pagina(self.auditor)
+        documentos = pagina.split('id="documentos"', 1)[1].split("</section>", 1)[0]
+        self.assertIn("openModal('req-modal-carta')", documentos)
+        self.assertIn("Requisitos completos", documentos, "Con la propuesta de Auddit no falta nada")
+        datos = pagina.split('id="req-modal-carta"', 1)[1]
+        for nombre in EQUIPO_PREDETERMINADO:
+            self.assertIn(f'name="equipo_integrante" value="{nombre}"', datos)
+        self.assertIn('name="auddit_representante" value="FERNANDO PARRA SUAREZ"', datos)
+        self.assertIn('name="auddit_cargo" value="GERENTE"', datos)
+        self.assertIn('name="representante_cargo" value="GERENTE GENERAL"', datos, "Cargo del levantamiento")
+        self.assertIn("Predeterminado", datos)
+        cronograma = datos.split("req-cronograma", 1)[1]
+        for i, mes in enumerate((2, 3, 4, 7)):
+            fila = cronograma.split(f'name="entrega_mes_{i}"', 1)[1].split("</tr>", 1)[0]
+            self.assertIn(f'<option value="{mes}" selected>', fila)
+            self.assertIn('<option value="2027" selected>', fila)
+        self.assertIn("lista_editable.js", self.pagina(self.auditor))
+
+    def test_requisitos_solo_despues_del_paso_1(self):
+        with self.assertRaisesRegex(ValueError, "Confirme primero los datos del paso 1"):
+            self.carta()
+        confirmado = self.contexto()
+        self.confirmar()
+        antes = self.contexto()["guardado"]["confirmado_at"]
+        self.carta(auddit_cargo="Socio")
+        self.assertEqual(self.contexto()["guardado"]["confirmado_at"], antes, "No reconfirma el paso 1")
+        self.assertIsNone(confirmado["guardado"])
+
+    def test_equipo_se_edita_agrega_y_quita(self):
+        self.confirmar()
+        self.carta(equipo_integrante=["Mgtr. Fernando Parra Suarez", " ", "Ing. Nuevo Integrante",
+                                      "Lcda. Otra Persona"])
+        equipo = json.loads(self.contexto()["guardado"]["equipo_json"])
+        self.assertEqual(equipo, ["Mgtr. Fernando Parra Suarez", "Ing. Nuevo Integrante", "Lcda. Otra Persona"])
+        self.carta(equipo_integrante=[])
+        with self.assertRaisesRegex(ValueError, "Equipo de auditoría"):
+            self.generar()
+        with self.assertRaisesRegex(ValueError, "hasta 12 integrantes"):
+            self.carta(equipo_integrante=[f"Integrante {i}" for i in range(13)])
+
+    def test_fecha_de_entrega_se_modifica(self):
+        self.confirmar()
+        self.carta(entrega_mes_0="5", entrega_anio_0="2028")
+        cronograma = json.loads(self.contexto()["guardado"]["cronograma_json"])
+        self.assertEqual(cronograma[0], {"entregable": "Informe de Control Interno", "fecha": "Hasta mayo 2028"})
+        with self.assertRaisesRegex(ValueError, "elija el mes y el año"):
+            self.carta(entrega_mes_1="13")
+        self.carta(entrega_mes_2="", entrega_anio_2="")
+        with self.assertRaisesRegex(ValueError, "cronograma"):
+            self.generar()
+
+    def test_pdf_con_el_formato_de_la_carta_de_auddit(self):
+        self.confirmar(representante_nombre="Maria Daniela Cando Suarez")
+        self.carta(representante_cargo="Gerente", entrega_mes_3="8", auddit_representante="Otra Firma",
+                   auddit_cargo="Socia", equipo_integrante=["Mgtr. Fernando Parra Suarez", "Ing. Nuevo Integrante"])
+        lector, texto = self._carta()
+        self.assertEqual([float(v) for v in lector.pages[0].mediabox[2:]], [612.0, 792.0], "Tamaño carta")
+        for pagina in lector.pages:
+            self.assertEqual(len(pagina.images), 1, "El logo de Auddit va en cada página")
+        for esperado in ("ATT. MARIA DANIELA CANDO SUAREZ", "01 de septiembre del 2026",
+                         "corte al 31 de julio del 2026", "entre el 15 de octubre y el 15 de diciembre",
+                         "Ing. Nuevo Integrante", "Hasta agosto 2027", "OTRA FIRMA", "SOCIA",
+                         "CONSTRUCTORA ESGINGENIERIA S.A.S."):
+            self.assertIn(esperado, texto)
+        self.assertNotIn("Lcda. Camila Guevara Lucero", texto, "Se quitó del equipo")
 
 
 class TestAlmacenamientoArchivos(_Caso):
@@ -372,7 +487,7 @@ class TestContratoYDatos(_Caso):
 
     def test_datos_incompletos_bloquean_la_generacion(self):
         mensaje = self.confirmar(representante_identificacion="", inventario_hasta="")
-        self.assertIn("Pendiente", mensaje)
+        self.assertIn("Para continuar complete", mensaje)
         with self.assertRaisesRegex(ValueError, "Levantamiento de inventarios: hasta.*Cédula del representante"):
             self.generar()
 
@@ -1121,7 +1236,9 @@ class TestValidaciones(unittest.TestCase):
         datos = normalizar_datos(DATOS)
         self.assertEqual(faltantes(datos), [])
         self.assertEqual(faltantes(normalizar_datos({**DATOS, "inventario_hasta": "", "equipo": ""})),
-                         ["Levantamiento de inventarios: hasta"], "Solo se exigen los campos del paso 1")
+                         ["Levantamiento de inventarios: hasta", "Equipo de auditoría"])
+        self.assertEqual(faltantes(normalizar_datos({**DATOS, "cronograma_2": "", "auddit_cargo": ""})),
+                         ["Firma de Auddit: cargo", "Fechas del cronograma de entrega de informes"])
         self.assertEqual(faltantes(datos, para_correo=True), [])
         self.assertEqual(faltantes({**datos, "correo_para": ""}, para_correo=True), ["Correo del destinatario"])
         with self.assertRaisesRegex(ValueError, "no es un correo válido"):
