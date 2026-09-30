@@ -20,6 +20,7 @@ from services.requerimiento import (
     ADJUNTOS,
     RECEPCIONES,
     CAMPOS_ANIO,
+    CAMPOS_CORREO,
     CAMPOS_FECHA,
     CAMPOS_TEXTO,
     CUADROS,
@@ -195,6 +196,22 @@ def save_requerimiento_datos(
             (audit_id, *valores, json.dumps(datos.get("cronograma") or [], ensure_ascii=False),
              json.dumps(datos.get("equipo") or [], ensure_ascii=False), user_id, ts, ts),
         )
+        _touch_audit(conn, audit_id)
+
+
+def save_requerimiento_destinatario(
+    audit_id: int, datos: dict[str, str], db_path: Path | str = DB_PATH,
+) -> None:
+    """Destinatario del correo (ya validado por normalizar_datos). Va aparte de
+    los datos del requerimiento: no entra en los documentos."""
+    with connect(db_path) as conn:
+        cambiados = conn.execute(
+            f"""UPDATE requerimientos SET {", ".join(f"{c} = ?" for c in CAMPOS_CORREO)}, updated_at = ?
+                WHERE audit_id = ?""",  # noqa: S608 — columnas constantes del módulo
+            (*(datos.get(c) or None for c in CAMPOS_CORREO), now_iso(), audit_id),
+        ).rowcount
+        if not cambiados:
+            raise ValueError("Confirme primero los datos del requerimiento")
         _touch_audit(conn, audit_id)
 
 

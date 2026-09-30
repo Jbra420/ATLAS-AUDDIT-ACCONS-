@@ -287,6 +287,8 @@ CREATE TABLE IF NOT EXISTS requerimientos (
     fecha_documentos TEXT,
     fecha_corte TEXT,
     fechas_inventario TEXT,
+    inventario_desde TEXT,
+    inventario_hasta TEXT,
     cronograma_json TEXT NOT NULL DEFAULT '[]',
     equipo_json TEXT NOT NULL DEFAULT '[]',
     auddit_representante TEXT,

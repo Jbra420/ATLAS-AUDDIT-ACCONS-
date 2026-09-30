@@ -198,6 +198,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # validación de lo recibido. Las filas previas quedan sin generación
     # (paquete_id NULL) y sin revisar: nunca se dan por revisadas.
     req_columns = {
+        # Rango tentativo del levantamiento de inventarios (antes, solo texto).
+        "requerimientos": [("inventario_desde", "TEXT"), ("inventario_hasta", "TEXT")],
         "requerimiento_archivos": [("paquete_id", "INTEGER REFERENCES requerimiento_paquetes(id)")],
         "requerimiento_envios": [
             ("paquete_id", "INTEGER REFERENCES requerimiento_paquetes(id)"),

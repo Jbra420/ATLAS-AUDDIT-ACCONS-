@@ -1150,7 +1150,7 @@ class TestHTTPRequerimientoInicial(unittest.TestCase):
         from database import (get_audit, get_requerimiento_context, review_requerimiento_adjunto,
                               save_requerimiento_adjunto, save_requerimiento_datos)
         from services.pdf_simple import PdfDocumento
-        from services.requerimiento import normalizar_datos
+        from services.requerimiento import completar_derivados, normalizar_datos
         cls.generada = create_company_audit(
             f"Empresa requerimiento HTTP generada {time.time_ns()}", "0190377210001", "Cuenca", "", "2026",
             ids["http_auditor"], ids["http_admin"],
@@ -1160,15 +1160,15 @@ class TestHTTPRequerimientoInicial(unittest.TestCase):
         cls.contrato_id = save_requerimiento_adjunto(cls.generada, "contrato", "contrato.pdf", doc.bytes(), "pdf",
                                                      ids["http_auditor"])
         review_requerimiento_adjunto(cls.generada, cls.contrato_id, "conforme", "", ids["http_auditor"])
-        save_requerimiento_datos(cls.generada, normalizar_datos({
+        save_requerimiento_datos(cls.generada, completar_derivados(normalizar_datos({
             "empresa": "Constructora HTTP S.A.S.", "ruc": "0190377210001", "representante_nombre": "Eduardo Serpa",
             "representante_cargo": "Gerente", "representante_identificacion": "0104926555",
             "representante_nacionalidad": "Ecuatoriana", "representante_ciudad": "Cuenca", "anio_auditado": "2026",
             "anio_certificados": "2025", "anio_cerrado": "2025", "fecha_documentos": "2026-09-01",
-            "fecha_corte": "2026-07-31", "fechas_inventario": "en diciembre", "auddit_representante": "Mgtr. Parra",
+            "fecha_corte": "2026-07-31", "inventario_desde": "2026-12-01", "inventario_hasta": "2026-12-15", "auddit_representante": "Mgtr. Parra",
             "auddit_cargo": "Gerente", "correo_para_nombre": "Contadora", "correo_para": "c@cliente.ec",
             "equipo": "Auditor HTTP", **{f"cronograma_{i}": "2027" for i in range(4)},
-        }), ids["http_auditor"])
+        }), {}), ids["http_auditor"])
         with connect() as conn:
             auditor = conn.execute("SELECT * FROM users WHERE id = ?", (ids["http_auditor"],)).fetchone()
         router.REQUERIMIENTO_POSTS["/auditor/requerimiento/generar"][1]({}, get_audit(cls.generada, auditor), auditor)
@@ -1179,6 +1179,10 @@ class TestHTTPRequerimientoInicial(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("<title>Requerimiento inicial | Atlas</title>", body)
         self.assertIn(f'href="/auditor/radar?audit_id={self.audit_id}"', body)
+        self.assertIn('<script src="/static/js/calendario.js" defer></script>', body)
+        status, script = _get("/static/js/calendario.js", self.auditor)
+        self.assertEqual(status, 200)
+        self.assertIn("function Calendario", script)
         status, body = _get(f"/auditor/radar?audit_id={self.audit_id}", self.auditor)
         self.assertIn("<title>Levantamiento de información | Atlas</title>", body)
         self.assertIn(f'href="/auditor/requerimiento?audit_id={self.audit_id}"', body)
@@ -1229,7 +1233,7 @@ class TestHTTPRequerimientoInicial(unittest.TestCase):
             self.assertEqual(resp.status, 200)
             self.assertIn(b"X-Unsent: 1", resp.read())
 
-    def test_generar_sin_contrato_vuelve_con_error(self):
+    def test_generar_sin_datos_vuelve_con_error(self):
         token = _csrf_token(f"/auditor/requerimiento?audit_id={self.audit_id}", self.auditor)
         status, location, _ = _post_raw("/auditor/requerimiento/generar",
                                         {"_csrf": token, "audit_id": self.audit_id}, self.auditor)

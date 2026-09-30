@@ -1,11 +1,12 @@
 """
 services/requerimiento.py — Reglas del Requerimiento inicial (segundo paso del proceso).
 
-Con la información general de la empresa y el contrato de auditoría firmado,
-el auditor prepara y envía al cliente cuatro documentos: la carta de encargo,
-los certificados de compañías relacionadas y de paraísos fiscales, y la
-solicitud inicial de información en Excel. Después avisa por WhatsApp y
-registra lo que el cliente devuelve.
+Tres pasos: (1) el auditor confirma los datos del requerimiento, precargados
+del levantamiento, y elige las fechas de la carta, del corte preliminar y del
+levantamiento de inventarios; (2) genera los cuatro documentos: la carta de
+encargo, los certificados de compañías relacionadas y de paraísos fiscales, y
+la solicitud inicial de información en Excel; (3) prepara el correo al
+cliente y registra su envío.
 
 Este módulo no consulta la base: define los documentos, los ítems y cuadros
 del Excel, la precarga desde el levantamiento, las validaciones, el estado del
@@ -235,16 +236,35 @@ CAMPOS_ANIO = {
     "anio_cerrado": "Último ejercicio cerrado (Req. #1, ítems 7 y 14)",
 }
 CAMPOS_FECHA = {
-    "fecha_documentos": "Fecha de los documentos (envío del correo)",
-    "fecha_corte": "Fecha de corte de la auditoría preliminar",
+    "fecha_documentos": "Fecha de la carta de encargo",
+    "fecha_corte": "Corte de la auditoría preliminar",
+    "inventario_desde": "Inicio tentativo del levantamiento de inventarios",
+    "inventario_hasta": "Fin tentativo del levantamiento de inventarios",
 }
-# Todo lo que la carta, los certificados y el Excel necesitan para generarse.
-OBLIGATORIOS = (
-    "empresa", "ruc", "representante_nombre", "representante_cargo", "representante_identificacion",
-    "representante_nacionalidad", "representante_ciudad", "anio_auditado", "anio_certificados", "anio_cerrado",
-    "fecha_documentos", "fecha_corte", "fechas_inventario", "auddit_representante", "auddit_cargo",
+# Lo que el auditor completa en el paso 1, en el orden de la hoja de datos de
+# Auddit. Es también todo lo que se exige para generar: el resto de campos se
+# deriva de estos (completar_derivados) o del levantamiento.
+FORMULARIO = (
+    "anio_auditado", "empresa", "representante_nombre", "fecha_documentos", "fecha_corte",
+    "inventario_desde", "inventario_hasta", "representante_identificacion", "ruc",
 )
+OBLIGATORIOS = FORMULARIO
+# El destinatario se registra en el paso del correo: no entra en los documentos.
+CAMPOS_CORREO = ("correo_para_nombre", "correo_para", "correo_cc")
 OBLIGATORIOS_CORREO = ("correo_para_nombre", "correo_para")
+# Etiquetas del paso 1 (las de la hoja de datos de Auddit).
+ETIQUETAS_FORMULARIO = {
+    "anio_auditado": "Año de auditoría",
+    "empresa": "Empresa",
+    "representante_nombre": "Representante legal",
+    "fecha_documentos": "Fecha carta de encargo",
+    "fecha_corte": "Corte auditoría preliminar",
+    "inventario_desde": "Levantamiento de inventarios: desde",
+    "inventario_hasta": "Levantamiento de inventarios: hasta",
+    "representante_identificacion": "Cédula del representante",
+    "ruc": "RUC de la empresa",
+}
+CARGO_REPRESENTANTE = "GERENTE GENERAL"
 
 _MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre",
           "noviembre", "diciembre")
@@ -379,6 +399,9 @@ def normalizar_datos(form: dict[str, str], hoy: date | None = None) -> dict[str,
         raise ValueError(f"La fecha de corte debe pertenecer al año auditado ({datos['anio_auditado']})")
     if datos["anio_cerrado"] and datos["anio_auditado"] and datos["anio_cerrado"] > datos["anio_auditado"]:
         raise ValueError("El último ejercicio cerrado no puede ser posterior al año auditado")
+    desde, hasta = datos["inventario_desde"], datos["inventario_hasta"]
+    if desde and hasta and desde > hasta:
+        raise ValueError("Levantamiento de inventarios: la fecha final no puede ser anterior a la inicial")
 
     cronograma = []
     for i, entregable in enumerate(ENTREGABLES):
@@ -394,17 +417,59 @@ def normalizar_datos(form: dict[str, str], hoy: date | None = None) -> dict[str,
     return datos
 
 
+def formulario_desde(datos: dict[str, Any]) -> dict[str, str]:
+    """Datos efectivos como los enviaría el formulario completo, para volver a
+    validarlos con normalizar_datos junto con lo que el auditor cambió."""
+    form = {campo: "" if datos.get(campo) is None else str(datos[campo])
+            for campo in (*CAMPOS_TEXTO, *CAMPOS_ANIO, *CAMPOS_FECHA)}
+    fechas = {c.get("entregable"): c.get("fecha") or "" for c in datos.get("cronograma") or []}
+    form.update({f"cronograma_{i}": fechas.get(e, "") for i, e in enumerate(ENTREGABLES)})
+    form["equipo"] = "\n".join(datos.get("equipo") or [])
+    return form
+
+
+def texto_inventario(desde: str, hasta: str) -> str:
+    """Rango tentativo como lo citan la carta y el correo: "entre el 15 de
+    octubre y el 15 de diciembre" (con el año solo si el rango cruza de año)."""
+    if not desde or not hasta:
+        return ""
+    inicio, fin = date.fromisoformat(desde), date.fromisoformat(hasta)
+
+    def dia(f: date, con_anio: bool) -> str:
+        return f"{f.day} de {_MESES[f.month - 1]}" + (f" de {f.year}" if con_anio else "")
+
+    cruza = inicio.year != fin.year
+    if inicio == fin:
+        return f"el {dia(inicio, False)}"
+    return f"entre el {dia(inicio, cruza)} y el {dia(fin, cruza)}"
+
+
+def completar_derivados(datos: dict[str, Any], sugeridos: dict[str, tuple[str, str]]) -> dict[str, Any]:
+    """Completa lo que los documentos usan y el paso 1 no pide: los
+    certificados y el último ejercicio cerrado se refieren al año anterior al
+    de auditoría (en el ejemplo del proceso, auditoría 2026 y certificados
+    2025), el texto del inventario sale de su rango, y el cargo y la
+    nacionalidad del representante del levantamiento cuando constan."""
+    anio = datos.get("anio_auditado")
+    datos["anio_certificados"] = datos["anio_cerrado"] = anio - 1 if anio else None
+    datos["fechas_inventario"] = texto_inventario(datos.get("inventario_desde") or "",
+                                                  datos.get("inventario_hasta") or "")
+    for campo in ("representante_cargo", "representante_nacionalidad", "representante_ciudad"):
+        if not datos.get(campo) and campo in sugeridos:
+            datos[campo] = sugeridos[campo][0]
+    datos["representante_cargo"] = datos.get("representante_cargo") or CARGO_REPRESENTANTE
+    datos["auddit_representante"] = datos.get("auddit_representante") or AUDDIT_REPRESENTANTE
+    datos["auddit_cargo"] = datos.get("auddit_cargo") or AUDDIT_CARGO
+    return datos
+
+
 def faltantes(datos: dict[str, Any], *, para_correo: bool = False) -> list[str]:
-    """Datos que faltan para generar los documentos (o para preparar el correo)."""
-    etiquetas = {**{c: e for c, (e, _l) in CAMPOS_TEXTO.items()}, **CAMPOS_ANIO, **CAMPOS_FECHA}
+    """Datos del paso 1 que faltan para generar los documentos (o, para
+    preparar el correo, también el destinatario)."""
+    etiquetas = {**{c: e for c, (e, _l) in CAMPOS_TEXTO.items()}, **CAMPOS_ANIO, **CAMPOS_FECHA,
+                 **ETIQUETAS_FORMULARIO}
     campos = OBLIGATORIOS + (OBLIGATORIOS_CORREO if para_correo else ())
-    lista = [etiquetas[c] for c in campos if datos.get(c) in (None, "")]
-    if not datos.get("equipo"):
-        lista.append("Equipo de auditoría")
-    sin_fecha = [c["entregable"] for c in datos.get("cronograma") or [] if not c.get("fecha")]
-    if len(datos.get("cronograma") or []) < len(ENTREGABLES) or sin_fecha:
-        lista.append("Fechas del cronograma de entrega de informes")
-    return lista
+    return [etiquetas[c] for c in campos if datos.get(c) in (None, "")]
 
 
 def validar_items(marcas: dict[tuple[int, int], dict[str, Any]]) -> None:
@@ -481,38 +546,26 @@ def completado(tipo: str, adjunto: Any) -> bool:
 
 
 def estado_proceso(req: dict[str, Any]) -> dict[str, Any]:
-    """Pasos del requerimiento a partir de lo registrado. req trae: contratos
-    (adjuntos), confirmado, faltantes, paquetes (generaciones, la última
-    primero), desactualizado, envios y recepciones ({tipo: [adjuntos]})."""
-    contrato_ok = any(revisado(c) for c in req["contratos"])
+    """Los tres pasos del requerimiento (datos, documentos y correo) a partir
+    de lo registrado. req trae: confirmado, faltantes, paquetes (generaciones,
+    la última primero), desactualizado y envios."""
     correo = [e for e in req["envios"] if row_get(e, "canal") == "correo"]
-    whatsapp = [e for e in req["envios"] if row_get(e, "canal") == "whatsapp"]
-    recibidos = {tipo for tipo in RECEPCIONES if req["recepciones"].get(tipo)}
-    completos = {tipo for tipo in RECEPCIONES if any(completado(tipo, a) for a in req["recepciones"].get(tipo) or [])}
     generado = bool(req["paquetes"])
     paquete_vigente = req["paquetes"][0]["id"] if generado and not req["desactualizado"] else None
     correo_vigente = any(row_get(e, "paquete_id") == paquete_vigente and
                          not row_get(e, "registro_historico", 0) for e in correo) if paquete_vigente else False
+    datos_ok = bool(req["confirmado"]) and not req["faltantes"]
     pasos = [
-        ("contrato", "Contrato firmado y revisado", contrato_ok),
-        ("datos", "Datos del requerimiento confirmados", bool(req["confirmado"]) and not req["faltantes"]),
-        ("generacion", "Documentos generados con los datos vigentes", generado and not req["desactualizado"]),
-        ("correo", "Correo enviado al cliente", correo_vigente),
-        ("whatsapp", "Cliente notificado por WhatsApp", correo_vigente and bool(whatsapp)),
-        ("recepcion", "Documentos del cliente recibidos y revisados", completos == set(RECEPCIONES)),
+        ("datos", "Datos del requerimiento", datos_ok),
+        ("generacion", "Documentos generados", generado and not req["desactualizado"]),
+        ("correo", "Correo al cliente", correo_vigente),
     ]
     siguiente = next((clave for clave, _l, hecho in pasos if not hecho), None)
     return {
         "pasos": [{"clave": c, "label": l, "hecho": h, "actual": c == siguiente} for c, l, h in pasos],
-        "contrato_revisado": contrato_ok,
-        "contrato_pendiente": bool(req["contratos"]) and not contrato_ok,
-        "puede_generar": contrato_ok and not req["faltantes"],
+        "puede_generar": datos_ok,
         "generado": generado,
         "desactualizado": generado and req["desactualizado"],
-        "recibidos": recibidos,
-        "completos": completos,
-        "pendientes_recepcion": [RECEPCIONES[t][0] for t in RECEPCIONES if t not in completos],
-        "recepcion_parcial": bool(recibidos) and completos != set(RECEPCIONES),
         "correo_enviado": correo_vigente,
     }
 
@@ -524,7 +577,7 @@ def datos_paquete(datos: dict[str, Any], marcas: dict[tuple[int, int], Any], det
     datos confirmados, plantilla, marcas y cuadros. Se guarda con la generación
     y sirve para saber si quedó desactualizada."""
     usados = {
-        **datos, "plantilla": PLANTILLA_VERSION,
+        **{c: v for c, v in datos.items() if c not in CAMPOS_CORREO}, "plantilla": PLANTILLA_VERSION,
         "marcas": [{"hoja": h, "numero": n, **{k: row_get(m, k) for k in ("cumplido", "no_aplica", "observacion")}}
                    for (h, n), m in sorted(marcas.items())],
         "cuadros": detalles,
@@ -546,7 +599,10 @@ def paquete_desactualizado(paquete: Any, actuales: dict[str, Any] | None) -> boo
     no para un envío nuevo."""
     if paquete is None or actuales is None:
         return False
-    return json.loads(row_get(paquete, "datos_json")) != actuales
+    # El destinatario no está en los documentos: cambiarlo no los desactualiza
+    # (las generaciones anteriores lo guardaban en su instantánea).
+    usados = {c: v for c, v in json.loads(row_get(paquete, "datos_json")).items() if c not in CAMPOS_CORREO}
+    return usados != actuales
 
 
 def referencia_paquete(audit_id: int, numero: int) -> str:

@@ -3,44 +3,34 @@ views/auditor/requerimiento.py — Pestaña principal "Requerimiento inicial".
 
 Segundo paso del proceso, al mismo nivel que "Levantamiento de información":
 comparte la auditoría y sus datos confirmados, pero tiene su propia página,
-rutas y registros. El auditor asignado adjunta y revisa el contrato, confirma
-los datos, genera los cuatro documentos (una generación a la vez), registra
-el correo y el aviso por WhatsApp y la recepción y revisión de lo que
-devuelve el cliente. El jefe auditor ve lo mismo en solo lectura: descarga lo
+rutas y registros. Tres pasos: el auditor asignado confirma los datos
+(precargados del levantamiento) y elige las fechas en el calendario, genera
+los cuatro documentos (una generación a la vez) y prepara y registra el
+correo al cliente. El jefe auditor ve lo mismo en solo lectura: descarga lo
 registrado, pero no arma vistas previas ni borradores de correo.
 """
 from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date, datetime
-from urllib.parse import quote
+from datetime import datetime
 
 from database import get_audit, get_audit_context, get_requerimiento_context
 from services.requerimiento import (
     ADJUNTOS,
-    AVISO_FIRMAS,
     AVISO_PLANTILLA,
-    CAMPOS_ANIO,
-    CAMPOS_FECHA,
     CAMPOS_TEXTO,
-    CUADROS,
     DOCUMENTOS,
-    ENTREGABLES,
-    FILAS_MINIMAS_CUADRO,
-    ITEMS_HOJA1,
-    ITEMS_HOJA2,
-    RECEPCIONES,
-    VERIFICACIONES_REVISION,
+    ETIQUETAS_FORMULARIO,
     correo,
     datos_efectivos,
     estado_proceso,
     faltantes,
+    fecha_larga,
     instantanea_actual,
-    mensaje_whatsapp,
     paquete_desactualizado,
     precarga,
-    texto_item,
+    texto_inventario,
 )
 from services.rowutil import row_get
 from ui.components import proceso_nav
@@ -91,7 +81,7 @@ def _archivo_input(nombre: str, formatos: tuple[str, ...], requerido: bool = Tru
             f'<div class="field-hint">{", ".join(f.upper() for f in formatos)} · máximo 10 MB</div>')
 
 
-# ── 1. Estado del proceso ────────────────────────────────────────────────
+# ── Estado del proceso ───────────────────────────────────────────────────
 
 def _pasos(estado: dict) -> str:
     items = "".join(
@@ -103,143 +93,138 @@ def _pasos(estado: dict) -> str:
     return f'<ol class="req-steps" aria-label="Estado del requerimiento inicial">{items}</ol>'
 
 
-# ── 2. Contrato y revisión de documentos firmados ───────────────────────
+# ── 1. Datos del requerimiento ──────────────────────────────────────────
 
-def _revision(audit_id: int, adjunto, read_only: bool, csrf_token: str) -> str:
-    """Estado de revisión de un PDF firmado y, si falta, el formulario para
-    dejar constancia. Recibir no es revisar."""
-    detalle = (f'<span class="req-meta">{esc(adjunto["detalle_archivo"])}</span>'
-               if row_get(adjunto, "detalle_archivo") else "")
-    if row_get(adjunto, "revisado_at"):
-        conforme = adjunto["revision_resultado"] == "conforme"
-        badge = ('<span class="badge badge-green">Revisado conforme</span>' if conforme else
-                 '<span class="badge badge-red">Revisado con observaciones</span>')
-        nota = f' · {esc(adjunto["revision_nota"])}' if adjunto["revision_nota"] else ""
-        return (f'{badge}{detalle}<span class="req-meta">Revisión de {esc(row_get(adjunto, "revisor") or "—")} '
-                f'el {_cuando(adjunto["revisado_at"])}{nota}</span>')
-    html = f'<span class="badge badge-amber">Adjuntado, pendiente de revisión</span>{detalle}'
-    if read_only:
-        return html
-    checks = "".join(
-        f'<label class="req-check"><input type="checkbox" name="verif_{clave}" value="1"> {esc(texto)}</label>'
-        for clave, texto in VERIFICACIONES_REVISION
-    )
-    return html + f"""
-      <details class="req-details req-revision">
-        <summary>Revisar y dejar constancia</summary>
-        <form method="post" action="/auditor/requerimiento/revisar">
-          {hidden_inputs(csrf_token, audit_id=audit_id, adjunto_id=adjunto["id"])}
-          <p class="field-hint">{esc(AVISO_FIRMAS)}</p>
-          {checks}
-          <div class="grid req-grid">
-            <div class="col-4"><label>Resultado *</label><select name="resultado" required>
-              <option value="conforme">Conforme</option><option value="observado">Con observaciones</option>
-            </select></div>
-            <div class="col-8"><label>Nota (obligatoria si hay observaciones)</label>
-              <input name="nota" maxlength="500"></div>
-          </div>
-          <div class="actions req-actions"><button type="submit" class="btn btn-sm btn-primary">{SVG_CHECK} Registrar revisión</button></div>
-        </form>
-      </details>"""
-
-
-def _contrato(audit_id: int, contratos: list, estado: dict, read_only: bool, csrf_token: str) -> str:
-    lista = "".join(
-        f'<li>{_descarga(audit_id, "adjunto", c)} {_huella(c)}'
-        f'<span class="req-meta">Firmado: {esc(c["fecha"] or "sin fecha")} · subido {_cuando(c["subido_at"])}'
-        f' por {esc(c["autor"] or "—")}</span>{_revision(audit_id, c, read_only, csrf_token)}</li>'
-        for c in contratos
-    )
-    cuerpo = (f'<ul class="req-list">{lista}</ul>' if contratos else
-              '<p class="req-empty">Aún no se adjunta el contrato de auditoría firmado por el auditor y el '
-              'gerente. Es requisito para generar los documentos del requerimiento.</p>')
-    if contratos and not estado["contrato_revisado"]:
-        cuerpo += (f'<div class="fin-alert alert-medium">{SVG_INFO}<div>El contrato está adjuntado pero '
-                   'nadie dejó constancia de su revisión: los documentos no se pueden generar hasta que un '
-                   'contrato quede revisado conforme.</div></div>')
-    if not read_only:
-        cuerpo += f"""
-        <form method="post" action="/auditor/requerimiento/contrato" enctype="multipart/form-data" class="req-inline-form">
-          {hidden_inputs(csrf_token, audit_id=audit_id)}
-          <div><label>Contrato firmado (PDF) *</label>{_archivo_input("archivo", ADJUNTOS["contrato"][1])}</div>
-          <div><label>Fecha de firma</label><input type="date" name="fecha" max="{date.today().isoformat()}"></div>
-          <button type="submit" class="btn btn-sm btn-primary">{SVG_SAVE} Adjuntar contrato</button>
-        </form>"""
-    if estado["contrato_revisado"]:
-        badge = _estado_badge(True, "Contrato revisado", "")
-    elif estado["contrato_pendiente"]:
-        badge = '<span class="badge badge-amber">Pendiente de revisión</span>'
-    else:
-        badge = _estado_badge(False, "", "Pendiente")
-    return _seccion("contrato", 1, "Contrato de auditoría firmado", cuerpo, badge)
-
-
-# ── 3. Datos del requerimiento ──────────────────────────────────────────
-
-_GRUPOS = (
-    ("Empresa y representante", ("empresa", "ruc", "representante_titulo", "representante_nombre",
-                                 "representante_cargo", "representante_identificacion",
-                                 "representante_nacionalidad", "representante_ciudad")),
-    ("Años y fechas", ("anio_auditado", "anio_certificados", "anio_cerrado", "fecha_documentos", "fecha_corte",
-                       "fechas_inventario")),
-    ("Auddit y correo", ("auddit_representante", "auddit_cargo", "correo_para_nombre", "correo_para",
-                         "correo_cc")),
-)
 _AYUDAS = {
-    "anio_certificados": "Año sobre el que el gerente certifica. No se deduce del año auditado.",
-    "anio_cerrado": "Se cita en el Req. #1 (informe de control interno, ICT y balance al 31/12).",
-    "fecha_corte": "Puede cambiar, pero dentro del año auditado.",
-    "fecha_documentos": "Fecha que llevan la carta y los certificados.",
-    "fechas_inventario": "Texto que completa la frase de la carta, p. ej. «entre el 15 de octubre y el 15 de diciembre».",
-    "correo_cc": "Separe varios correos con coma.",
-    "representante_identificacion": "Cédula o pasaporte tal como consta en el documento de identidad.",
+    "anio_auditado": "Ejercicio económico que se audita.",
+    "ruc": "RUC de la auditoría: se corrige en Levantamiento de información.",
+    "fecha_documentos": "Fecha que llevan la carta de encargo y los certificados.",
+    "fecha_corte": "Fecha de la información financiera de la auditoría preliminar, dentro del año de auditoría.",
 }
+_PENDIENTE = '<span class="muted">Pendiente</span>'
 
 
-def _campo(campo: str, datos: dict, sugeridos: dict, confirmado: bool, read_only: bool,
-           ruc_auditoria: str) -> str:
-    etiquetas = {**{c: e for c, (e, _l) in CAMPOS_TEXTO.items()}, **CAMPOS_ANIO, **CAMPOS_FECHA}
+def _valor(campo: str, datos: dict, ruc_auditoria: str) -> str:
     valor = ruc_auditoria if campo == "ruc" else datos.get(campo)
-    valor = "" if valor is None else valor
+    return "" if valor is None else str(valor)
+
+
+def _origen(campo: str, valor: str, sugeridos: dict) -> str:
+    """Si el valor es el del levantamiento o el auditor lo cambió."""
     if campo == "ruc":
-        control = f'<input name="ruc" value="{esc(valor)}" readonly aria-readonly="true">'
-    elif campo in CAMPOS_FECHA:
-        control = f'<input type="date" name="{campo}" value="{esc(valor)}">'
-    elif campo in CAMPOS_ANIO:
-        control = f'<input name="{campo}" value="{esc(valor)}" inputmode="numeric" maxlength="4" placeholder="AAAA">'
-    else:
-        control = f'<input name="{campo}" value="{esc(valor)}" maxlength="{CAMPOS_TEXTO[campo][1]}">'
+        return '<span class="req-origen">Del levantamiento</span>'
+    if campo not in sugeridos:
+        return ""
+    if valor == sugeridos[campo][0]:
+        return f'<span class="req-origen" title="{esc(sugeridos[campo][1])}">Del levantamiento</span>'
+    return f'<span class="req-origen editado" title="Levantamiento: {esc(sugeridos[campo][0])}">Editado</span>'
+
+
+def _fecha_texto(iso: str) -> str:
+    return fecha_larga(iso, "de") if iso else ""
+
+
+def _campo_texto(campo: str, valor: str, sugeridos: dict, read_only: bool, clase: str) -> str:
     if read_only:
-        control = f'<div class="req-valor">{esc(valor) or "<span class=muted>Pendiente</span>"}</div>'
-    ayuda = ("RUC de la auditoría. Valídelo en Levantamiento de información." if campo == "ruc" else
-             _AYUDAS.get(campo, ""))
-    if not confirmado and campo in sugeridos:
-        ayuda = f"Precargado: {sugeridos[campo][1]}. " + ayuda
-    ayuda_html = f'<div class="field-hint">{esc(ayuda)}</div>' if ayuda else ""
-    return f'<div class="col-4"><label>{esc(etiquetas[campo])}</label>{control}{ayuda_html}</div>'
+        control = f'<div class="req-valor">{esc(valor) or _PENDIENTE}</div>'
+    elif campo == "ruc":
+        control = f'<input id="req-ruc" name="ruc" value="{esc(valor)}" readonly aria-readonly="true">'
+    elif campo == "anio_auditado":
+        control = (f'<input id="req-anio_auditado" name="anio_auditado" value="{esc(valor)}" inputmode="numeric" '
+                   f'maxlength="4" pattern="\\d{{4}}" placeholder="AAAA">')
+    else:
+        control = (f'<input id="req-{campo}" name="{campo}" value="{esc(valor)}" '
+                   f'maxlength="{CAMPOS_TEXTO[campo][1]}">')
+    ayuda = _AYUDAS.get(campo, "")
+    return f"""
+        <div class="{clase}">
+          <div class="req-label"><label for="req-{campo}">{esc(ETIQUETAS_FORMULARIO[campo])}</label>
+            {_origen(campo, valor, sugeridos)}</div>
+          {control}
+          {f'<div class="field-hint">{esc(ayuda)}</div>' if ayuda else ""}
+        </div>"""
+
+
+def _campo_fecha(campo: str, valor: str, read_only: bool, anio: str) -> str:
+    if read_only:
+        control = f'<div class="req-valor">{esc(_fecha_texto(valor)) or _PENDIENTE}</div>'
+    else:
+        limites = ""
+        if campo == "fecha_corte":
+            # El corte cae en el año de auditoría: el calendario sigue al campo del año.
+            limites = ' data-dp-anio="req-anio_auditado"'
+            if anio.isdigit():
+                limites += f' min="{anio}-01-01" max="{anio}-12-31"'
+        control = (f'<div class="dp" data-dp="single">'
+                   f'<input type="date" id="req-{campo}" name="{campo}" value="{esc(valor)}" class="dp-input"'
+                   f'{limites}></div>')
+    return f"""
+        <div class="col-4">
+          <div class="req-label"><label for="req-{campo}">{esc(ETIQUETAS_FORMULARIO[campo])}</label></div>
+          {control}
+          <div class="field-hint">{esc(_AYUDAS[campo])}</div>
+        </div>"""
+
+
+def _campo_inventario(datos: dict, read_only: bool) -> str:
+    desde, hasta = datos.get("inventario_desde") or "", datos.get("inventario_hasta") or ""
+    texto = texto_inventario(desde, hasta)
+    if read_only:
+        control = f'<div class="req-valor">{esc(texto) or _PENDIENTE}</div>'
+    else:
+        control = f"""<div class="dp" data-dp="range" data-dp-texto="req-inventario-texto">
+            <input type="date" id="req-inventario_desde" name="inventario_desde" value="{esc(desde)}"
+              class="dp-input" aria-label="Levantamiento de inventarios: desde">
+            <input type="date" id="req-inventario_hasta" name="inventario_hasta" value="{esc(hasta)}"
+              class="dp-input" aria-label="Levantamiento de inventarios: hasta"></div>"""
+    return f"""
+        <div class="col-4">
+          <div class="req-label"><label for="req-inventario_desde">Fecha tentativa levantamiento de
+            inventarios</label></div>
+          {control}
+          <div class="field-hint"><span>En la carta y el correo:
+            <strong id="req-inventario-texto">{esc(texto) or "elija el rango"}</strong></span></div>
+        </div>"""
+
+
+def _hoja_datos(datos: dict, ruc_auditoria: str) -> str:
+    """Los datos como quedan en los documentos, en el orden de la hoja de
+    datos de Auddit. Se actualiza mientras el auditor edita el formulario."""
+    celdas = (
+        ("anio_auditado", "Año de auditoría", _valor("anio_auditado", datos, ruc_auditoria)),
+        ("empresa", "Empresa", _valor("empresa", datos, ruc_auditoria).upper()),
+        ("representante_nombre", "Representante legal", _valor("representante_nombre", datos, "").upper()),
+        ("fecha_documentos", "Fecha carta de encargo", _fecha_texto(datos.get("fecha_documentos") or "")),
+        ("fecha_corte", "Corte auditoría preliminar", _fecha_texto(datos.get("fecha_corte") or "")),
+        ("inventario", "Fecha tentativa levantamiento de inventarios",
+         texto_inventario(datos.get("inventario_desde") or "", datos.get("inventario_hasta") or "")),
+        ("representante_identificacion", "Cédula del representante",
+         _valor("representante_identificacion", datos, "")),
+        ("ruc", "RUC de la empresa", ruc_auditoria),
+    )
+    cabecera = "".join(f"<th>{esc(etiqueta)}</th>" for _c, etiqueta, _v in celdas)
+    fila = "".join(f'<td data-resumen="{c}">{esc(v) or "—"}</td>' for c, _e, v in celdas)
+    return f"""
+      <h3 class="req-subtitle">Así se usan en los documentos</h3>
+      <div class="table-wrap req-hoja"><table>
+        <thead><tr>{cabecera}</tr></thead><tbody><tr>{fila}</tr></tbody>
+      </table></div>"""
 
 
 def _datos(audit_id: int, datos: dict, sugeridos: dict, guardado, falt: list, read_only: bool, csrf_token: str,
            ruc_auditoria: str) -> str:
     confirmado = guardado is not None
-    grupos = "".join(
-        f'<h3 class="req-subtitle">{esc(titulo)}</h3><div class="grid req-grid">'
-        + "".join(_campo(c, datos, sugeridos, confirmado, read_only, ruc_auditoria) for c in campos) + "</div>"
-        for titulo, campos in _GRUPOS
-    )
-    cronograma = {c["entregable"]: c["fecha"] for c in datos.get("cronograma") or []}
-    filas_crono = "".join(
-        f'<div class="col-3"><label>{esc(e)}</label>'
-        + (f'<div class="req-valor">{esc(cronograma.get(e, "")) or "Pendiente"}</div>' if read_only else
-           f'<input name="cronograma_{i}" value="{esc(cronograma.get(e, ""))}" maxlength="60" '
-           f'placeholder="p. ej. Hasta febrero 2027">')
-        + "</div>"
-        for i, e in enumerate(ENTREGABLES)
-    )
-    equipo = "\n".join(datos.get("equipo") or [])
-    equipo_html = (f'<div class="req-valor">{esc(equipo).replace(chr(10), "<br>") or "Pendiente"}</div>' if read_only
-                   else f'<textarea name="equipo" rows="4" placeholder="Un integrante por línea, con su título">'
-                        f'{esc(equipo)}</textarea>')
+    anio = _valor("anio_auditado", datos, "")
+    empresa = (_campo_texto("anio_auditado", anio, sugeridos, read_only, "col-3")
+               + _campo_texto("empresa", _valor("empresa", datos, ""), sugeridos, read_only, "col-5")
+               + _campo_texto("ruc", ruc_auditoria, sugeridos, read_only, "col-4")
+               + _campo_texto("representante_nombre", _valor("representante_nombre", datos, ""), sugeridos,
+                              read_only, "col-8")
+               + _campo_texto("representante_identificacion", _valor("representante_identificacion", datos, ""),
+                              sugeridos, read_only, "col-4"))
+    fechas = (_campo_fecha("fecha_documentos", datos.get("fecha_documentos") or "", read_only, anio)
+              + _campo_fecha("fecha_corte", datos.get("fecha_corte") or "", read_only, anio)
+              + _campo_inventario(datos, read_only))
     aviso = ""
     if falt:
         aviso = (f'<div class="fin-alert alert-medium">{SVG_INFO}<div><strong>Faltan datos para generar:</strong> '
@@ -248,116 +233,27 @@ def _datos(audit_id: int, datos: dict, sugeridos: dict, guardado, falt: list, re
               if confirmado and not falt else
               _estado_badge(False, "", "Por confirmar" if not confirmado else "Incompletos"))
     cuerpo = f"""
-      <p class="req-help">La precarga toma solo lo que consta en el levantamiento (razón social, RUC,
-        administradores, período y año fiscal confirmado). Revise, corrija y complete: nada se deduce.</p>
+      <p class="req-help">Los datos de la empresa y del representante vienen del Levantamiento de información;
+        revíselos y elija las fechas del requerimiento en el calendario.</p>
       {aviso}
-      {grupos}
-      <h3 class="req-subtitle">Equipo de auditoría y cronograma de informes</h3>
-      <div class="grid req-grid">
-        <div class="col-12"><label>Equipo de auditoría</label>{equipo_html}</div>
-        {filas_crono}
-      </div>"""
+      <h3 class="req-subtitle">Empresa y representante</h3>
+      <div class="grid req-grid">{empresa}</div>
+      <h3 class="req-subtitle">Fechas del requerimiento</h3>
+      <div class="grid req-grid">{fechas}</div>"""
     if not read_only:
         cuerpo = f"""
-      <form method="post" action="/auditor/requerimiento/datos">
+      <form method="post" action="/auditor/requerimiento/datos" id="req-datos-form">
         {hidden_inputs(csrf_token, audit_id=audit_id)}
         {cuerpo}
         <div class="actions req-actions">
           <button type="submit" class="btn btn-primary">{SVG_SAVE} Confirmar datos</button>
         </div>
       </form>"""
-    return _seccion("datos", 2, "Datos del requerimiento", cuerpo, estado)
+    cuerpo += _hoja_datos(datos, ruc_auditoria)
+    return _seccion("datos", 1, "Datos del requerimiento", cuerpo, estado)
 
 
-# ── 4. Solicitud de información: marcas y cuadros ───────────────────────
-
-def _fila_item(hoja: int, numero: int, texto: str, datos: dict, marca, read_only: bool) -> str:
-    valor = "cumplido" if row_get(marca, "cumplido", 0) else "no_aplica" if row_get(marca, "no_aplica", 0) else ""
-    observacion = row_get(marca, "observacion", "")
-    if read_only:
-        estado = {"cumplido": "Cumplido", "no_aplica": "No aplica"}.get(valor, "—")
-        controles = f"<td>{estado}</td><td>{esc(observacion)}</td>"
-    else:
-        opciones = "".join(
-            f'<option value="{v}"{" selected" if v == valor else ""}>{t}</option>'
-            for v, t in (("", "—"), ("cumplido", "Cumplido"), ("no_aplica", "No aplica"))
-        )
-        controles = (f'<td><select name="item_{hoja}_{numero}" aria-label="Estado del ítem {numero}">{opciones}'
-                     f'</select></td><td><input name="obs_{hoja}_{numero}" value="{esc(observacion)}" '
-                     f'maxlength="500" aria-label="Observación del ítem {numero}"></td>')
-    return f"<tr><td>{numero}</td><td>{esc(texto_item(texto, datos))}</td>{controles}</tr>"
-
-
-def _tabla_items(hoja: int, datos: dict, marcas: dict, read_only: bool) -> str:
-    filas = ""
-    if hoja == 1:
-        filas = "".join(_fila_item(1, n, t, datos, marcas.get((1, n)), read_only) for n, t, _e in ITEMS_HOJA1)
-    else:
-        for seccion, items in ITEMS_HOJA2:
-            filas += f'<tr class="req-table-group"><td colspan="4">{esc(seccion)}</td></tr>'
-            filas += "".join(_fila_item(2, n, t, datos, marcas.get((2, n)), read_only) for n, t, _f, _e in items)
-    titulo = "Req. #1 — Documentos de la compañía" if hoja == 1 else "Req. #2 — Información contable - tributaria"
-    return f"""
-      <details class="req-details"{" open" if hoja == 1 else ""}>
-        <summary>{esc(titulo)}</summary>
-        <div class="table-wrap"><table class="req-table">
-          <thead><tr><th>Nro.</th><th>Detalle</th><th>Estado</th><th>Observaciones</th></tr></thead>
-          <tbody>{filas}</tbody>
-        </table></div>
-      </details>"""
-
-
-def _cuadro(audit_id: int, clave: str, filas: list, read_only: bool, csrf_token: str) -> str:
-    _hoja, titulo, columnas, _numerado = CUADROS[clave]
-    cabecera = "".join(f"<th>{esc(c)}</th>" for c in columnas)
-    if read_only:
-        cuerpo = "".join("<tr>" + "".join(f"<td>{esc(v)}</td>" for v in f) + "</tr>" for f in filas) or (
-            f'<tr><td colspan="{len(columnas)}" class="muted">Sin filas precargadas</td></tr>')
-        tabla = f'<div class="table-wrap"><table class="req-table"><thead><tr>{cabecera}</tr></thead><tbody>{cuerpo}</tbody></table></div>'
-    else:
-        total = max(len(filas) + 2, 3)
-        cuerpo = ""
-        for r in range(total):
-            valores = filas[r] if r < len(filas) else [""] * len(columnas)
-            cuerpo += "<tr>" + "".join(
-                f'<td><input name="{clave}_{r}_{c}" value="{esc(v)}" maxlength="200" '
-                f'aria-label="{esc(columnas[c])}, fila {r + 1}"></td>'
-                for c, v in enumerate(valores)
-            ) + "</tr>"
-        tabla = f"""
-        <form method="post" action="/auditor/requerimiento/detalle">
-          {hidden_inputs(csrf_token, audit_id=audit_id, seccion=clave, filas=total)}
-          <div class="table-wrap"><table class="req-table req-table-edit"><thead><tr>{cabecera}</tr></thead>
-            <tbody>{cuerpo}</tbody></table></div>
-          <div class="actions req-actions"><button type="submit" class="btn btn-sm">{SVG_SAVE} Guardar cuadro</button></div>
-        </form>"""
-    return (f'<details class="req-details"><summary>{esc(titulo.capitalize())} '
-            f'<span class="req-meta">{len(filas)} fila(s) precargada(s)</span></summary>{tabla}</details>')
-
-
-def _solicitud(audit_id: int, datos: dict, req: dict, read_only: bool, csrf_token: str) -> str:
-    marcas = req["items"]
-    tablas = _tabla_items(1, datos, marcas, read_only) + _tabla_items(2, datos, marcas, read_only)
-    if not read_only:
-        tablas = f"""
-        <form method="post" action="/auditor/requerimiento/items">
-          {hidden_inputs(csrf_token, audit_id=audit_id)}
-          {tablas}
-          <div class="actions req-actions"><button type="submit" class="btn btn-sm">{SVG_SAVE} Guardar marcas</button></div>
-        </form>"""
-    cuadros = "".join(_cuadro(audit_id, clave, req["detalles"].get(clave) or [], read_only, csrf_token)
-                      for clave in CUADROS)
-    cuerpo = f"""
-      <p class="req-help">Hojas 1 y 2 del Excel: puede marcar desde ya CUMPLIDO o NO APLICA (nunca ambos) y
-        dejar observaciones, p. ej. «ACTUALIZAR INFORMACIÓN». Hojas 3 y 4: precargue las filas conocidas; el
-        Excel agrega filas en blanco (al menos {FILAS_MINIMAS_CUADRO} por cuadro) para que el cliente complete.</p>
-      {tablas}
-      <h3 class="req-subtitle">Cuadros de detalle (hojas 3 y 4)</h3>
-      {cuadros}"""
-    return _seccion("solicitud", 3, "Solicitud inicial de información", cuerpo)
-
-
-# ── 5. Vista previa, generación y versiones ─────────────────────────────
+# ── 2. Vista previa, generación y versiones ─────────────────────────────
 
 _ENVIADA = ' <span class="badge badge-blue">Enviada</span>'
 
@@ -372,7 +268,7 @@ def _enviadas(envios: list) -> set[int]:
 
 def _alerta_desactualizada(paquete) -> str:
     return (f'<div class="fin-alert alert-medium">{SVG_INFO}<div><strong>Documentos desactualizados.</strong> '
-            f'Los datos, marcas o cuadros cambiaron después de la generación {paquete["numero"]}. Sus documentos y '
+            f'Los datos cambiaron después de la generación {paquete["numero"]}. Sus documentos y '
             'los envíos ya registrados no cambian, pero para un envío nuevo genere los documentos otra vez antes '
             'de preparar el correo.</div></div>')
 
@@ -428,17 +324,9 @@ def _documentos(audit_id: int, req: dict, estado: dict, falt: list, confirmado: 
             enviadas no cambian.</span>
         </form>"""
     else:
-        motivos = []
-        if not req["adjuntos"]["contrato"]:
-            motivos.append("adjuntar el contrato firmado")
-        elif not estado["contrato_revisado"]:
-            motivos.append("registrar la revisión del contrato firmado")
-        if not confirmado:
-            motivos.append("confirmar los datos del requerimiento")
-        elif falt:
-            motivos.append("completar los datos pendientes")
-        accion = (f'<div class="fin-alert alert-medium">{SVG_INFO}<div>Para generar los documentos falta: '
-                  f'{esc(", ".join(motivos))}.</div></div>')
+        motivo = "confirmar los datos del paso 1" if not confirmado else "completar los datos pendientes del paso 1"
+        accion = (f'<div class="fin-alert alert-medium">{SVG_INFO}<div>Para generar los documentos falta '
+                  f'{motivo}.</div></div>')
     alerta = _alerta_desactualizada(req["paquetes"][0]) if estado["desactualizado"] else ""
     cuerpo = f"""
       <p class="req-help">{esc(AVISO_PLANTILLA)} Las firmas no se reproducen: cada documento deja la línea
@@ -453,21 +341,40 @@ def _documentos(audit_id: int, req: dict, estado: dict, falt: list, confirmado: 
         badge = '<span class="badge badge-amber">Desactualizados</span>'
     else:
         badge = _estado_badge(True, f"Generación {req['paquetes'][0]['numero']} vigente", "")
-    return _seccion("documentos", 4, "Vista previa y documentos generados", cuerpo, badge)
+    return _seccion("documentos", 2, "Documentos del requerimiento", cuerpo, badge)
 
 
-# ── 6. Correo y WhatsApp ────────────────────────────────────────────────
+# ── 3. Correo al cliente ────────────────────────────────────────────────
 
 def _ahora_local() -> str:
     return datetime.now().replace(second=0, microsecond=0).isoformat(timespec="minutes")
 
 
+def _destinatario(audit_id: int, datos: dict, csrf_token: str) -> str:
+    return f"""
+      <form method="post" action="/auditor/requerimiento/destinatario" class="req-registro">
+        {hidden_inputs(csrf_token, audit_id=audit_id)}
+        <div class="grid req-grid">
+          <div class="col-4"><label for="req-correo_para_nombre">Nombre del destinatario</label>
+            <input id="req-correo_para_nombre" name="correo_para_nombre"
+              value="{esc(datos.get("correo_para_nombre") or "")}" maxlength="{CAMPOS_TEXTO["correo_para_nombre"][1]}"></div>
+          <div class="col-4"><label for="req-correo_para">Correo del destinatario</label>
+            <input id="req-correo_para" name="correo_para" value="{esc(datos.get("correo_para") or "")}"
+              maxlength="{CAMPOS_TEXTO["correo_para"][1]}" placeholder="gerencia@cliente.com"></div>
+          <div class="col-4"><label for="req-correo_cc">Copia oculta (CCO)</label>
+            <input id="req-correo_cc" name="correo_cc" value="{esc(datos.get("correo_cc") or "")}"
+              maxlength="{CAMPOS_TEXTO["correo_cc"][1]}">
+            <div class="field-hint">Separe varios correos con coma.</div></div>
+        </div>
+        <div class="actions req-actions"><button type="submit" class="btn btn-sm">{SVG_SAVE} Guardar destinatario</button></div>
+      </form>"""
+
+
 def _correo(audit_id: int, datos: dict, req: dict, estado: dict, read_only: bool, csrf_token: str) -> str:
     vigente = req["paquetes"][0] if req["paquetes"] else None
-    # El correo se muestra con la instantánea de la generación, igual que el .eml.
-    if vigente is not None:
-        datos = json.loads(vigente["datos_json"])
-    mensaje = correo(datos)
+    # Asunto y cuerpo salen de la instantánea de la generación, igual que el
+    # .eml; el destinatario es el vigente (no forma parte de los documentos).
+    mensaje = correo(json.loads(vigente["datos_json"]) if vigente is not None else datos)
     adjuntos = "".join(
         f'<li>{_descarga(audit_id, "generado", vigente["archivos"][t])}</li>'
         if vigente is not None and t in vigente["archivos"] else
@@ -497,6 +404,7 @@ def _correo(audit_id: int, datos: dict, req: dict, estado: dict, read_only: bool
         registre el envío efectivo con su evidencia. Generar o descargar documentos no lo marca como enviado.
         El asunto, el cuerpo y los adjuntos corresponden a la última generación.</p>
       {alerta}
+      {_destinatario(audit_id, datos, csrf_token) if not read_only and req["guardado"] is not None else ""}
       <div class="grid req-grid">
         <div class="col-6"><label>Para</label><div class="req-valor">{esc(datos.get("correo_para_nombre") or "")}
           &lt;{esc(datos.get("correo_para") or "pendiente")}&gt;</div></div>
@@ -561,7 +469,7 @@ def _correo(audit_id: int, datos: dict, req: dict, estado: dict, read_only: bool
           <div class="actions req-actions"><button type="submit" class="btn btn-primary">{SVG_SAVE} Registrar envío histórico</button></div>
         </form>
       </details>"""
-    return _seccion("correo", 5, "Correo al cliente", cuerpo,
+    return _seccion("correo", 3, "Correo al cliente", cuerpo,
                     _estado_badge(estado["correo_enviado"], "Envío registrado", "Sin registrar"))
 
 
@@ -572,145 +480,8 @@ def _generacion_enviada(req: dict, envio) -> str:
     return f'Generación {paquete["numero"]} (4 documentos)'
 
 
-def _whatsapp(audit_id: int, datos: dict, req: dict, read_only: bool, csrf_token: str) -> str:
-    correos = [e for e in req["envios"] if row_get(e, "canal") == "correo"]
-    avisos = [e for e in req["envios"] if row_get(e, "canal") == "whatsapp"]
-    if not correos:
-        cuerpo = '<p class="req-empty">Disponible después de registrar el envío del correo.</p>'
-    else:
-        enviado = next((p for p in req["paquetes"] if p["id"] == row_get(correos[0], "paquete_id")), None)
-        texto = mensaje_whatsapp(json.loads(enviado["datos_json"]) if enviado else datos, correos[0])
-        cuerpo = f"""
-      <p class="req-help">Copie el mensaje y envíelo al grupo de WhatsApp del cliente. Atlas no lo envía:
-        registre cuándo se notificó.</p>
-      <textarea id="req-whatsapp" rows="5" readonly>{esc(texto)}</textarea>
-      <div class="req-inline-actions">
-        <button type="button" class="btn btn-sm req-copy" data-copy="req-whatsapp">Copiar mensaje</button>
-        <a class="btn btn-sm" href="https://wa.me/?text={quote(texto)}" target="_blank" rel="noopener">Abrir WhatsApp</a>
-      </div>"""
-        if not read_only:
-            cuerpo += f"""
-      <form method="post" action="/auditor/requerimiento/whatsapp" enctype="multipart/form-data" class="req-registro">
-        {hidden_inputs(csrf_token, audit_id=audit_id)}
-        <div class="grid req-grid">
-          <div class="col-4"><label>Fecha y hora del aviso *</label>
-            <input type="datetime-local" name="fecha" max="{_ahora_local()}" required></div>
-          <div class="col-4"><label>Grupo o contacto notificado *</label><input name="destinatario" required maxlength="300"></div>
-          <div class="col-4"><label>Evidencia (opcional)</label>{_archivo_input("evidencia", ADJUNTOS["evidencia_whatsapp"][1], False)}</div>
-        </div>
-        <div class="actions req-actions"><button type="submit" class="btn btn-sm btn-primary">{SVG_SAVE} Registrar aviso</button></div>
-      </form>"""
-    lista = "".join(
-        f'<li><strong>{_cuando(a["fecha"])}</strong> · {esc(a["destinatario"])}'
-        f'<span class="req-meta">Registrado por {esc(a["autor"] or "—")}</span>'
-        + (_descarga(audit_id, "adjunto", {"id": a["evidencia_id"], "nombre": "Evidencia"}) if a["evidencia_id"] else "")
-        + "</li>"
-        for a in avisos
-    )
-    if lista:
-        cuerpo += f'<h3 class="req-subtitle">Avisos registrados</h3><ul class="req-list">{lista}</ul>'
-    return _seccion("whatsapp", 6, "Aviso por WhatsApp", cuerpo,
-                    _estado_badge(bool(avisos), "Cliente notificado", "Sin registrar"))
-
-
-# ── 7. Recepción ─────────────────────────────────────────────────────────
-
-def _respuesta(req: dict) -> str:
-    if not req["respuestas"]:
-        return ""
-    ultima = req["respuestas"][0]
-    items = json.loads(ultima["items_json"])
-    cumplidos = sum(1 for i in items if i["cumplido"])
-    no_aplica = sum(1 for i in items if i["no_aplica"])
-    detalles = json.loads(ultima["detalles_json"])
-    filas = "".join(
-        f'<tr><td>Req. #{i["hoja"]}</td><td>{i["numero"]}</td>'
-        f'<td>{"Cumplido" if i["cumplido"] else "No aplica" if i["no_aplica"] else "Pendiente"}</td>'
-        f'<td>{esc(i["observacion"])}</td></tr>'
-        for i in items if i["cumplido"] or i["no_aplica"] or i["observacion"]
-    )
-    cuadros = ", ".join(f"{CUADROS[c][1].capitalize()}: {len(f)}" for c, f in detalles.items() if f) or "sin filas"
-    return f"""
-      <h3 class="req-subtitle">Respuestas importadas del Excel ({_cuando(ultima["importado_at"])})</h3>
-      <p class="req-help">{cumplidos} cumplido(s), {no_aplica} no aplica, {len(items) - cumplidos - no_aplica}
-        pendiente(s). Cuadros: {esc(cuadros)}.</p>
-      <details class="req-details"><summary>Ítems respondidos y observaciones</summary>
-        <div class="table-wrap"><table class="req-table"><thead><tr><th>Hoja</th><th>Nro.</th><th>Estado</th>
-        <th>Observación</th></tr></thead><tbody>{filas or '<tr><td colspan="4" class="muted">Sin respuestas</td></tr>'}</tbody></table></div>
-      </details>"""
-
-
-_IMPORTACION = {
-    "importado": ("badge-green", "Respuestas importadas"),
-    "rechazado": ("badge-red", "Recibido con error: no importado"),
-    "revision_manual": ("badge-amber", "Requiere revisión manual: no importado"),
-}
-
-
-def _estado_recibido(audit_id: int, tipo: str, adjunto, read_only: bool, csrf_token: str) -> str:
-    """Excel: resultado de su validación. PDF: revisión del auditor."""
-    if tipo != "solicitud_respondida":
-        return _revision(audit_id, adjunto, read_only, csrf_token)
-    clase, texto = _IMPORTACION.get(row_get(adjunto, "importacion_estado"),
-                                    ("badge-amber", "Sin validar: no importado"))
-    detalle = row_get(adjunto, "importacion_detalle")
-    return (f'<span class="badge {clase}">{texto}</span>'
-            + (f'<span class="req-meta">{esc(detalle)}</span>' if detalle else ""))
-
-
-def _recepcion(audit_id: int, req: dict, estado: dict, read_only: bool, csrf_token: str) -> str:
-    filas = ""
-    for tipo, (nombre, _f) in RECEPCIONES.items():
-        recibidos = req["adjuntos"].get(tipo) or []
-        archivos = "".join(
-            f'<li>{_descarga(audit_id, "adjunto", r)}'
-            f'<span class="req-meta">Recibido {esc(r["fecha"] or "")}'
-            f' · registrado por {esc(r["autor"] or "—")}</span>{_huella(r)}'
-            f'{"<span class=req-meta>" + esc(r["nota"]) + "</span>" if r["nota"] else ""}'
-            f'{_estado_recibido(audit_id, tipo, r, read_only, csrf_token)}</li>'
-            for r in recibidos
-        )
-        if tipo in estado["completos"]:
-            badge = _estado_badge(True, "Importado" if tipo == "solicitud_respondida" else "Recibido y revisado", "")
-        elif recibidos:
-            badge = ('<span class="badge badge-amber">Recibido con error</span>' if tipo == "solicitud_respondida"
-                     else '<span class="badge badge-amber">Recibido, pendiente de revisión</span>')
-        else:
-            badge = _estado_badge(False, "", "Pendiente")
-        filas += f"""
-        <div class="req-doc">
-          <div class="req-doc-head"><strong>{esc(nombre)}</strong>{badge}</div>
-          {f'<ul class="req-list">{archivos}</ul>' if archivos else ""}
-        </div>"""
-    resumen = ""
-    if estado["recepcion_parcial"]:
-        resumen = (f'<div class="fin-alert alert-medium">{SVG_INFO}<div><strong>Recepción incompleta.</strong> '
-                   f'Falta recibir, revisar o importar: {esc(", ".join(estado["pendientes_recepcion"]))}.</div></div>')
-    cuerpo = f"{resumen}<div class=\"req-docs\">{filas}</div>{_respuesta(req)}"
-    if not read_only:
-        opciones = "".join(f'<option value="{t}">{esc(n)}</option>' for t, (n, _f) in RECEPCIONES.items())
-        cuerpo += f"""
-      <form method="post" action="/auditor/requerimiento/recepcion" enctype="multipart/form-data" class="req-registro">
-        {hidden_inputs(csrf_token, audit_id=audit_id)}
-        <h3 class="req-subtitle">Registrar un documento recibido</h3>
-        <div class="grid req-grid">
-          <div class="col-4"><label>Documento *</label><select name="tipo" required>{opciones}</select></div>
-          <div class="col-4"><label>Fecha de recepción *</label>
-            <input type="date" name="fecha" max="{date.today().isoformat()}" value="{date.today().isoformat()}" required></div>
-          <div class="col-4"><label>Archivo recibido *</label>{_archivo_input("archivo", ("pdf", "xlsx"))}</div>
-          <div class="col-12"><label>Nota</label><input name="nota" maxlength="500"
-            placeholder="p. ej. recibido por correo de la contadora"></div>
-        </div>
-        <p class="field-hint">Los PDF firmados quedan pendientes hasta que registre su revisión. El Excel
-          respondido se importa solo si corresponde a una generación enviada de esta auditoría (referencia, RUC,
-          ejercicio y estructura); si no, se conserva como evidencia y puede cargar una versión corregida.</p>
-        <div class="actions req-actions"><button type="submit" class="btn btn-primary">{SVG_SAVE} Registrar recepción</button></div>
-      </form>"""
-    todo = not estado["pendientes_recepcion"]
-    return _seccion("recepcion", 7, "Recepción de documentos del cliente", cuerpo,
-                    _estado_badge(todo, "Todo recibido y revisado",
-                                  f"{len(estado['completos'])} de {len(RECEPCIONES)} completos"))
-
+# Calendario del paso 1 (static/js/calendario.js) y hoja de datos en vivo.
+_CALENDARIO_JS = '<script src="/static/js/calendario.js" defer></script>'
 
 _COPIAR_JS = """
 <script>
@@ -746,9 +517,8 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
     if ruc_inconsistente:
         falt.append("RUC del requerimiento: confirme los datos con el RUC de la auditoría")
     estado = estado_proceso({
-        "paquetes": req["paquetes"], "contratos": req["adjuntos"]["contrato"],
-        "confirmado": req["guardado"] is not None, "faltantes": falt, "envios": req["envios"],
-        "recepciones": {t: req["adjuntos"].get(t) for t in RECEPCIONES},
+        "paquetes": req["paquetes"], "confirmado": req["guardado"] is not None, "faltantes": falt,
+        "envios": req["envios"],
         "desactualizado": bool(req["paquetes"]) and (ruc_inconsistente or
                                                        paquete_desactualizado(req["paquetes"][0],
                                                                             instantanea_actual(req))),
@@ -761,21 +531,18 @@ def render(user: sqlite3.Row, query: dict, active_path: str, csrf_token: str = "
         <div>
           <span class="radar-lookup-kicker">Paso 2 del proceso</span>
           <h1>Requerimiento inicial</h1>
-          <p class="muted">Carta de encargo, certificados y solicitud de información para
+          <p class="muted">Datos, documentos y correo de inicio de la auditoría de
             {esc(audit["company_name"])} · RUC {esc(audit["ruc"] or "pendiente")}</p>
         </div>
         {solo_lectura}
       </div>
       {_pasos(estado)}
-      {_contrato(audit_id, req["adjuntos"]["contrato"], estado, read_only, csrf_token)}
       {_datos(audit_id, datos, sugeridos, req["guardado"], falt, read_only, csrf_token, audit["ruc"] or "")}
-      {_solicitud(audit_id, datos, req, read_only, csrf_token)}
       {_documentos(audit_id, req, estado, falt, req["guardado"] is not None, read_only, csrf_token)}
       {_correo(audit_id, datos, req, estado, read_only, csrf_token)}
-      {_whatsapp(audit_id, datos, req, read_only, csrf_token)}
-      {_recepcion(audit_id, req, estado, read_only, csrf_token)}
     </div>
     {_COPIAR_JS}
+    {"" if read_only else _CALENDARIO_JS}
     """
     flash = form_value(query, "msg")
     err = form_value(query, "err")

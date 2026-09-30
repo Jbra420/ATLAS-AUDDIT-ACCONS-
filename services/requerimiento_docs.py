@@ -42,6 +42,11 @@ from services.resumen_excel import _poner
 LOGO_AUDDIT = Path(__file__).resolve().parent.parent / "static" / "logoauddit.jpeg"
 
 
+# Dato que el paso 1 no pide y el levantamiento no trae: queda la línea para
+# completarlo a mano.
+_EN_BLANCO = "____________"
+
+
 def _anio_fin(datos: dict[str, Any]) -> str:
     return f"31 de diciembre del {datos['anio_auditado']}"
 
@@ -119,7 +124,7 @@ def build_carta(datos: dict[str, Any], logo: bytes | None = None) -> bytes:
     )
     seccion("4. Equipo de auditoría",
             "El equipo de trabajo designado para la ejecución del encargo estará conformado por:")
-    for integrante in datos["equipo"]:
+    for integrante in datos.get("equipo") or [_EN_BLANCO]:
         doc.vineta(integrante)
     seccion(
         "5. Planificación y cronograma",
@@ -189,8 +194,8 @@ def build_certificado(tipo: str, datos: dict[str, Any]) -> bytes:
     doc.parrafo("De mi consideración:", negrita=True, alineacion="izquierda", despues=20)
     doc.parrafo(
         f"Yo, {representante} con {documento} {identificacion}, de nacionalidad "
-        f"{datos['representante_nacionalidad'].lower()}, mayor de edad, domiciliado(a) en la ciudad de "
-        f"{datos['representante_ciudad']}, en mi calidad de {normalizar_nombre(datos['representante_cargo'])} de "
+        f"{(datos.get('representante_nacionalidad') or _EN_BLANCO).lower()}, mayor de edad, domiciliado(a) en "
+        f"la ciudad de {datos.get('representante_ciudad') or _EN_BLANCO}, en mi calidad de {normalizar_nombre(datos['representante_cargo'])} de "
         f"{empresa}, con RUC {datos['ruc']}, comparezco ante ustedes con el fin de CERTIFICAR que en el año "
         f"{datos['anio_certificados']} la empresa que represento, SI( ) NO( ) mantiene relaciones comerciales, "
         f"financieras o contractuales {_OBJETO_CERTIFICADO[tipo]}",

@@ -125,47 +125,44 @@ servidor lo rechaza aunque se escriba la URL).
 Comparten la auditoría, no los registros: el requerimiento guarda sus datos en
 tablas propias (`requerimiento*`).
 
-1. **Contrato de auditoría firmado** (PDF legible): queda "adjuntado, pendiente
-   de revisión" hasta que el auditor deja constancia (empresa, ejercicio,
-   integridad aparente y firmas; autor y fecha). Solo un contrato revisado
-   conforme permite generar. Atlas no valida criptográficamente firmas
-   electrónicas.
-2. **Datos del requerimiento**: la precarga toma solo lo que consta en el
-   levantamiento (razón social, RUC, administradores, período y año fiscal
-   confirmado); el auditor confirma y completa representante, cédula,
-   destinatario, equipo, cronograma y fechas. Los años son independientes:
-   año auditado, año que certifican los certificados y último ejercicio
-   cerrado; la fecha de corte debe caer en el año auditado. El RUC se toma de
-   la auditoría y no se puede sustituir solo en este paso.
-3. **Solicitud de información**: marcas CUMPLIDO / NO APLICA (excluyentes) y
-   observaciones de las hojas 1 y 2; filas precargadas de los cuadros de las
-   hojas 3 y 4.
-4. **Documentos**: carta de encargo, certificado de compañías relacionadas y
+La página tiene tres pasos:
+
+1. **Datos del requerimiento**: los campos de la hoja de datos de Auddit.
+   Año de auditoría, empresa, representante legal, cédula del representante
+   y RUC vienen precargados del levantamiento (una etiqueta indica si el
+   valor es del levantamiento o si el auditor lo editó; el RUC es el de la
+   auditoría y no se cambia aquí). Fecha de la carta de encargo, corte de la
+   auditoría preliminar (dentro del año de auditoría) y rango tentativo del
+   levantamiento de inventarios se eligen en un calendario
+   (`static/js/calendario.js`; sin JavaScript quedan los campos de fecha del
+   navegador). El rango se escribe en la carta y el correo como «entre el 15
+   de octubre y el 15 de diciembre». Debajo, una tabla muestra los datos tal
+   como entran en los documentos y se actualiza mientras se edita.
+   Lo que los documentos usan y el paso no pide se deriva: los certificados y
+   el último ejercicio cerrado se refieren al año anterior al de auditoría;
+   cargo y nacionalidad del representante salen del levantamiento cuando
+   constan (si no, el documento deja la línea en blanco).
+2. **Documentos**: carta de encargo, certificado de compañías relacionadas y
    certificado de paraísos fiscales (PDF) y solicitud inicial de información
    (Excel de 4 hojas; no reemplaza el Excel del levantamiento). Hay vista
    previa sin guardar. Los cuatro se generan juntos como una **generación**
    (`requerimiento_paquetes`) con su instantánea de datos y una referencia que
    va dentro del Excel (propiedades del libro y fila 2 de las hojas 1 y 2); se
    registra en una sola transacción, así que un fallo no deja generaciones a
-   medias. Si después cambian datos, marcas o cuadros, la generación queda
-   desactualizada para un envío nuevo (sus archivos y envíos no cambian).
-5. **Correo**: asunto, cuerpo, adjuntos y un borrador `.eml` armados con la
-   instantánea de la generación vigente (si está desactualizada hay que
+   medias. Si después cambian los datos, la generación queda desactualizada
+   para un envío nuevo (sus archivos y envíos no cambian).
+3. **Correo**: destinatario (nombre, correo y CCO; cambiarlo no desactualiza
+   los documentos), asunto, cuerpo, adjuntos y un borrador `.eml` armados con
+   la instantánea de la generación vigente (si está desactualizada hay que
    regenerar antes). El envío se registra aparte (fecha, destinatario,
    generación enviada y evidencia); nunca mezcla documentos de generaciones
    distintas, y generar o descargar no lo marca como enviado. Los correos
    efectivamente enviados antes de un cambio se registran en una acción
-   histórica separada, con fecha, evidencia y justificación; no completan el
-   envío de una generación nueva.
-6. **WhatsApp**: mensaje para copiar o abrir en WhatsApp y registro del aviso,
-   solo después del correo.
-7. **Recepción**: carta y certificados firmados y Excel respondido. Un PDF
-   recibido cuenta solo cuando se revisa conforme. El Excel se importa solo
-   si su referencia, RUC, ejercicio, encabezados y textos coinciden con una
-   generación enviada de esta auditoría (el nombre del archivo no cuenta);
-   si no, queda como evidencia "recibido con error" o "requiere revisión
-   manual" y no completa el paso. Se puede cargar una versión corregida sin
-   borrar el original.
+   histórica separada, con fecha, evidencia y justificación.
+
+El contrato firmado, las marcas y cuadros de la solicitud, el aviso por
+WhatsApp y la recepción de lo que devuelve el cliente ya no forman parte de la
+página. Sus tablas, datos y rutas se conservan.
 
 Los textos de la carta, los certificados, los ítems del Excel y el correo se
 transcribieron de los ejemplos del documento de proceso de Auddit

@@ -24,13 +24,20 @@ from core import router
 from core.server import FormData, content_disposition
 from database import add_administrator, authenticate, connect, create_company_audit, create_user, init_db
 from services.requerimiento import (
+    AUDDIT_REPRESENTANTE,
     CUADROS,
     DOCUMENTOS,
+    FORMULARIO,
     HOJAS,
     ITEMS,
+    RECEPCIONES,
+    completado,
     faltantes,
+    instantanea_actual,
     normalizar_datos,
+    paquete_desactualizado,
     precarga,
+    texto_inventario,
     validar_archivo,
 )
 from services.pdf_simple import PdfDocumento
@@ -57,6 +64,7 @@ DATOS = {
     "representante_identificacion": CEDULA, "representante_nacionalidad": "Ecuatoriana",
     "representante_ciudad": "Cuenca", "anio_auditado": "2026", "anio_certificados": "2025", "anio_cerrado": "2025",
     "fecha_documentos": "2026-09-01", "fecha_corte": "2026-07-31",
+    "inventario_desde": "2026-10-15", "inventario_hasta": "2026-12-15",
     "fechas_inventario": "entre el 15 de octubre y el 15 de diciembre",
     "auddit_representante": "Mgtr. Fernando Parra Suarez", "auddit_cargo": "Gerente",
     "correo_para_nombre": "Contadora", "correo_para": "contadora@cliente.ec", "correo_cc": "fparra@accons.ec",
@@ -84,7 +92,9 @@ class _Caso(BaseTemporal):
             "get_requerimiento_context": lambda a: R.get_requerimiento_context(a, db),
             "get_requerimiento_file": lambda a, o, i: R.get_requerimiento_file(a, o, i, db),
             "save_requerimiento_adjunto": functools.partial(R.save_requerimiento_adjunto, db_path=db, adjuntos_dir=adj),
+            "get_audit_context": lambda a: expedientes.get_audit_context(a, db),
             "save_requerimiento_datos": lambda a, d, u: R.save_requerimiento_datos(a, d, u, db),
+            "save_requerimiento_destinatario": lambda a, d: R.save_requerimiento_destinatario(a, d, db),
             "save_requerimiento_items": lambda a, m: R.save_requerimiento_items(a, m, db),
             "save_requerimiento_detalle": lambda a, s, f: R.save_requerimiento_detalle(a, s, f, db),
             "get_requerimiento_paquete": lambda r: R.get_requerimiento_paquete(r, db),
@@ -129,6 +139,9 @@ class _Caso(BaseTemporal):
     def confirmar(self, **cambios):
         return self.accion("/auditor/requerimiento/datos", _form({**DATOS, **cambios}))
 
+    def destinatario(self, **campos) -> str:
+        return self.accion("/auditor/requerimiento/destinatario", _form(campos))
+
     def generar(self) -> str:
         return self.accion("/auditor/requerimiento/generar", _form())
 
@@ -139,7 +152,6 @@ class _Caso(BaseTemporal):
         return vista.render(user, {"audit_id": [str(self.audit_id)]}, "/auditor/requerimiento", csrf_token="t")
 
     def listo(self):
-        self.contrato()
         self.confirmar()
         self.generar()
 
@@ -172,13 +184,15 @@ class TestNavegacion(_Caso):
         self.assertIn(f'href="/admin/audit?audit_id={self.audit_id}"', pagina)
         self.assertIn(f'href="/admin/requerimiento?audit_id={self.audit_id}"', pagina)
 
-    def test_el_estado_se_muestra_sin_contrato(self):
+    def test_el_estado_muestra_los_tres_pasos(self):
         pagina = self.pagina(self.auditor)
-        for paso in ("Contrato firmado y revisado", "Datos del requerimiento confirmados",
-                     "Documentos generados con los datos vigentes", "Correo enviado al cliente",
-                     "Cliente notificado por WhatsApp", "Documentos del cliente recibidos y revisados"):
-            self.assertIn(paso, pagina)
-        self.assertIn("adjuntar el contrato firmado", pagina)
+        pasos = pagina.split('class="req-steps"', 1)[1].split("</ol>", 1)[0]
+        for paso in ("Datos del requerimiento", "Documentos generados", "Correo al cliente"):
+            self.assertIn(paso, pasos)
+        self.assertEqual(pasos.count('<li class="req-step'), 3)
+        for fuera in ("Contrato", "WhatsApp", "recibidos"):
+            self.assertNotIn(fuera, pasos)
+        self.assertIn("confirmar los datos del paso 1", pagina)
         self.assertNotIn('action="/auditor/requerimiento/generar"', pagina)
 
     def test_ruc_del_requerimiento_usa_el_de_la_auditoria(self):
@@ -194,7 +208,6 @@ class TestNavegacion(_Caso):
         self.assertEqual(self.contexto()["guardado"]["ruc"], self.audit["ruc"])
 
     def test_un_registro_antiguo_con_ruc_distinto_no_genera_documentos(self):
-        self.contrato()
         self.confirmar()
         with connect(self.db) as conn:
             conn.execute("UPDATE requerimientos SET ruc = ? WHERE audit_id = ?", ("0190444619001", self.audit_id))
@@ -203,6 +216,95 @@ class TestNavegacion(_Caso):
         self.assertEqual(self.contexto()["paquetes"], [])
         pagina = self.pagina(self.auditor)
         self.assertIn("RUC del requerimiento: confirme los datos", pagina)
+
+
+class TestPaso1Datos(_Caso):
+    def _seccion_datos(self) -> str:
+        return self.pagina(self.auditor).split('id="datos"', 1)[1].split("</section>", 1)[0]
+
+    def test_formulario_con_los_campos_de_la_hoja_de_datos_y_calendarios(self):
+        pagina = self.pagina(self.auditor)
+        datos = self._seccion_datos()
+        for nombre in FORMULARIO:
+            self.assertIn(f'name="{nombre}"', datos)
+        for fuera in ("equipo", "cronograma_0", "correo_para", "anio_certificados", "representante_ciudad"):
+            self.assertNotIn(f'name="{fuera}"', datos, "El paso 1 pide solo los datos de la hoja")
+        self.assertEqual(datos.count('data-dp="single"'), 2, "Carta de encargo y corte preliminar")
+        self.assertEqual(datos.count('data-dp="range"'), 1, "Levantamiento de inventarios")
+        self.assertIn('data-dp-anio="req-anio_auditado" min="2026-01-01" max="2026-12-31"', datos)
+        self.assertIn('<script src="/static/js/calendario.js" defer></script>', pagina)
+
+    def test_precarga_del_levantamiento(self):
+        add_administrator(self.audit_id, CEDULA, "SERPA GARCIA EDUARDO", "ECUATORIANA", "GERENTE GENERAL",
+                          self.db, user_id=self.auditor["id"])
+        datos = self._seccion_datos()
+        self.assertIn('name="anio_auditado" value="2026"', datos)
+        self.assertIn('name="representante_nombre" value="SERPA GARCIA EDUARDO"', datos)
+        self.assertIn(f'name="representante_identificacion" value="{CEDULA}"', datos)
+        self.assertIn('name="ruc" value="0190377210001" readonly', datos)
+        self.assertIn("Del levantamiento", datos)
+        self.confirmar(representante_nombre="Eduardo Serpa")
+        self.assertIn("Editado", self._seccion_datos(), "Se distingue lo que el auditor cambió")
+
+    def test_confirmar_deriva_anios_e_inventario_y_conserva_lo_demas(self):
+        add_administrator(self.audit_id, CEDULA, "SERPA GARCIA EDUARDO", "ECUATORIANA", "GERENTE GENERAL",
+                          self.db, user_id=self.auditor["id"])
+        self.confirmar()
+        self.destinatario(correo_para_nombre="Contadora", correo_para="contadora@cliente.ec")
+        # El formulario del paso 1 no cambia lo que no muestra, aunque llegue en la petición.
+        self.confirmar(fecha_corte="2026-06-30", correo_para="otro@cliente.ec")
+        guardado = self.contexto()["guardado"]
+        self.assertEqual(guardado["fecha_corte"], "2026-06-30")
+        self.assertEqual((guardado["anio_certificados"], guardado["anio_cerrado"]), (2025, 2025))
+        self.assertEqual(guardado["fechas_inventario"], "entre el 15 de octubre y el 15 de diciembre")
+        self.assertEqual(guardado["correo_para"], "contadora@cliente.ec")
+        self.assertEqual(guardado["representante_cargo"], "GERENTE GENERAL")
+        self.assertEqual(guardado["representante_nacionalidad"], "ECUATORIANA")
+        self.assertEqual(guardado["auddit_representante"], AUDDIT_REPRESENTANTE)
+        hoja = self._seccion_datos().split("req-hoja", 1)[1]
+        for texto in ("01 de septiembre de 2026", "30 de junio de 2026", "entre el 15 de octubre y el 15 de diciembre"):
+            self.assertIn(texto, hoja)
+
+    def test_el_anio_de_auditoria_mueve_los_anios_derivados(self):
+        self.confirmar(anio_auditado="2027", fecha_corte="2027-06-30")
+        guardado = self.contexto()["guardado"]
+        self.assertEqual((guardado["anio_certificados"], guardado["anio_cerrado"]), (2026, 2026))
+        with self.assertRaisesRegex(ValueError, "año auditado"):
+            self.confirmar(anio_auditado="2026", fecha_corte="2027-06-30")
+
+    def test_rango_de_inventario_invertido(self):
+        with self.assertRaisesRegex(ValueError, "fecha final no puede ser anterior"):
+            self.confirmar(inventario_desde="2026-12-15", inventario_hasta="2026-10-15")
+        self.assertIsNone(self.contexto()["guardado"])
+
+    def test_texto_del_rango_de_inventario(self):
+        self.assertEqual(texto_inventario("2026-10-15", "2026-12-15"), "entre el 15 de octubre y el 15 de diciembre")
+        self.assertEqual(texto_inventario("2026-12-20", "2027-01-10"),
+                         "entre el 20 de diciembre de 2026 y el 10 de enero de 2027")
+        self.assertEqual(texto_inventario("2026-10-15", "2026-10-15"), "el 15 de octubre")
+        self.assertEqual(texto_inventario("2026-10-15", ""), "")
+
+    def test_destinatario_no_desactualiza_los_documentos(self):
+        with self.assertRaisesRegex(ValueError, "Confirme primero"):
+            self.destinatario(correo_para="gerencia@cliente.ec")
+        self.listo()
+        self.assertIn("guardado", self.destinatario(correo_para_nombre="Gerencia", correo_para="gerencia@cliente.ec"))
+        req = self.contexto()
+        self.assertEqual(req["guardado"]["correo_para"], "gerencia@cliente.ec")
+        self.assertFalse(paquete_desactualizado(req["paquetes"][0], instantanea_actual(req)))
+        with self.assertRaisesRegex(ValueError, "no es un correo válido"):
+            self.destinatario(correo_para="gerencia@cliente")
+        correo = self.pagina(self.auditor).split('id="correo"', 1)[1].split("</section>", 1)[0]
+        self.assertIn('action="/auditor/requerimiento/destinatario"', correo)
+        self.assertIn("gerencia@cliente.ec", correo)
+
+    def test_los_documentos_usan_las_fechas_del_paso_1(self):
+        self.listo()
+        ruta = R.ruta_archivo(self.contexto()["versiones"]["carta"][0]["ruta"], self.adjuntos)
+        carta = " ".join(p.extract_text() for p in pypdf.PdfReader(ruta).pages).replace("\n", " ")
+        self.assertIn("01 de septiembre del 2026", carta)
+        self.assertIn("31 de julio del 2026", carta)
+        self.assertIn("entre el 15 de octubre y el 15 de diciembre", carta)
 
 
 class TestAlmacenamientoArchivos(_Caso):
@@ -220,6 +322,7 @@ class TestPermisos(_Caso):
         pagina = self.pagina(self.admin)
         self.assertIn("Modo solo lectura", pagina)
         self.assertNotIn('<form method="post"', pagina)
+        self.assertNotIn('<script src="/static/js/calendario.js"', pagina, "Sin calendario: no edita fechas")
         self.assertIn("/requerimiento/archivo?", pagina, "Puede consultar las evidencias")
 
     def test_otro_auditor_no_ve_la_auditoria(self):
@@ -255,11 +358,10 @@ class TestPermisos(_Caso):
 
 
 class TestContratoYDatos(_Caso):
-    def test_sin_contrato_no_se_genera(self):
+    def test_se_genera_sin_contrato(self):
         self.confirmar()
-        with self.assertRaisesRegex(ValueError, "contrato"):
-            self.generar()
-        self.assertEqual(self.contexto()["versiones"]["carta"], [])
+        self.assertIn("generación 1", self.generar())
+        self.assertEqual(len(self.contexto()["versiones"]["carta"]), 1)
 
     def test_contrato_debe_ser_pdf_real(self):
         with self.assertRaisesRegex(ValueError, "no corresponde a un archivo PDF"):
@@ -269,14 +371,12 @@ class TestContratoYDatos(_Caso):
             self.accion("/auditor/requerimiento/contrato", _form(archivos={"archivo": [("contrato.exe", PDF)]}))
 
     def test_datos_incompletos_bloquean_la_generacion(self):
-        self.contrato()
-        mensaje = self.confirmar(representante_identificacion="", equipo="")
+        mensaje = self.confirmar(representante_identificacion="", inventario_hasta="")
         self.assertIn("Pendiente", mensaje)
-        with self.assertRaisesRegex(ValueError, "Cédula del representante.*Equipo de auditoría"):
+        with self.assertRaisesRegex(ValueError, "Levantamiento de inventarios: hasta.*Cédula del representante"):
             self.generar()
 
     def test_sin_confirmar_no_se_genera_con_la_precarga(self):
-        self.contrato()
         with self.assertRaisesRegex(ValueError, "Confirme primero"):
             self.generar()
 
@@ -447,9 +547,6 @@ class TestEnvios(_ConEnvio):
             self.accion("/auditor/requerimiento/whatsapp", _form(fecha=ahora, destinatario="Grupo"))
         self._enviar()
         self.assertIn("registrado", self.accion("/auditor/requerimiento/whatsapp", _form(fecha=ahora, destinatario="Grupo")))
-        pagina = self.pagina(self.auditor)
-        self.assertIn("Cliente notificado", pagina)
-        self.assertIn("wa.me/?text=", pagina)
 
     def test_la_generacion_enviada_queda_identificada_tras_regenerar(self):
         self.listo()
@@ -509,14 +606,6 @@ class _ConRespuesta(_ConEnvio):
 
 
 class TestRecepcion(_ConRespuesta):
-    def test_recepcion_parcial_y_pendientes(self):
-        self._recibir("carta_firmada", "carta firmada.pdf", PDF)
-        pagina = self.pagina(self.auditor)
-        self.assertIn("Recepción incompleta", pagina)
-        self.assertIn("Certificado de paraísos fiscales firmado", pagina)
-        self.assertIn("0 de 4 completos", pagina, "Recibir no es revisar")
-        self.assertIn("Recibido, pendiente de revisión", pagina)
-
     def test_excel_con_marcas_excluyentes_no_se_importa_pero_se_conserva(self):
         self._enviado()
         with self.assertRaisesRegex(ValueError, "conservado.*ítem 4: CUMPLIDO y NO APLICA"):
@@ -525,7 +614,6 @@ class TestRecepcion(_ConRespuesta):
         self.assertEqual(len(ctx["adjuntos"]["solicitud_respondida"]), 1, "El original se guarda")
         self.assertEqual(ctx["adjuntos"]["solicitud_respondida"][0]["importacion_estado"], "rechazado")
         self.assertEqual(ctx["respuestas"], [])
-        self.assertIn("Recibido con error: no importado", self.pagina(self.auditor))
 
     def test_marca_no_reconocida(self):
         self._enviado()
@@ -704,7 +792,6 @@ class TestProcedenciaExcel(_ConRespuesta):
         self._rechazado(antiguo, "revisión manual.*no trae la referencia", estado="revision_manual")
         ajeno = self._respondido(build_solicitud_xlsx(normalizar_datos({**DATOS, "ruc": "0190314014001"}), {}, {}))
         self._rechazado(ajeno, "no corresponde al RUC")
-        self.assertIn("Requiere revisión manual: no importado", self.pagina(self.auditor))
 
     def test_vista_previa_no_se_puede_importar(self):
         self._enviado()
@@ -752,8 +839,9 @@ class TestDesactualizacion(_ConEnvio):
 
     def test_eml_coherente_con_su_generacion(self):
         self.listo()
-        self.confirmar(fecha_corte="2026-06-30", correo_para="gerencia@cliente.ec")
+        self.confirmar(fecha_corte="2026-06-30")
         self.generar()
+        self.destinatario(correo_para="gerencia@cliente.ec")
         paquete = self.contexto()["paquetes"][0]
         self.assertEqual(paquete["numero"], 2)
         eml, nombre = self._eml()
@@ -845,19 +933,6 @@ class TestDesactualizacion(_ConEnvio):
 
 
 class TestRevisionDeFirmados(_ConRespuesta):
-    def test_contrato_adjuntado_no_revisado_no_permite_generar(self):
-        self.assertIn("pendiente de revisión", self.contrato(revisar=False))
-        self.confirmar()
-        with self.assertRaisesRegex(ValueError, "revisión"):
-            self.generar()
-        self.assertEqual(self.contexto()["paquetes"], [])
-        pagina = self.pagina(self.auditor)
-        self.assertIn("Adjuntado, pendiente de revisión", pagina)
-        self.assertIn("registrar la revisión del contrato firmado", pagina)
-        self.assertIn("Atlas no valida criptográficamente", pagina)
-        self.assertNotIn("Contrato revisado", pagina)
-        self.assertIn("PDF legible, 1 página(s)", pagina)
-
     def test_contrato_revisado_con_constancia(self):
         self.contrato(revisar=False)
         contrato = self.contexto()["adjuntos"]["contrato"][0]
@@ -872,19 +947,6 @@ class TestRevisionDeFirmados(_ConRespuesta):
         self.assertEqual(revisado["revision_resultado"], "conforme")
         self.assertEqual(revisado["revisado_por"], self.auditor["id"])
         self.assertTrue(revisado["revisado_at"])
-        self.confirmar()
-        self.assertIn("generación 1", self.generar())
-        pagina = self.pagina(self.auditor)
-        self.assertIn("Revisado conforme", pagina)
-        self.assertIn(f"Revisión de {self.auditor['full_name']}", pagina)
-
-    def test_contrato_observado_no_habilita(self):
-        self.contrato(revisar=False)
-        self.revisar(self.contexto()["adjuntos"]["contrato"][0]["id"], resultado="observado",
-                     nota="Falta la firma del gerente", todas=False)
-        self.confirmar()
-        with self.assertRaisesRegex(ValueError, "revisión"):
-            self.generar()
 
     def test_pdf_ilegible_se_rechaza_aunque_tenga_cabecera(self):
         for contenido in (b"%PDF-1.4\n% solo cabecera\n", b"%PDF-1.7\n" + b"x" * 500):
@@ -906,22 +968,20 @@ class TestRevisionDeFirmados(_ConRespuesta):
             self.revisar(self.contexto()["adjuntos"][tipo][0]["id"])
         with self.assertRaises(ValueError):
             self._recibir("solicitud_respondida", "respuesta.xlsx", self._respondido(conflicto=True))
-        pagina = self.pagina(self.auditor)
-        self.assertNotIn("Todo recibido", pagina)
-        self.assertIn("Recibido con error", pagina)
-        self.assertIn("3 de 4 completos", pagina)
-        self.assertNotIn('req-step hecho actual', pagina)
+        self.assertFalse(any(completado("solicitud_respondida", a)
+                             for a in self.contexto()["adjuntos"]["solicitud_respondida"]))
         self._recibir("solicitud_respondida", "respuesta corregida.xlsx", self._respondido())
-        self.assertIn("Todo recibido y revisado", self.pagina(self.auditor))
+        estados = [a["importacion_estado"] for a in self.contexto()["adjuntos"]["solicitud_respondida"]]
+        self.assertEqual(sorted(estados), ["importado", "rechazado"], "La versión corregida no borra el original")
 
     def test_firmado_recibido_sin_revisar_no_cuenta(self):
         self._enviado()
         for tipo in ("carta_firmada", "cert_relacionadas_firmado", "cert_paraisos_firmado"):
             self._recibir(tipo, f"{tipo}.pdf", PDF)
         self._recibir("solicitud_respondida", "respuesta.xlsx", self._respondido())
-        pagina = self.pagina(self.auditor)
-        self.assertNotIn("Todo recibido", pagina)
-        self.assertIn("1 de 4 completos", pagina)
+        adjuntos = self.contexto()["adjuntos"]
+        completos = [t for t in RECEPCIONES if any(completado(t, a) for a in adjuntos[t])]
+        self.assertEqual(completos, ["solicitud_respondida"], "Un PDF recibido sin revisar no cuenta")
 
 
 class TestJefeSoloLectura(_Caso):
@@ -937,6 +997,7 @@ class TestJefeSoloLectura(_Caso):
 
     def test_jefe_descarga_versiones_y_evidencias_registradas(self):
         self.listo()
+        self.contrato(revisar=False)
         ctx = self.contexto()
         for origen, fila in (("generado", ctx["paquetes"][0]["archivos"]["solicitud"]),
                              ("adjunto", ctx["adjuntos"]["contrato"][0])):
@@ -1059,8 +1120,10 @@ class TestValidaciones(unittest.TestCase):
     def test_faltantes(self):
         datos = normalizar_datos(DATOS)
         self.assertEqual(faltantes(datos), [])
-        self.assertIn("Fechas del cronograma de entrega de informes",
-                      faltantes(normalizar_datos({**DATOS, "cronograma_2": ""})))
+        self.assertEqual(faltantes(normalizar_datos({**DATOS, "inventario_hasta": "", "equipo": ""})),
+                         ["Levantamiento de inventarios: hasta"], "Solo se exigen los campos del paso 1")
+        self.assertEqual(faltantes(datos, para_correo=True), [])
+        self.assertEqual(faltantes({**datos, "correo_para": ""}, para_correo=True), ["Correo del destinatario"])
         with self.assertRaisesRegex(ValueError, "no es un correo válido"):
             normalizar_datos({**DATOS, "correo_cc": "fparra@accons"})
 

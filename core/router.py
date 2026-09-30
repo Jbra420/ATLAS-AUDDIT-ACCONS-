@@ -32,6 +32,7 @@ from database import (
     ruta_archivo,
     save_requerimiento_adjunto,
     save_requerimiento_datos,
+    save_requerimiento_destinatario,
     save_requerimiento_detalle,
     save_requerimiento_importacion,
     save_requerimiento_items,
@@ -86,26 +87,26 @@ from services.identificacion import validar_identificacion
 from services.trazabilidad import FUENTE_CERTIFICADO_SUPERCIAS, validar_fecha_consulta
 from services.requerimiento import (
     ADJUNTOS,
-    CAMPOS_ANIO,
-    CAMPOS_FECHA,
-    CAMPOS_TEXTO,
+    CAMPOS_CORREO,
     CUADROS,
     DOCUMENTOS,
-    ENTREGABLES,
+    FORMULARIO,
     ITEMS,
     MAX_FILAS_CUADRO,
     RECEPCIONES,
     VERIFICACIONES_REVISION,
+    completar_derivados,
     correo,
     datos_efectivos,
     describir_pdf,
     faltantes,
+    formulario_desde,
     instantanea_actual,
     nombre_archivo,
     normalizar_datos,
     paquete_desactualizado,
+    precarga,
     referencia_paquete,
-    revisado,
     validar_archivo,
     validar_fecha_envio,
     validar_fecha_pasada,
@@ -519,7 +520,7 @@ def _un_archivo(form: dict, campo: str, requerido: bool = True) -> tuple[str, by
 
 def _datos_para_generar(audit: sqlite3.Row) -> tuple[dict, dict]:
     """(contexto del requerimiento, datos confirmados) si se puede generar;
-    si falta el contrato o algún dato, ValueError con lo pendiente."""
+    si falta algún dato, ValueError con lo pendiente."""
     req = get_requerimiento_context(audit["id"])
     if req["guardado"] is None:
         raise ValueError("Confirme primero los datos del requerimiento")
@@ -571,14 +572,27 @@ def _req_datos(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
     if ruc_enviado and ruc_enviado != ruc_auditoria:
         raise ValueError("El RUC del requerimiento debe coincidir con el de la auditoría. "
                          "Corríjalo primero en Levantamiento de información")
-    campos = (*CAMPOS_TEXTO, *CAMPOS_ANIO, *CAMPOS_FECHA, "equipo",
-              *(f"cronograma_{i}" for i in range(len(ENTREGABLES))))
-    datos = normalizar_datos({campo: form_value(form, campo) for campo in campos})
+    # El paso 1 envía solo sus campos: lo demás (destinatario, equipo,
+    # cronograma, datos del representante) se conserva, y los años de los
+    # certificados y del ejercicio cerrado y el texto del inventario se
+    # derivan otra vez de lo confirmado.
+    req = get_requerimiento_context(audit["id"])
+    sugeridos = precarga(audit, get_audit_context(audit["id"]))
+    completo = formulario_desde(datos_efectivos(req["guardado"], sugeridos))
+    completo.update({campo: form_value(form, campo) for campo in FORMULARIO})
+    completo.update(anio_certificados="", anio_cerrado="", fechas_inventario="")
+    datos = completar_derivados(normalizar_datos(completo), sugeridos)
     datos["ruc"] = ruc_auditoria
     save_requerimiento_datos(audit["id"], datos, user["id"])
     pendientes = faltantes(datos)
     return ("Datos confirmados" + (f". Pendiente: {', '.join(pendientes)}" if pendientes else "")
             + _aviso_desactualizado(audit["id"]))
+
+
+def _req_destinatario(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
+    datos = normalizar_datos({campo: form_value(form, campo) for campo in CAMPOS_CORREO})
+    save_requerimiento_destinatario(audit["id"], datos)
+    return "Destinatario del correo guardado"
 
 
 def _req_items(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
@@ -611,8 +625,6 @@ def _req_detalle(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
 
 def _req_generar(form: dict, audit: sqlite3.Row, user: sqlite3.Row) -> str:
     req, datos = _datos_para_generar(audit)
-    if not any(revisado(c) for c in req["adjuntos"]["contrato"]):
-        raise ValueError("Adjunte el contrato de auditoría firmado y registre su revisión antes de generar")
     usados = instantanea_actual(req)
     # Sin cambios de datos ni de plantilla no hay generación nueva: sería el mismo paquete.
     if req["paquetes"] and not paquete_desactualizado(req["paquetes"][0], usados):
@@ -763,6 +775,7 @@ REQUERIMIENTO_POSTS = {
     "/auditor/requerimiento/items": ("solicitud", _req_items),
     "/auditor/requerimiento/detalle": ("solicitud", _req_detalle),
     "/auditor/requerimiento/generar": ("documentos", _req_generar),
+    "/auditor/requerimiento/destinatario": ("correo", _req_destinatario),
     "/auditor/requerimiento/envio": ("correo", _req_envio),
     "/auditor/requerimiento/whatsapp": ("whatsapp", _req_whatsapp),
     "/auditor/requerimiento/recepcion": ("recepcion", _req_recepcion),
@@ -847,12 +860,14 @@ def _borrador_correo(user: sqlite3.Row, query: dict) -> tuple[bytes, str, str, b
         raise ValueError("El RUC de la generación no coincide con el de la auditoría. "
                          "Confirme los datos y genere los documentos de nuevo")
     mensaje = correo(datos)
+    # El destinatario es el vigente: no forma parte de la generación.
+    destino = datos_efectivos(req["guardado"], {})
     email = EmailMessage()
     email["Subject"] = mensaje["asunto"]
-    if datos.get("correo_para"):
-        email["To"] = datos["correo_para"]
-    if datos.get("correo_cc"):
-        email["Bcc"] = datos["correo_cc"]
+    if destino.get("correo_para"):
+        email["To"] = destino["correo_para"]
+    if destino.get("correo_cc"):
+        email["Bcc"] = destino["correo_cc"]
     email["X-Unsent"] = "1"
     email["X-Atlas-Generacion"] = f"{paquete['numero']} ({paquete['referencia']})"
     email.set_content(mensaje["cuerpo"])
